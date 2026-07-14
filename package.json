@@ -1,0 +1,50 @@
+{
+  "name": "zhuanti-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AI Agent 对话框组件",
+  "main": "./dist/zhuanti-agent.umd.cjs",
+  "module": "./dist/zhuanti-agent.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/zhuanti-agent.js",
+      "require": "./dist/zhuanti-agent.umd.cjs",
+      "types": "./types/index.d.ts"
+    },
+    "./style.css": "./dist/zhuanti-agent.css"
+  },
+  "files": [
+    "dist",
+    "types"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "vue3",
+    "chat",
+    "dialog"
+  ],
+  "author": "",
+  "license": "ISC",
+  "peerDependencies": {
+    "vue": "^3.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vue": "^3.5.39",
+    "vue-tsc": "^3.3.7"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.2",
+    "@langchain/openai": "^1.5.5",
+    "langchain": "^1.5.3"
+  }
+}
