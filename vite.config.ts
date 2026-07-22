@@ -6,19 +6,21 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     lib: {
-      entry: resolve(__dirname, 'src/index.ts'),
+      entry: resolve(__dirname, 'src/core/index.ts'),
       name: 'ZhuantiAgent',
       fileName: 'zhuanti-agent',
     },
     rollupOptions: {
-      external: ['vue', 'langchain', /^@langchain\//],
+      // vue 打包进 SDK(框架无关);zod / @langchain/* 保持 external(peerDep)
+      external: ['zod', /^@langchain\//],
       output: {
         exports: 'named',
         globals: {
-          vue: 'Vue',
+          zod: 'Zod',
           '@langchain/openai': 'LangchainOpenAI',
           '@langchain/core/messages': 'LangchainCoreMessages',
-          langchain: 'Langchain',
+          '@langchain/core/tools': 'LangchainCoreTools',
+          '@langchain/textsplitters': 'LangchainTextsplitters',
         },
       },
     },
