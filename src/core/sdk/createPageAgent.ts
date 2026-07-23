@@ -17,12 +17,15 @@
  */
 import { createApp, h, defineComponent, reactive, type App as VueApp } from 'vue'
 import type { StructuredToolInterface } from '@langchain/core/tools'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
 import { createTodosMiddleware } from '../harness/todos'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
+import type { Middleware } from '../harness/middleware'
+import { createSubagentMiddleware } from '../harness/subagent'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -32,7 +35,7 @@ import { fetchDocTools } from '../tools/fetchDoc'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { makeId } from '../utils/id'
 import { groupRounds, plainSummary } from '../utils/rounds'
-import type { AgentMessage, StreamHandler } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, Toolset } from '../types'
 
 export interface LLMConfig {
   apiKey: string
@@ -53,10 +56,12 @@ export interface SessionOptions {
 }
 
 export interface PageAgentOptions {
-  /** 挂载点(选择器或元素) */
-  container: string | HTMLElement
-  /** LLM 配置(兼容 OpenAI 协议) */
-  llm: LLMConfig
+  /** 挂载点(选择器或元素;headless 模式 ui:false 时可不传) */
+  container?: string | HTMLElement
+  /** UI:'default'(默认,渲染内置 ChatDialog)/ false(headless 不渲染,只返回 agent 核心,集成方自建 UI) */
+  ui?: boolean | 'default'
+  /** LLM:配置对象(LLMConfig,兼容 OpenAI 协议)或预构造模型实例(任意 provider,provider 抽离) */
+  llm: LLMConfig | BaseChatModel
   /**
    * agent 实例 id(多 agent 共存隔离用)。强烈建议传稳定值:刷新后据此恢复数据。
    * 不传则随机生成并告警(刷新后无法恢复)。
@@ -72,6 +77,8 @@ export interface PageAgentOptions {
   systemPrompt?: string
   /** 用户自定义工具(与内置工具合并) */
   tools?: StructuredToolInterface[]
+  /** 工具集(成套工具打包,整体导入,展开合并到工具池;替代逐个 tools 点名) */
+  toolsets?: Toolset[]
   /** 声明式 skill(渐进式披露) */
   skills?: SkillSpec[]
   /** AGENTS.md 风格持久指令(加载时优先于持久化的 memory) */
@@ -80,6 +87,8 @@ export interface PageAgentOptions {
   windowProps?: WindowPropSpec[]
   /** scope 白名单(默认不启用;启用后对 window/vfs 工具生效) */
   permissions?: PermissionRule[]
+  /** 自定义中间件(在内置中间件之后注入;可拦截/观察模型调用、工具执行、prompt 增强等) */
+  middleware?: Middleware[]
   /** 虚拟工作区:初始文件 + 内存字节上限(默认 4MB,超限 LRU 淘汰最旧) */
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number }
   /** 每个 window 属性最多保留快照数(默认 20,FIFO 丢最旧) */
@@ -88,6 +97,21 @@ export interface PageAgentOptions {
   maxMemoryRounds?: number
   debug?: boolean
   maxToolRounds?: number
+  /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
+  maxRetries?: number
+  /** 同轮多个工具调用的并发上限(默认 1 串行;>1 并发,可能影响有状态中间件如 todos 的计数) */
+  maxParallelTools?: number
+  /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
+  capabilities?: {
+    planning?: boolean       // todos 任务规划
+    skills?: boolean         // 渐进式披露技能
+    vfs?: boolean            // 虚拟工作区(关 → 大结果外存退化为截断)
+    summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
+    memory?: boolean         // AGENTS.md 持久指令
+    subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
+  }
+  /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
+  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number }
   /** 上下文压缩配置(false 关闭;默认索引摘要零成本) */
   contextOptions?: Partial<ContextManagerOptions> | false
   /** 流式输出(默认 true 逐字流式);false 时等整段回复再显示(底层仍 stream 聚合) */
@@ -98,16 +122,20 @@ export interface PageAgentOptions {
 }
 
 export interface PageAgent {
-  /** 渲染对话框到 container(异步:含持久化恢复) */
+  /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless) */
   mount(): Promise<void>
+  /** 响应式消息数组(headless 模式下供集成方自建 UI 读取;与内部共享同一引用) */
+  messages: AgentMessage[]
   /** 卸载(shareContext 时仅减引用计数,归零才真销毁) */
   unmount(): void
   /** 命令式发送一条消息(共享内部 messages,自动持久化) */
   send(message: string): Promise<string>
   /** 暴露底层流式接口(高级用法,自行管理历史时使用) */
-  stream: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>
+  stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
+  /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos 等),供 debug 或外部消费 */
+  inspect(): AgentInfo
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -119,6 +147,11 @@ function resolveStorage(storage: StorageBackendType | StorageConfig | false | un
   if (typeof storage === 'string') return createSessionStore({ backend: storage })
   if (storage.enabled === false) return null
   return createSessionStore(storage)
+}
+
+/** 判定 llm 选项是模型实例(BaseChatModel)还是配置对象(LLMConfig) */
+function isChatModel(v: unknown): v is BaseChatModel {
+  return !!v && typeof v === 'object' && typeof (v as any).invoke === 'function' && typeof (v as any).stream === 'function'
 }
 
 // ===== AgentCore:可被多实例共享的核心上下文 =====
@@ -143,9 +176,11 @@ interface AgentCore {
   afterRound(): void
   send(message: string): Promise<string>
   switchSession(sessionId?: string): Promise<string>
-  stream: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>
+  stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 实例 unmount 时调;引用计数归零才真销毁(store.dispose + 移出注册表) */
   release(): void
+  /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
+  getInfo(): AgentInfo
 }
 
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
@@ -175,20 +210,58 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   const todosMw = createTodosMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
 
-  const middlewares = [
-    todosMw,
-    createSkillsMiddleware(options.skills || []),
-    createVfsMiddleware(vfsStore),
-    createSummarizationMiddleware(options.contextOptions === false ? undefined : options.contextOptions),
-    memoryMw,
-    ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
-  ]
-
+  // 工具:window 操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   const windowOps = createWindowOps(options.windowProps || [], {
     onAudit: options.debug ? (e) => console.log('[page-agent][window audit]', e) : undefined,
     maxSnapshots: options.maxSnapshots,
   })
-  const allTools: StructuredToolInterface[] = [...windowOps, ...fetchDocTools, ...(options.tools || [])]
+  const allTools: StructuredToolInterface[] = [
+    ...windowOps,
+    ...fetchDocTools,
+    // 成套工具集展开合并(替代逐个 tools 点名)
+    ...(options.toolsets || []).flatMap((ts) => ts.tools as StructuredToolInterface[]),
+    ...(options.tools || []),
+  ]
+
+  // 内置能力开关(默认全开;false 则对应中间件不装载)
+  const caps = options.capabilities
+  const usePlanning = caps?.planning !== false
+  const useSkills = caps?.skills !== false
+  const useVfs = caps?.vfs !== false
+  const useSummarization = caps?.summarization !== false
+  const useMemory = caps?.memory !== false
+  const useSubagent = caps?.subagent !== false
+
+  // 子 agent 中间件(capabilities.subagent 或 subagent.enabled 为 false 则关闭)
+  const subOpts = options.subagent
+  // 子 agent 工具:allowedTools(点名)+ toolsets(成套,展开为名字)合并
+  const subToolsetNames = (subOpts?.toolsets ?? []).flatMap((ts) =>
+    (ts.tools as StructuredToolInterface[]).map((t) => t.name),
+  )
+  const subAllowed = [...(subOpts?.allowedTools ?? []), ...subToolsetNames]
+  const subagentMw =
+    !useSubagent || subOpts?.enabled === false
+      ? undefined
+      : createSubagentMiddleware({
+          llm: options.llm,
+          allTools,
+          allowedTools: subAllowed.length ? subAllowed : undefined,
+          maxDepth: subOpts?.maxDepth,
+          maxParallel: subOpts?.maxParallel,
+          debug: options.debug,
+        })
+
+  const middlewares = [
+    // 按 capabilities 条件装载内置中间件(默认全开)
+    ...(usePlanning ? [todosMw] : []),
+    ...(useSkills ? [createSkillsMiddleware(options.skills || [])] : []),
+    ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
+    ...(useSummarization ? [createSummarizationMiddleware(options.contextOptions === false ? undefined : options.contextOptions)] : []),
+    ...(useMemory ? [memoryMw] : []),
+    ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
+    ...(subagentMw ? [subagentMw] : []),
+    ...(options.middleware || []),
+  ]
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
 
@@ -213,12 +286,10 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       if (snap.memory && !options.memory) memoryMw.reset(snap.memory)
     },
 
-    /** 一轮结束后:先裁内存历史(防 OOM),再持久化并立即落盘(防刷新丢 debounce 内待写) */
+    /** 一轮结束后:裁内存历史(防 OOM)+ 安排持久化(debounced)。落盘等待由 onPersist/send 显式 await flush 保证 */
     afterRound(): void {
       trimMemoryMessages()
       persistRuntime()
-      // 立即落盘:不等 500ms debounce,确保刷新前已写入(对话轮次不频繁,可接受每轮一次写)
-      if (store) void store.flush()
     },
 
     async send(message: string): Promise<string> {
@@ -227,6 +298,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       const reply = await core.agent!.invoke(messages)
       messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
       core.afterRound()
+      if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
       return reply
     },
 
@@ -256,9 +328,9 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       return target
     },
 
-    stream: (msgs, onEvent) => {
+    stream: (msgs, onEvent, signal) => {
       if (!core.agent) throw new Error('page-agent: agent 尚未初始化完成,请先 await mount()')
-      return core.agent.stream(msgs, onEvent)
+      return core.agent.stream(msgs, onEvent, signal)
     },
 
     release(): void {
@@ -270,6 +342,26 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           store.dispose()
         }
         sharedCores.delete(agentId)
+      }
+    },
+
+    /** 检视 agent 详情:tools/skills/windowProps/memory/middleware/todos(inspect() 与 debug 窗口消费) */
+    getInfo(): AgentInfo {
+      return {
+        id: agentId,
+        model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
+        tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema })),
+        skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description, whenToUse: s.whenToUse })),
+        windowProps: (options.windowProps ?? []).map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
+        memory: options.memory ?? '',
+        middleware: middlewares.map((m) => m.name),
+        todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),
+        subagent: {
+          enabled: !!subagentMw,
+          maxDepth: options.subagent?.maxDepth ?? 1,
+          maxParallel: options.subagent?.maxParallel ?? 4,
+          allowedTools: options.subagent?.allowedTools ?? [],
+        },
       }
     },
   }
@@ -286,12 +378,15 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       else await store.createSession(agentId, sessOpts.title, core.sessionId)
     } else if (sessOpts.autoResume !== false) {
       const sessions = await store.listSessions(agentId)
+      if (options.debug) console.log('[page-agent][restore] listSessions', agentId, sessions.length, sessions.map((s) => s.sessionId))
       if (sessions.length) {
         core.sessionId = sessions[0].sessionId
         const snap = await store.load(agentId, core.sessionId)
         if (snap) {
           core.applySnapshot(snap)
           if (options.debug) console.log('[page-agent][restore] 恢复会话', core.sessionId, `${snap.messages?.length ?? 0} msgs`)
+        } else if (options.debug) {
+          console.log('[page-agent][restore] 会话 meta 存在但快照为空', core.sessionId)
         }
       } else {
         core.sessionId = await store.createSession(agentId, sessOpts.title)
@@ -332,7 +427,10 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */
   function persistRuntime(): void {
     if (!core.sessionId || !store) return
-    void store.save(agentId, core.sessionId, { messages: [...messages] })
+    // messages 元素是 Vue reactive proxy → IDB structured clone 会抛 DataCloneError(静默失败,messages 存不进);
+    // 先 JSON 纯化为普通对象。localStorage 走 JSON.stringify 本就纯化,故 local 不受影响、indexed 受影响。
+    const pureMessages = JSON.parse(JSON.stringify(messages)) as AgentMessage[]
+    void store.save(agentId, core.sessionId, { messages: pureMessages })
     // todos 始终同步当前态(含空数组覆写):否则会话内 todos 由有变空(LLM 主动 write_todos([]))后,
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
@@ -344,15 +442,22 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   core.initDone = (async (): Promise<void> => {
     await resolveAndLoad()
     core.agent = createAgent({
-      apiKey: options.llm.apiKey,
-      baseUrl: options.llm.baseUrl,
-      model: options.llm.model,
-      temperature: options.llm.temperature,
-      maxTokens: options.llm.maxTokens,
+      // provider 抽离:llm 为模型实例则注入,否则按配置构造 ChatOpenAI
+      ...(isChatModel(options.llm)
+        ? { llm: options.llm }
+        : {
+            apiKey: options.llm.apiKey,
+            baseUrl: options.llm.baseUrl,
+            model: options.llm.model,
+            temperature: options.llm.temperature,
+            maxTokens: options.llm.maxTokens,
+          }),
       systemPrompt: options.systemPrompt,
       tools: allTools,
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,
+      maxRetries: options.maxRetries,
+      maxParallelTools: options.maxParallelTools,
       debug: options.debug,
     })
   })()
@@ -370,6 +475,7 @@ export function createPageAgent(options: PageAgentOptions): PageAgent {
   }
   // 流式输出(默认 true 逐字);false 时 ChatDialog 走非流式 fetchResponse(等整段)
   const streaming = options.streaming ?? true
+  const ui = options.ui ?? 'default'
 
   // ===== 获取或创建 core(shareContext 时同 id 复用)=====
   let core: AgentCore
@@ -389,6 +495,21 @@ export function createPageAgent(options: PageAgentOptions): PageAgent {
 
   async function mount(): Promise<void> {
     await core.initDone
+    // headless:不渲染 UI,只 init agent + 装 flush 兜底(集成方用 messages/send 自建 UI)
+    if (ui === false) {
+      if (core.store) {
+        flushHandler = () => {
+          core.vfsStore.flush?.()
+          void core.store!.flush()
+        }
+        visHandler = () => {
+          if (document.visibilityState === 'hidden') void core.store!.flush()
+        }
+        window.addEventListener('pagehide', flushHandler)
+        document.addEventListener('visibilitychange', visHandler)
+      }
+      return
+    }
     const el =
       typeof options.container === 'string' ? document.querySelector(options.container) : options.container
     if (!el) throw new Error(`createPageAgent: 挂载点未找到(${options.container})`)
@@ -398,12 +519,16 @@ export function createPageAgent(options: PageAgentOptions): PageAgent {
         return () =>
           h(ChatDialog, {
             fetchStream: streaming ? core.agent!.stream : undefined,
-            fetchResponse: streaming ? undefined : (msgs: AgentMessage[]) => core.agent!.invoke(msgs),
+            fetchResponse: streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => core.agent!.invoke(msgs, signal),
             title: options.title,
             placeholder: options.placeholder,
             debugLogs: debugLogsRef.value,
             initialMessages: core.messages,
-            onPersist: () => core.afterRound(),
+            getInfo: () => core.getInfo(),
+            onPersist: async () => {
+              core.afterRound()
+              if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
+            },
             onClear: () => {
               // 新建会话:同步生成 id + 重置内存态(vfs/todos/memory),防旧会话数据残留或污染新会话
               if (!core.store) return
@@ -449,5 +574,7 @@ export function createPageAgent(options: PageAgentOptions): PageAgent {
     send: core.send,
     switchSession: core.switchSession,
     stream: core.stream,
+    inspect: core.getInfo,
+    messages: core.messages,
   }
 }

@@ -21,7 +21,7 @@
 - **框架**:Vue 3.5(**打包进 SDK**,对外框架无关;非 peer)
 - **构建**:Vite 8(库模式 `build.lib`)
 - **语言**:TypeScript 7
-- **AI**:LangChain **浏览器子包**(`@langchain/openai` + `@langchain/core`),兼容 OpenAI 协议(默认接 DeepSeek)。**不引入** `langchain` 整包 / LangGraph
+- **AI**:LangChain **浏览器子包**(`@langchain/openai` + `@langchain/core`),兼容 OpenAI 协议(默认接 DeepSeek);**provider 抽离**:`llm` 可传任意 LangChain `BaseChatModel` 实例(如 `ChatAnthropic`,装对应 peerDep),或 `LLMConfig` 配置对象(内部构造 `ChatOpenAI`)。**不引入** `langchain` 整包 / LangGraph
 - **校验**:zod 4(window 属性 schema、工具参数)
 - **Markdown**:`marked` + `highlight.js`(打包进库)
 
@@ -31,7 +31,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,51 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,114 项断言)
 ```
 
 ## 环境配置
@@ -53,20 +53,27 @@ src/
     │   ├── skills.ts           # 渐进式披露(defineSkill + load_skill)
     │   ├── memory.ts           # AGENTS.md 风格持久指令
     │   ├── permissions.ts      # scope 白名单(first-match-wins,默认不启用)
-    │   └── summarization.ts    # context 压缩(compressInput,复用 useContextManager)
+    │   ├── summarization.ts    # context 压缩(compressInput,复用 useContextManager)
+    │   ├── retry.ts            # 模型调用重试 + abort 判定(isAbort/isRetryable/withRetry)
+    │   └── subagent.ts         # 子 agent 中间件(spawn_agent/spawn_agents,过程隔离 + 进度转发)
     ├── sdk/                    # createPageAgent(命令式入口)/ defineTool
     ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
     ├── backends/storage.ts     # IndexedDB 持久化(降级内存)+ 多 agent 隔离 + 配额/LRU 淘汰
-    ├── utils/                  # offload(大结果外存)/ rounds
+    ├── utils/                  # offload(大结果外存)/ rounds / pool(并发池)
     ├── composables/            # useChat / useContextManager / useMarkdown
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI)
     ├── types/index.ts
-    ├── __tests__/selftest.ts   # 自测(51 项)
+    ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
+    ├── __tests__/selftest.ts   # 自测(114 项)
     └── index.ts                # 库唯一入口(只导出通用核心)
 examples/
-└── page-demo/                  # 定制 demo(开发自举):App / main / PageRenderer / pageSchema / useAgentConfig
+├── page-demo/                  # 定制 demo(开发自举):App / main / PageRenderer / pageSchema / useAgentConfig
+├── subagent-demo/              # 子 agent 并行编排示例(/subagent.html)
+└── subagent-custom/            # 自定义子 agent(多角色评审)示例(/custom.html)
 index.html                      # dev 入口(指向 examples/page-demo/main.ts)
+subagent.html                   # dev 入口(指向 examples/subagent-demo/main.ts)
+custom.html                     # dev 入口(指向 examples/subagent-custom/main.ts)
 doc/                            # architecture.md(架构图)+ README.md(索引)
 demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 ```
@@ -77,7 +84,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - `createAgent(options)`:ReAct 循环 + 可插拔中间件,不绑定具体工具/能力
 - **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**
 - 内置中间件顺序:`todos → skills → vfs → summarization → memory → permissions(可选)`
-- `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc`/`vfs`)+ 用户 `tools`/`skills`/`memory`/`windowProps`
+- `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc`/`vfs`)+ 用户 `tools`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
 
 ### window 操作(属性注册表 + schema 校验 + 增量编辑 + 快照回退 + 大结果外存)
 - 集成方声明 `windowProps: [{ path, description, schema }]`
@@ -112,6 +119,21 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **集成**:vfs 经 Proxy 捕获 `store.files` 变更 → debounce save(工具层无感);`mount()` 异步 init(await ready → 解析 sessionId → load 恢复 → 构造 agent);`send()` 与 UI 共享同一响应式 `messages` 数组(唯一来源);`pagehide`/`visibilitychange` → `flush()` 兜底
 - **自测**:`selftest.ts` 用 `createMemoryBackend` + 纯函数(encodeKey/estimateBytes/selectForEviction)覆盖隔离/save-load/配额/淘汰/降级(IdbBackend 仅手动验证)
 
+### 对话鲁棒性(重试 / 停止 / 重试)+ 中间件外接
+- **模型调用自动重试**(`harness/retry.ts`):`coreModelCall` 经 `withRetry` 对网络/429/5xx 指数退避重试(默认 `maxRetries`=2,即最多 3 次);4xx 与 abort 不重试。`createPageAgent({ maxRetries })` 可配
+- **停止生成(abort)**:`useChat` 每轮建 `AbortController` → signal 穿透 `fetchStream → agent.stream → coreModelCall → llm.stream({signal})`;UI 发送按钮 loading 时切「■ 停止」。abort 时 `coreModelCall` **不抛**、返回 `{aborted:true, content:已生成 partial}`(保留半截内容,等同 ChatGPT);**AbortError 不计入 error**
+- **出错重试(UI)**:`useChat.retry()` 移除失败回复、重发最后一条 user;error-bar「重试」按钮触发
+- **自定义中间件外接**:`createPageAgent({ middleware: [...] })` 把用户中间件拼到内置栈末尾(todos/skills/vfs/summarization/memory/permissions 之后);`Middleware` 类型已从入口导出,8 钩子可拦截/观察/增强(见架构要点)。page-demo `App.vue` 有埋点示例中间件
+- ⚠️ 错误判定**先排除 abort 再判 status**(AbortError 的 status 也是 undefined,否则被误判为网络错误无限重试)
+
+### 子 agent 与并行编排(spawn_agent / spawn_agents)
+- **委派 + 过程隔离**:主 agent 经 `spawn_agent`/`spawn_agents` 工具(subagent 中间件贡献,默认开启)委派独立子 agent 跑子任务,**只把最终结论**返回主上下文(过程不进主 LLM 上下文,省 token);多子任务并行(`spawn_agents`)。对齐 Claude Code 的 Agent 工具
+- **复用 createAgent 工厂**:子 agent 自带独立 state/messages,只读工具子集(默认 window 只读 + fetch,排除 spawn 防递归);signal 继承(主停则子停);大结果经主 offload 转 vfs
+- **递归物理切断**:`maxDepth`(默认 1),depth+1≥maxDepth 时子 agent 不装 subagent 中间件 → 无 spawn 工具
+- **进度展示**:子 agent 工具调用进度经 `subagent` 事件转发到主 UI(`ToolStep.children` 嵌套展示),**不进入主 LLM 上下文**;文本/思考不转发(避免噪音)
+- **配置**:`subagent: { enabled?, allowedTools?, maxDepth?, maxParallel? }`(默认开启);`maxParallelTools`(同轮工具并发,默认 1 串行,>1 时注意 todos 等有状态中间件计数)
+- **示例**:`examples/subagent-demo/`(`npm run dev` → `/subagent.html`)
+
 ## 关键约定与坑
 
 ### LangChain 消息字段名
@@ -130,17 +152,27 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,78 项)覆盖核心逻辑,不依赖 LLM。
+`npm test`(tsx 跑 `selftest.ts`,114 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent 结构),不依赖 LLM;子 agent 运行时(依赖 LLM)手动验证。
 
 ## SDK 用法
 ```ts
-import { createPageAgent, defineTool, defineSkill } from 'page-agent'
+import { createPageAgent, defineTool, defineSkill, type Middleware } from 'page-agent'
 createPageAgent({
   container: '#root', llm: { apiKey, baseUrl, model },
   systemPrompt: '...', windowProps: [{ path, description, schema }],
   tools: [...], skills: [...], memory: '...',
+  maxRetries: 2,                  // 模型调用失败自动重试(网络/429/5xx,默认 2)
+  maxParallelTools: 1,            // 同轮工具并发(默认 1 串行)
+  subagent: { allowedTools: [...] }, // 子 agent 委派(默认开启;spawn_agent/spawn_agents)
+  middleware: [/* 自定义中间件:埋点/拦截/prompt 增强,见「对话鲁棒性」小节 */],
 }).mount()
 ```
+**headless**(`ui: false`):不渲染内置对话框,集成方用 `agent.messages`(响应式数组)+ `send`/`stream` 自建 UI —— 框架无关更彻底(不强制 Vue)。
+
+**能力开关**(`capabilities`):关掉无用内置能力(`{ planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+
+**预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createPageAgent`。
+
 框架无关集成见 `demo/plain.html`(importmap + esm.sh 提供 peer dep)。
 
 ## 编码规范

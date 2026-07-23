@@ -11,7 +11,7 @@
 import type { BaseMessage } from '@langchain/core/messages'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { HarnessState } from './state'
-import type { AgentMessage } from '../types'
+import type { AgentMessage, StreamEvent } from '../types'
 
 /** 模型调用请求 */
 export interface ModelRequest {
@@ -24,6 +24,8 @@ export interface ModelResponse {
   message: BaseMessage
   toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown> }>
   content: string
+  /** 模型流被 abort(用户停止):true 时 content 为已累积的 partial,应保留并结束本轮(不再执行工具) */
+  aborted?: boolean
 }
 
 /** 中间件返回的 state 更新(last-writer 合并) */
@@ -35,6 +37,12 @@ export interface ToolCallContext {
   name: string
   args: Record<string, unknown>
   state: HarnessState
+  /** 当前 agent 循环的 abort signal(中间件可据此感知用户停止,如 subagent 透传给子 agent) */
+  signal?: AbortSignal
+  /** 主循环事件转发(供 spawn 工具把子 agent 进度冒泡到 UI;不进入主 LLM 上下文) */
+  emit?: (event: StreamEvent) => void
+  /** 日志下沉(供 spawn 工具把子 agent 的 debugLog 转发到主;子日志带 source 标签) */
+  logSink?: (entry: any) => void
 }
 
 /** 工具执行结果 */

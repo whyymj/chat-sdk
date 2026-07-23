@@ -15,6 +15,9 @@ import { createSkillsMiddleware, defineSkill } from '../harness/skills'
 import { createPermissionsMiddleware } from '../harness/permissions'
 import { createMemoryMiddleware } from '../harness/memory'
 import { applyUpdate, runBeforeAgent, runAfterModel } from '../harness/middleware'
+import { isAbort, isRetryable, withRetry } from '../harness/retry'
+import { runPool } from '../utils/pool'
+import { createSubagentMiddleware } from '../harness/subagent'
 import { createInitialState as createState } from '../harness/state'
 import {
   encodeKey,
@@ -526,6 +529,164 @@ console.log('\n[storage]')
   await s10.flush()
   const snap10 = await s10.load('weblocal', sid10)
   assert(snap10?.memory === 'hello-local', 'backend:local → localStorage save/load round-trip')
+}
+
+// ============ retry(模型调用重试 + abort 判定) ============
+console.log('\n[retry]')
+{
+  // isAbort
+  assert(isAbort({ name: 'AbortError' }) === true, 'isAbort: name===AbortError 命中')
+  assert(isAbort(new Error('net')) === false, 'isAbort: 普通 Error 非 abort')
+  const ac = new AbortController()
+  assert(isAbort(new Error('x'), ac.signal) === false, 'isAbort: 未 aborted 的 signal 不算')
+  ac.abort()
+  assert(isAbort(new Error('x'), ac.signal) === true, 'isAbort: signal.aborted 命中')
+
+  // isRetryable(必须先排除 abort 再判 status)
+  assert(isRetryable({}) === true, 'isRetryable: 网络错误(status undefined)可重试')
+  assert(isRetryable({ name: 'TimeoutError' }) === true, 'isRetryable: 超时可重试')
+  assert(isRetryable({ status: 429 }) === true, 'isRetryable: 429 可重试')
+  assert(isRetryable({ lc_error_code: 'MODEL_RATE_LIMIT' }) === true, 'isRetryable: MODEL_RATE_LIMIT 可重试')
+  assert(isRetryable({ status: 500 }) === true, 'isRetryable: 500 可重试')
+  assert(isRetryable({ status: 503 }) === true, 'isRetryable: 503 可重试')
+  assert(isRetryable({ status: 400 }) === false, 'isRetryable: 400 不重试(参数错误)')
+  assert(isRetryable({ status: 401 }) === false, 'isRetryable: 401 不重试(鉴权)')
+  assert(isRetryable({ status: 404 }) === false, 'isRetryable: 404 不重试')
+  assert(isRetryable({ name: 'AbortError' }) === false, 'isRetryable: AbortError 不重试(即使 status undefined)')
+  assert(isRetryable(null) === false, 'isRetryable: null 不重试')
+
+  // withRetry(baseDelayMs:0 避免真实退避等待)
+  const r1 = await withRetry(() => Promise.resolve('ok'), { baseDelayMs: 0 })
+  assert(r1 === 'ok', 'withRetry: 首次成功直接返回')
+
+  let calls = 0
+  const r2 = await withRetry(
+    async () => {
+      calls++
+      if (calls < 3) throw Object.assign(new Error('net'), { status: undefined })
+      return 'recovered'
+    },
+    { baseDelayMs: 0 },
+  )
+  assert(r2 === 'recovered' && calls === 3, 'withRetry: 网络错误重试 2 次后第 3 次成功')
+
+  // 4xx 不可重试:立即抛,只调 1 次
+  let calls4xx = 0
+  let threw4xx = false
+  try {
+    await withRetry(async () => {
+      calls4xx++
+      throw Object.assign(new Error('bad'), { status: 400 })
+    }, { baseDelayMs: 0 })
+  } catch (e: any) {
+    threw4xx = e.status === 400
+  }
+  assert(threw4xx && calls4xx === 1, 'withRetry: 4xx 不重试,立即抛')
+
+  // AbortError 不重试:立即抛,只调 1 次
+  let callsAbort = 0
+  let threwAbort = false
+  try {
+    await withRetry(async () => {
+      callsAbort++
+      const e = new Error('aborted')
+      e.name = 'AbortError'
+      throw e
+    }, { baseDelayMs: 0 })
+  } catch (e: any) {
+    threwAbort = e.name === 'AbortError'
+  }
+  assert(threwAbort && callsAbort === 1, 'withRetry: AbortError 不重试,立即抛')
+
+  // 达到 maxRetries 仍失败:抛错,maxRetries+1 次尝试
+  let callsMax = 0
+  let threwMax = false
+  try {
+    await withRetry(async () => {
+      callsMax++
+      throw new Error('net')
+    }, { maxRetries: 2, baseDelayMs: 0 })
+  } catch (e: any) {
+    threwMax = /net/.test(e.message)
+  }
+  assert(threwMax && callsMax === 3, 'withRetry: 达上限抛错(maxRetries=2 → 3 次尝试)')
+
+  // 退避回调被触发(验证 onRetry 调用次数 = 重试次数)
+  let retryNotified = 0
+  try {
+    await withRetry(
+      async () => {
+        throw Object.assign(new Error('net'), { status: undefined })
+      },
+      { maxRetries: 2, baseDelayMs: 0, onRetry: () => retryNotified++ },
+    )
+  } catch {
+    /* 预期抛错 */
+  }
+  assert(retryNotified === 2, 'withRetry: onRetry 回调在每次重试前触发(2 次)')
+}
+
+// ============ pool(并发池:createAgent 同轮工具 / subagent 多子任务 共用) ============
+console.log('\n[pool]')
+{
+  // limit=1 串行:顺序执行 + 顺序结果
+  const order: string[] = []
+  const r1 = await runPool(['a', 'b', 'c'], 1, async (x) => {
+    order.push(x)
+    return x.toUpperCase()
+  })
+  assert(JSON.stringify(r1) === JSON.stringify(['A', 'B', 'C']), 'runPool: limit=1 串行,结果按顺序回填')
+  assert(JSON.stringify(order) === JSON.stringify(['a', 'b', 'c']), 'runPool: limit=1 严格串行执行')
+
+  // limit>1 并发:结果仍按原顺序回填(并发完成顺序无关)
+  const r2 = await runPool([1, 2, 3, 4], 4, async (x) => x * 10)
+  assert(JSON.stringify(r2) === JSON.stringify([10, 20, 30, 40]), 'runPool: 并发结果按原顺序回填')
+
+  // 并发上限:同时执行的任务不超过 limit
+  let active = 0
+  let maxActive = 0
+  await runPool([1, 2, 3, 4, 5], 2, async () => {
+    active++
+    maxActive = Math.max(maxActive, active)
+    await new Promise((r) => setTimeout(r, 10))
+    active--
+  })
+  assert(maxActive >= 2, 'runPool: 并发确实发生(峰值 ' + maxActive + ')')
+  assert(maxActive <= 2, 'runPool: 并发不超过 limit')
+
+  // signal 已 aborted:串行分支不执行,结果全 undefined
+  const ac = new AbortController()
+  ac.abort()
+  let ran = false
+  const r3 = await runPool(
+    [1, 2, 3],
+    1,
+    async () => {
+      ran = true
+      return 0
+    },
+    ac.signal,
+  )
+  assert(!ran && r3.every((x) => x === undefined), 'runPool: signal aborted 时串行不启动(结果全 undefined)')
+}
+
+// ============ subagent(子 agent 中间件结构 + wrapToolCall) ============
+console.log('\n[subagent]')
+{
+  const mw = createSubagentMiddleware({ llm: { apiKey: 'test' }, allTools: [] })
+  assert(mw.name === 'subagent', 'subagent: 中间件 name=subagent')
+  assert((mw.tools?.length ?? 0) === 2, 'subagent: 贡献 spawn_agent + spawn_agents 两个工具')
+  const names = (mw.tools || []).map((t: any) => t.name)
+  assert(names.includes('spawn_agent') && names.includes('spawn_agents'), 'subagent: 工具名为 spawn_agent / spawn_agents')
+  assert(typeof mw.wrapToolCall === 'function', 'subagent: 有 wrapToolCall(捕获主 signal 供子 agent 继承)')
+
+  // wrapToolCall 透传 next(不阻塞工具执行,且捕获 signal 不影响正常调用)
+  const probe = { v: false }
+  await mw.wrapToolCall!({ id: '1', name: 'x', args: {}, state: createState() }, async () => {
+    probe.v = true
+    return { content: 'ok', status: 'done' as const }
+  })
+  assert(probe.v, 'subagent: wrapToolCall 透传 next(不阻塞工具执行)')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

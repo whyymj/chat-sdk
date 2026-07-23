@@ -6,6 +6,8 @@ export interface ToolStep {
   args?: any;
   result?: string;
   status: 'running' | 'done' | 'error';
+  /** 子 agent 工具步骤(spawn 委派时展示子进度) */
+  children?: ToolStep[];
 }
 
 export interface AgentMessage {
@@ -35,6 +37,7 @@ export type StreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
   | { type: 'done'; content: string };
 
 export type StreamHandler = (event: StreamEvent) => void;
@@ -47,12 +50,35 @@ export interface DebugLog {
 }
 
 export interface ChatDialogProps {
-  fetchResponse?: (messages: AgentMessage[]) => Promise<string>;
-  fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>;
+  fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
+  fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   title?: string;
   placeholder?: string;
   debugLogs?: DebugLog[];
+  getInfo?: () => AgentInfo;
 }
+
+export interface ToolInfo { name: string; description: string; schema?: unknown }
+export interface SkillInfo { name: string; description: string; whenToUse?: string }
+export interface WindowPropInfo { path: string; description: string; schema?: unknown }
+export interface SubagentInfo {
+  enabled: boolean;
+  maxDepth: number;
+  maxParallel: number;
+  allowedTools: string[];
+}
+export interface AgentInfo {
+  id: string;
+  model?: string;
+  tools: ToolInfo[];
+  skills: SkillInfo[];
+  windowProps: WindowPropInfo[];
+  memory: string;
+  middleware: string[];
+  todos: { content: string; status: string }[];
+  subagent: SubagentInfo;
+}
+export interface Toolset { name: string; tools: unknown[]; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
 
@@ -64,6 +90,12 @@ export interface LLMConfig {
   temperature?: number;
   maxTokens?: number;
 }
+/** LangChain BaseChatModel 的结构形状(provider 抽离:llm 可传任意 provider 实例) */
+export type ChatModelLike = {
+  invoke: (input: any, options?: any) => Promise<any>;
+  stream: (input: any, options?: any) => Promise<any>;
+  bindTools: (tools: any[]) => any;
+};
 
 export interface WindowPropSpec {
   /** window 上的路径,支持点号嵌套 */
@@ -141,8 +173,10 @@ export interface SessionOptions {
 }
 
 export interface PageAgentOptions {
-  container: string | HTMLElement;
-  llm: LLMConfig;
+  container?: string | HTMLElement;
+  /** UI:'default'(内置 ChatDialog)/ false(headless 不渲染,自建 UI) */
+  ui?: boolean | 'default';
+  llm: LLMConfig | ChatModelLike;
   /** agent 实例 id(多 agent 共存隔离;不传则随机生成并告警,刷新后无法恢复) */
   id?: string;
   /** 持久化:默认关闭;赋值后端字符串('indexed'/'session'/'local'/'memory')或配置对象开启;false 关闭 */
@@ -153,10 +187,13 @@ export interface PageAgentOptions {
   shareContext?: boolean;
   systemPrompt?: string;
   tools?: any[];
+  toolsets?: Toolset[];
   skills?: SkillSpec[];
   memory?: string;
   windowProps?: WindowPropSpec[];
   permissions?: PermissionRule[];
+  /** 自定义中间件(注入到内置中间件之后;可拦截/观察模型调用、工具、prompt) */
+  middleware?: any[];
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
   /** 每个 window 属性最多保留快照数(默认 20) */
   maxSnapshots?: number;
@@ -164,6 +201,13 @@ export interface PageAgentOptions {
   maxMemoryRounds?: number;
   debug?: boolean;
   maxToolRounds?: number;
+  /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
+  maxRetries?: number;
+  /** 同轮工具并发上限(默认 1 串行) */
+  maxParallelTools?: number;
+  /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
+  capabilities?: { planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number };
   contextOptions?: any;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;
@@ -173,10 +217,14 @@ export interface PageAgentOptions {
 
 export interface PageAgent {
   mount(): Promise<void>;
+  /** 响应式消息数组(headless 模式自建 UI 读) */
+  messages: AgentMessage[];
   unmount(): void;
   send(message: string): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
-  stream: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>;
+  stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
+  /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos) */
+  inspect(): AgentInfo;
 }
 
 export declare function createPageAgent(options: PageAgentOptions): PageAgent;
@@ -186,8 +234,11 @@ export declare function defineTool(opts: {
   schema: any;
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
+export declare function defineToolset(name: string, tools: any[]): Toolset;
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
+export declare function createSubagentMiddleware(opts: any): any;
+export declare const presets: Record<string, any>;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;

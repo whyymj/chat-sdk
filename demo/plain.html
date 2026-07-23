@@ -14,11 +14,7 @@
   </style>
 </head>
 <body>
-  <div class="hint">
-    <b>CDN 一行引入</b>(IIFE 全量,无需 Vue / importmap / peer 依赖):
-    <code>&lt;script src="https://unpkg.com/page-agent"&gt;</code> → 全局 <code>window.PageAgent</code>(含 <code>createPageAgent</code> 与 <code>z</code>)。
-    本地预览用 <code>../dist/page-agent.iife.js</code>;发布后换成 unpkg / jsdelivr 的 CDN 地址。运行:项目根 <code>npx serve .</code> 后访问 <code>/demo/plain.html</code>。
-  </div>
+
   <div id="root"></div>
 
   <!-- IIFE 全量:vue / zod / @langchain 全打包进,暴露 window.PageAgent -->

@@ -7,6 +7,7 @@
 import { tool } from '@langchain/core/tools'
 import { z, type ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
+import type { Toolset } from '../types'
 
 export interface DefineToolOptions<S extends ZodType> {
   name: string
@@ -29,4 +30,14 @@ export function defineTool<S extends ZodType>(opts: DefineToolOptions<S>): Struc
       schema: opts.schema,
     },
   )
+}
+
+/**
+ * 定义工具集 —— 把相关工具打包成命名单元,便于整体导入(替代逐个点名)。
+ * 例:const search = defineToolset('search', [searchWeb, summarize])
+ *   createPageAgent({ toolsets: [search] })  或  subagent: { toolsets: [search] }
+ */
+export function defineToolset(name: string, tools: StructuredToolInterface[]): Toolset {
+  if (!name || !name.trim()) throw new Error('defineToolset: name 必填')
+  return { name, tools }
 }

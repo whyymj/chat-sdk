@@ -4,7 +4,7 @@ import { useChat } from '../composables/useChat'
 import MessageContent from './MessageContent.vue'
 import DebugDrawer from './DebugDrawer.vue'
 import type { DebugLog } from '../harness/createAgent'
-import type { AgentMessage, StreamHandler, ToolStep } from '../types'
+import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
 
 const props = withDefaults(defineProps<{
   fetchResponse?: (messages: AgentMessage[]) => Promise<string>
@@ -19,12 +19,14 @@ const props = withDefaults(defineProps<{
   onPersist?: (messages: AgentMessage[]) => void
   /** 清空时回调(新建会话) */
   onClear?: () => void
+  /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
+  getInfo?: () => AgentInfo
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
 })
 
-const { state, scrollContainer, sendMessage, clearMessages } = useChat({
+const { state, scrollContainer, sendMessage, clearMessages, stop, retry } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
@@ -39,6 +41,7 @@ const debugVisible = ref(false)
 const reasoningExpanded = ref<Record<number, boolean>>({})
 
 const hasMessages = computed(() => state.messages.length > 0)
+const hasUserMessage = computed(() => state.messages.some((m) => m.role === 'user'))
 const hasDebugLogs = computed(() => (props.debugLogs?.length ?? 0) > 0)
 
 function toggleReasoning(idx: number) {
@@ -153,9 +156,19 @@ function formatTime(timestamp: number) {
             class="steps-block"
           >
             <div v-for="(step, sIdx) in msg.steps" :key="sIdx" class="step-item">
-              <span class="step-icon">{{ stepStatusIcon(step) }}</span>
-              <span class="step-name">{{ step.name }}</span>
-              <span v-if="step.status === 'running'" class="step-status running">执行中…</span>
+              <div class="step-head">
+                <span class="step-icon">{{ stepStatusIcon(step) }}</span>
+                <span class="step-name">{{ step.name }}</span>
+                <span v-if="step.status === 'running'" class="step-status running">执行中…</span>
+              </div>
+              <!-- 子 agent 工作进度(嵌套展示) -->
+              <div v-if="step.children && step.children.length" class="step-children">
+                <div v-for="(c, cIdx) in step.children" :key="cIdx" class="step-child">
+                  <span class="step-icon">{{ stepStatusIcon(c) }}</span>
+                  <span class="step-name">{{ c.name }}</span>
+                  <span v-if="c.status === 'running'" class="step-status running">…</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -188,9 +201,10 @@ function formatTime(timestamp: number) {
         </div>
       </div>
 
-      <!-- 错误提示 -->
+      <!-- 错误提示 + 重试 -->
       <div v-if="state.error" class="error-bar">
-        {{ state.error }}
+        <span class="error-text">{{ state.error }}</span>
+        <button v-if="hasUserMessage" class="retry-btn" @click="retry">重试</button>
       </div>
     </div>
 
@@ -205,10 +219,15 @@ function formatTime(timestamp: number) {
       ></textarea>
       <button
         class="send-btn"
-        :disabled="!inputText.trim() || state.loading"
-        @click="handleSend"
+        :class="{ 'stop-btn': state.loading }"
+        :disabled="!state.loading && !inputText.trim()"
+        :title="state.loading ? '停止生成' : '发送'"
+        @click="state.loading ? stop() : handleSend()"
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg v-if="state.loading" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+        </svg>
+        <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="22" y1="2" x2="11" y2="13"></line>
           <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
@@ -216,7 +235,7 @@ function formatTime(timestamp: number) {
     </div>
 
     <!-- 调试抽屉 -->
-    <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" />
+    <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="props.getInfo" />
   </div>
 </template>
 
@@ -304,15 +323,21 @@ function formatTime(timestamp: number) {
 .reasoning-body { padding: 8px 10px; border-top: 1px dashed #c7d2fe; font-size: 12px; line-height: 1.6; color: #4c1d95; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
 
 .steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 3px; }
-.step-item { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; }
+.step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; }
+.step-head { display: inline-flex; align-items: center; gap: 5px; }
 .step-icon { font-size: 11px; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .step-status.running { color: #0891b2; }
+.step-children { padding-left: 12px; border-left: 2px solid #c7d2fe; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 8px; background: #f8fafc; font-size: 10px; color: #64748b; }
 
 .stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: #667eea; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
-.error-bar { padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; text-align: center; margin-top: 8px; }
+.error-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
+.error-text { flex: 1; }
+.retry-btn { flex-shrink: 0; padding: 3px 12px; border: none; border-radius: 6px; background: #dc2626; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.retry-btn:hover { background: #b91c1c; }
 
 .chat-footer { display: flex; align-items: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #f3f4f6; background: #fafafa; }
 .chat-input {
@@ -330,4 +355,6 @@ function formatTime(timestamp: number) {
 .send-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.05); }
 .send-btn:active:not(:disabled) { transform: scale(0.95); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.send-btn.stop-btn { background: #9ca3af; }
+.send-btn.stop-btn:hover:not(:disabled) { background: #6b7280; transform: none; }
 </style>

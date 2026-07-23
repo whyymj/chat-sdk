@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { DebugLog } from '../harness/createAgent'
+import type { AgentInfo } from '../types'
 
 const props = withDefaults(defineProps<{
   logs?: DebugLog[]
   visible: boolean
+  /** 获取 agent 详细信息(「Agent 信息」tab 展示) */
+  getInfo?: () => AgentInfo
 }>(), {
   logs: () => [],
 })
@@ -79,6 +82,22 @@ function roleOf(t: string) {
 
 function close() { emit('update:visible', false) }
 function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
+
+const tab = ref<'logs' | 'info'>('logs')
+const agentInfo = ref<AgentInfo | null>(null)
+function switchTab(t: 'logs' | 'info') {
+  tab.value = t
+  // 切到「Agent 信息」时实时拉取(含动态 todos)
+  if (t === 'info' && props.getInfo) {
+    try { agentInfo.value = props.getInfo() } catch { agentInfo.value = null }
+  }
+}
+const statusMeta: Record<string, { label: string; color: string }> = {
+  pending: { label: '待办', color: '#9ca3af' },
+  in_progress: { label: '进行中', color: '#d97706' },
+  completed: { label: '完成', color: '#059669' },
+}
+function statusLabel(s: string) { return statusMeta[s]?.label ?? s }
 </script>
 
 <template>
@@ -87,14 +106,17 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
       <div v-if="visible" class="debug-drawer">
         <div class="drawer-panel">
           <div class="drawer-header">
-            <span class="drawer-title">🐛 Agent 调试日志</span>
+            <div class="tab-group">
+              <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 日志</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
+            </div>
             <div class="header-actions">
-              <button class="hd-btn" title="清空日志" @click="clearLogs">🗑️</button>
+              <button v-if="tab === 'logs'" class="hd-btn" title="清空日志" @click="clearLogs">🗑️</button>
               <button class="hd-btn" title="关闭" @click="close">✕</button>
             </div>
           </div>
 
-          <div class="drawer-filters">
+          <div v-if="tab === 'logs'" class="drawer-filters">
             <button
               v-for="(meta, key) in typeMeta"
               :key="key"
@@ -112,6 +134,7 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
           </div>
 
           <div class="drawer-body">
+            <template v-if="tab === 'logs'">
             <div v-if="filteredLogs.length === 0" class="empty">
               暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息
             </div>
@@ -121,6 +144,7 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
                 <span class="log-type" :style="{ background: typeMeta[log.type].color }">
                   {{ typeMeta[log.type].icon }} {{ typeMeta[log.type].label }}
                 </span>
+                <span v-if="log.source" class="log-source">↳ {{ log.source }}</span>
                 <span class="log-time">{{ formatTime(log.timestamp) }}</span>
               </div>
 
@@ -223,6 +247,72 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
               </div>
               <pre v-if="rawExpanded.has(idx)" class="log-raw"><code>{{ formatJson(log.data) }}</code></pre>
             </div>
+            </template>
+
+            <!-- Agent 信息 -->
+            <div v-else class="info-body">
+              <div v-if="!agentInfo" class="empty">暂无信息</div>
+              <template v-else>
+                <div class="info-section">
+                  <div class="info-title">基本信息</div>
+                  <div class="kv-grid">
+                    <div class="kv"><span class="k">ID</span><span class="v">{{ agentInfo.id }}</span></div>
+                    <div class="kv"><span class="k">模型</span><span class="v">{{ agentInfo.model || '-' }}</span></div>
+                    <div class="kv"><span class="k">工具数</span><span class="v">{{ agentInfo.tools.length }}</span></div>
+                    <div class="kv"><span class="k">中间件</span><span class="v">{{ agentInfo.middleware.length }}</span></div>
+                  </div>
+                  <div class="kv" style="margin-top: 6px"><span class="k">中间件栈</span><span class="v" style="font-size: 11px">{{ agentInfo.middleware.join(' → ') || '-' }}</span></div>
+                </div>
+
+                <div class="info-section">
+                  <div class="info-title">🔧 工具 ({{ agentInfo.tools.length }})</div>
+                  <div v-for="t in agentInfo.tools" :key="t.name" class="info-item">
+                    <div class="info-name">{{ t.name }}</div>
+                    <div class="info-desc">{{ t.description }}</div>
+                  </div>
+                </div>
+
+                <div v-if="agentInfo.skills.length" class="info-section">
+                  <div class="info-title">📘 技能 ({{ agentInfo.skills.length }})</div>
+                  <div v-for="s in agentInfo.skills" :key="s.name" class="info-item">
+                    <div class="info-name">{{ s.name }}</div>
+                    <div class="info-desc">{{ s.description }}</div>
+                    <div v-if="s.whenToUse" class="info-desc muted">何时用:{{ s.whenToUse }}</div>
+                  </div>
+                </div>
+
+                <div v-if="agentInfo.windowProps.length" class="info-section">
+                  <div class="info-title">🪟 可操作属性 ({{ agentInfo.windowProps.length }})</div>
+                  <div v-for="w in agentInfo.windowProps" :key="w.path" class="info-item">
+                    <div class="info-name">{{ w.path }}</div>
+                    <div class="info-desc">{{ w.description }}</div>
+                  </div>
+                </div>
+
+                <div class="info-section">
+                  <div class="info-title">🧬 子 Agent</div>
+                  <div class="kv-grid">
+                    <div class="kv"><span class="k">启用</span><span class="v">{{ agentInfo.subagent.enabled ? '是' : '否' }}</span></div>
+                    <div class="kv"><span class="k">最大递归</span><span class="v">{{ agentInfo.subagent.maxDepth }}</span></div>
+                    <div class="kv"><span class="k">并行上限</span><span class="v">{{ agentInfo.subagent.maxParallel }}</span></div>
+                    <div class="kv"><span class="k">额外工具</span><span class="v" style="font-size: 11px">{{ agentInfo.subagent.allowedTools.length ? agentInfo.subagent.allowedTools.join(', ') : '默认只读' }}</span></div>
+                  </div>
+                </div>
+
+                <div v-if="agentInfo.todos.length" class="info-section">
+                  <div class="info-title">📋 任务清单 ({{ agentInfo.todos.length }})</div>
+                  <div v-for="(td, i) in agentInfo.todos" :key="i" class="info-todo">
+                    <span class="todo-tag" :style="{ background: (statusMeta[td.status] && statusMeta[td.status].color) || '#9ca3af' }">{{ statusLabel(td.status) }}</span>
+                    <span>{{ td.content }}</span>
+                  </div>
+                </div>
+
+                <div v-if="agentInfo.memory" class="info-section">
+                  <div class="info-title">📝 持久指令 (memory)</div>
+                  <pre class="info-pre">{{ agentInfo.memory }}</pre>
+                </div>
+              </template>
+            </div>
           </div>
         </div>
         <div class="drawer-mask" @click="close"></div>
@@ -247,6 +337,20 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
   padding: 12px 16px; background: linear-gradient(135deg, #1f2937, #111827); color: #fff;
 }
 .drawer-title { font-size: 15px; font-weight: 600; }
+.tab-group { display: flex; gap: 4px; }
+.tab-btn { padding: 4px 12px; border: none; border-radius: 6px; background: rgba(255,255,255,0.12); color: #fff; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+.tab-btn:hover { background: rgba(255,255,255,0.22); }
+.tab-btn.active { background: rgba(255,255,255,0.45); font-weight: 600; }
+.info-body { padding: 4px 0; }
+.info-section { margin-bottom: 14px; }
+.info-title { font-size: 12px; font-weight: 600; color: #4338ca; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #f3f4f6; }
+.info-item { padding: 6px 8px; background: #f9fafb; border-radius: 6px; margin-bottom: 4px; }
+.info-name { font-size: 12px; font-weight: 600; color: #1f2937; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.info-desc { font-size: 11px; color: #6b7280; line-height: 1.5; margin-top: 2px; }
+.info-desc.muted { color: #9ca3af; }
+.info-todo { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; padding: 4px 8px; background: #f9fafb; border-radius: 6px; margin-bottom: 4px; }
+.todo-tag { font-size: 10px; color: #fff; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.info-pre { margin: 0; padding: 8px; background: #f9fafb; border-radius: 6px; font-size: 11px; color: #4b5563; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .header-actions { display: flex; gap: 4px; }
 .hd-btn { width: 28px; height: 28px; border: none; border-radius: 6px; background: rgba(255,255,255,0.12); color: #fff; cursor: pointer; }
 .hd-btn:hover { background: rgba(255,255,255,0.25); }
@@ -261,6 +365,7 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 .log-item { margin-bottom: 10px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fff; }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #f9fafb; }
 .log-type { font-size: 11px; font-weight: 600; color: #fff; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.log-source { font-size: 10px; color: #7c3aed; background: #f3e8ff; padding: 2px 8px; border-radius: 4px; font-weight: 600; white-space: nowrap; }
 .log-time { font-size: 11px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .log-body { padding: 10px 12px; }
 .log-footer { display: flex; gap: 8px; padding: 6px 12px; border-top: 1px dashed #f3f4f6; }

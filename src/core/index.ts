@@ -9,11 +9,14 @@ export { z } from 'zod'
 // SDK 命令式入口
 export { createPageAgent } from './sdk/createPageAgent'
 export type { PageAgentOptions, PageAgent, LLMConfig } from './sdk/createPageAgent'
-export { defineTool } from './sdk/defineTool'
+export { defineTool, defineToolset } from './sdk/defineTool'
+export { presets } from './presets'
 // harness 核心 + 中间件契约
 export { createAgent } from './harness/createAgent'
 export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
+export { createSubagentMiddleware } from './harness/subagent'
+export type { SubagentOptions, SubagentLlmConfig } from './harness/subagent'
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // window 操作类型(属性注册表 + 增量编辑 + 快照)
@@ -26,4 +29,5 @@ export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuo
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, ToolStep } from './types'
+export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo, Toolset } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'

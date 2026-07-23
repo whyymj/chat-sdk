@@ -1,0 +1,544 @@
+# page-agent 使用手册
+
+> 框架无关的页面 Agent SDK:一行挂载,给任意网页装上一个能**读写宿主页面、调用工具、规划任务**的 AI 对话框。
+
+---
+
+## 目录
+
+- [1. 它是什么](#1-它是什么)
+- [2. 安装](#2-安装)
+- [3. 快速开始(3 分钟)](#3-快速开始3-分钟)
+- [4. 核心概念](#4-核心概念)
+- [5. 配置项参考](#5-配置项参考)
+- [6. 能力详解](#6-能力详解)
+  - [6.1 window 操作(让 Agent 改你的页面)](#61-window-操作让-agent-改你的页面)
+  - [6.2 自定义工具](#62-自定义工具)
+  - [6.3 Skills(渐进式披露)](#63-skills渐进式披露)
+  - [6.4 Memory(持久指令)](#64-memory持久指令)
+  - [6.5 Planning(任务规划,自动)](#65-planning任务规划自动)
+  - [6.6 持久化与会话管理](#66-持久化与会话管理)
+  - [6.7 对话鲁棒性(重试 / 停止 / 重试)](#67-对话鲁棒性重试--停止--重试)
+  - [6.8 上下文与内存上限](#68-上下文与内存上限)
+- [7. 高级:自定义中间件](#7-高级自定义中间件)
+- [8. 命令式 API](#8-命令式-api)
+- [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
+- [10. 环境变量](#10-环境变量)
+- [11. 常见问题与坑](#11-常见问题与坑)
+
+---
+
+## 1. 它是什么
+
+`page-agent` 是一个 **JS SDK**,把一个基于 ReAct 的 Tool-Calling Agent 以**对话框形态**挂载到任意网页。Agent 能:
+
+- **读写宿主页面** `window` 上声明的属性(带 schema 校验 + 快照回退)→ 直接驱动你的页面 UI
+- **调用工具**:抓取文档、读写虚拟工作区、以及你自定义的任意工具
+- **规划多步任务**(todos)、**按需加载技能**(skills)、**记忆持久指令**(memory)
+- **持久化对话**(IndexedDB,降级内存)、**多 agent 隔离**、**会话切换**
+- 自动**重试**失败请求、支持**停止生成**、**出错重试**
+
+框架无关:Vue被打包进 SDK,宿主页面无需装 Vue。兼容 OpenAI 协议(默认接 DeepSeek)。
+
+## 2. 安装
+
+**方式一:npm**(推荐,模块化项目)
+
+```bash
+npm install page-agent
+# 同时装 peer 依赖
+npm install zod @langchain/openai @langchain/core
+```
+
+```ts
+import { createPageAgent, z } from 'page-agent'
+```
+
+**方式二:CDN · ESM**(esm.sh 自动解析 peer,体积小)
+
+```html
+<script type="module">
+  import { createPageAgent, z } from 'https://esm.sh/page-agent'
+</script>
+```
+
+**方式三:CDN · IIFE 全量**(一行引入零配置,依赖全打包,适合无构建链路)
+
+```html
+<script src="https://unpkg.com/page-agent"></script>
+<script>
+  const { createPageAgent, z } = window.PageAgent
+</script>
+```
+
+## 3. 快速开始(3 分钟)
+
+最小可用例子 —— 让 Agent 能读写页面上的 `window.app`:
+
+```ts
+import { createPageAgent, z } from 'page-agent'
+
+// 1. 你的页面状态(任意结构)
+window.app = { title: '你好', theme: 'light' }
+
+// 2. 挂载 Agent
+createPageAgent({
+  container: '#agent',                    // 挂载点(选择器或 DOM 元素)
+  id: 'my-app',                           // 稳定 id(刷新后恢复对话)
+  storage: 'indexed',                     // 开启持久化
+  llm: {
+    apiKey: 'sk-xxx',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  },
+  systemPrompt: '你是页面助手。可读改 window.app 的 title / theme。',
+  windowProps: [
+    { path: 'app.title', description: '页面标题', schema: z.string() },
+    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
+  ],
+}).mount()
+```
+
+打开页面,在对话框输入「把主题改成 dark」→ Agent 调用 `set_window_prop` 直接改 `window.app.theme`。完。
+
+## 4. 核心概念
+
+| 概念 | 说明 |
+|---|---|
+| **Agent** | ReAct 循环:思考 → 调工具 → 观察 → 再思考,直到给出最终回复 |
+| **windowProps** | 你声明「Agent 可以读写 window 上哪些属性 + 值的 schema」。Agent 只能动这些(范围控制) |
+| **工具(tool)** | Agent 的手脚。内置 window/vfs/文档抓取工具 + 你用 `defineTool` 加的 |
+| **中间件(middleware)** | 插入 Agent 生命周期的钩子。内置 todos/skills/vfs/summarization/memory/permissions,也可自定义 |
+| **持久化(storage)** | 对话/工作区/todos/memory 落盘(IndexedDB 等),刷新可恢复 |
+
+**心智模型**:你只负责 ① 声明 `windowProps`(Agent 能碰什么)② 写 `systemPrompt`(Agent 该干嘛)③ 可选加 `tools`/`skills`/`middleware`。其余交给 Agent。
+
+## 5. 配置项参考
+
+```ts
+createPageAgent({
+  /* ===== 必填 ===== */
+  container: '#agent',          // 挂载点(选择器字符串 或 HTMLElement)
+  llm: {
+    apiKey: 'sk-xxx',           // LLM API Key
+    baseUrl: 'https://...',     // OpenAI 兼容端点(可选)
+    model: 'deepseek-chat',     // 模型名(可选)
+    temperature: 0.7,           // 温度(可选;操作大 JSON 建议 0.3)
+    maxTokens: 8192,            // 输出上限(可选;大 JSON 需调大)
+  },
+  // provider 抽离:llm 也可传任意 LangChain 模型实例(接 Anthropic/Google/Ollama 等,装对应 peerDep)
+  // llm: new ChatAnthropic({ model: 'claude-sonnet-4-...' }),
+
+  /* ===== 身份与隔离 ===== */
+  id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
+  systemPrompt: '...',          // Agent 身份与行为指令
+  shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
+
+  /* ===== 能力注入 ===== */
+  windowProps: [...],           // 可读写的 window 属性(范围 + schema 校验)
+  tools: [...],                 // 自定义工具(defineTool)
+  skills: [...],                // 渐进式披露技能(defineSkill)
+  memory: '...',                // AGENTS.md 风格持久指令
+  permissions: [...],           // scope 白名单(默认不启用)
+  middleware: [...],            // 自定义中间件(见第 7 节)
+
+  /* ===== 持久化与会话 ===== */
+  storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象/false(默认关闭)
+  session: { id?, autoResume?, title? },  // 会话控制
+
+  /* ===== 容量与鲁棒性 ===== */
+  vfs: { initialFiles?, maxBytes? },      // 虚拟工作区(默认内存上限 4MB,LRU 淘汰)
+  maxSnapshots: 20,             // 每个 window 属性快照数(默认 20,FIFO)
+  maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
+  maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
+  maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
+  capabilities: { planning: true, vfs: true },  // 内置能力开关(默认全开;关掉省 token/体积)
+
+  /* ===== UI 与其他 ===== */
+  streaming: true,              // 流式逐字输出(默认 true)
+  contextOptions: {...},        // 上下文压缩配置(false 关闭)
+  title: 'AI 助手',             // 对话框标题
+  placeholder: '输入消息...',   // 输入框占位
+  debug: false,                 // 调试日志
+}).mount()
+```
+
+## 6. 能力详解
+
+### 6.1 window 操作(让 Agent 改你的页面)
+
+这是 SDK 的核心。你用 `windowProps` 声明 Agent 能碰的属性:
+
+```ts
+windowProps: [
+  {
+    path: 'app.theme',          // window 上的路径,支持点号嵌套(app.user.name)
+    description: '页面主题',     // Agent 据此判断何时用
+    schema: z.enum(['light', 'dark', 'auto']),  // 写入时校验
+  },
+]
+```
+
+Agent 自主调用这些内置工具(无需你写):
+
+| 工具 | 作用 |
+|---|---|
+| `list_window_props` / `describe_window_prop` | 列出 / 查看可操作属性 |
+| `get_window_prop` / `get_window_paths` | 读属性(支持祖先/后代路径精确读局部) |
+| `set_window_prop` | 写属性(**按 schema 校验**,不合法返回错误不写入) |
+| `edit_window_prop` | 增量 patch(`components.0.text`),避免重传整个大 JSON |
+| `delete_window_prop` | 删属性 |
+| `snapshot_window_prop` / `list_window_snapshots` / `restore_window_snapshot` | 快照 / 回退 |
+
+**要点**:
+- **范围控制**:Agent 只能动 `windowProps` 里声明的路径,其它一律拒绝。
+- **schema 校验**:`set`/`edit` 不合法值会被拦截(不写入),返回结构化错误给 Agent 自纠。
+- **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_window_snapshot` 一键回退。
+- **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
+- **零桥接**:工具直接操作宿主页面主 `window`,无 iframe/shadow 隔离。
+
+### 6.2 自定义工具
+
+给 Agent 加任意能力(API 调用、计算、宿主页面操作……):
+
+```ts
+import { defineTool, z } from 'page-agent'
+
+const getWeather = defineTool({
+  name: 'get_weather',
+  description: '查询指定城市天气',
+  schema: z.object({ city: z.string().describe('城市名') }),
+  handler: async ({ city }) => {
+    const r = await fetch(`/api/weather?city=${city}`)
+    return await r.json()   // 返回 string 原样回传,其他值自动 JSON.stringify
+  },
+})
+
+createPageAgent({ /* ... */ tools: [getWeather] })
+```
+
+`handler` 里 `this`/全局 `window` 就是宿主页面,可直接操作 DOM 或调用页面已有方法。
+
+### 6.3 Skills(渐进式披露)
+
+把**大段上下文**(如组件库文档、操作指南)做成 skill,Agent 按需加载,避免一次性塞满 prompt:
+
+```ts
+import { defineSkill } from 'page-agent'
+
+createPageAgent({
+  skills: [
+    defineSkill({
+      name: 'component-lib',
+      description: '组件库使用文档',
+      whenToUse: '用户要用组件库搭页面时',
+      getContent: () => fetch('/docs/components.md').then(r => r.text()),
+    }),
+  ],
+})
+```
+
+Agent 会在需要时调用 `load_skill('component-lib')` 把内容载入上下文。
+
+### 6.4 Memory(持久指令)
+
+写入 AGENTS.md 风格的持久指令(项目规范、固定约束),**每次对话都生效**,且会持久化:
+
+```ts
+createPageAgent({
+  memory: `
+## 项目规范
+- 所有金额单位为分(整数)
+- 修改表单前必须先读取当前值
+- 颜色只用 #667eea / #764ba2 色系
+`,
+})
+```
+
+### 6.5 Planning(任务规划,自动)
+
+SDK 内置 todos 规划能力(中间件),**默认开启,无需配置**。遇到多步任务时,Agent 会:
+
+1. 调 `write_todos` 把任务拆成清单(pending / in_progress / completed)
+2. 逐项执行,每完成一项更新清单状态
+3. 清单每轮注入 prompt,Agent 始终看得到全局进度
+
+想让规划**可靠触发**,在 `systemPrompt` 里加一句引导:
+
+```ts
+systemPrompt: '遇到多步骤任务(≥3 步)时,先用 write_todos 拆解成清单,逐项执行并更新状态。'
+```
+
+简单任务 Agent 会直接做,不规划(符合预期)。todos 会随持久化保存,刷新可恢复。
+
+### 6.6 持久化与会话管理
+
+**开启**:给 `storage` 赋值即开启(默认关闭 = 纯内存):
+
+```ts
+storage: 'indexed'                          // IndexedDB(推荐,容量大)
+storage: 'session'                          // sessionStorage(标签页内)
+storage: 'local'                            // localStorage(持久)
+storage: 'memory'                           // 纯内存(测试/降级)
+storage: { backend: 'local', maxBytes: 2*1024*1024 }  // 配置对象
+storage: false                              // 显式关闭
+```
+
+**持久化什么**:对话历史 / vfs 工作区 / todos / memory。(window 快照栈不持久化 —— 刷新后宿主值已变。)
+
+**多 agent 隔离**:靠 `id` 区分。同页多个 Agent 传不同 `id`,数据互不串扰。
+
+**容量与淘汰**:各后端达上限自动按 LRU 淘汰最旧会话;隐私模式 / 撞配额自动降级内存,**不崩溃**。
+
+**会话切换(命令式)**:
+
+```ts
+const agent = createPageAgent({ id: 'my-app', storage: 'indexed', /* ... */ })
+await agent.mount()
+
+await agent.switchSession()              // 新建会话
+await agent.switchSession('session-xyz') // 切到指定会话(不存在则以该 id 新建)
+```
+
+**自动恢复**:`session.autoResume`(默认 true)刷新后自动恢复该 agent 最近会话。
+
+### 6.7 对话鲁棒性(重试 / 停止 / 重试)
+
+**① 自动重试(底层,对用户透明)**
+模型调用遇到网络错误 / 429 / 5xx 自动指数退避重试(默认 `maxRetries: 2` = 最多 3 次尝试)。4xx(参数错误)不重试。调 `maxRetries` 可改:
+
+```ts
+createPageAgent({ maxRetries: 4 })   // 更激进,适合网络不稳
+createPageAgent({ maxRetries: 0 })   // 关闭自动重试
+```
+
+**② 停止生成**
+对话框发送按钮在 Agent 思考/回复时变成灰色「■ 停止」按钮,点击立即中止。**已生成的内容会保留**(等同 ChatGPT 的停止),不会报错。
+
+**③ 出错重试**
+请求失败时,错误条上出现「重试」按钮,点击移除失败回复、用最后一条用户消息重发。
+
+### 6.8 上下文与内存上限
+
+长会话不会撑爆内存:
+
+- **上下文压缩**:`summarization` 中间件自动滑动窗口 + 摘要 + 关键词召回(默认开启)。
+- **对话历史上限**:`maxMemoryRounds`(默认 50)超限把最旧轮次压缩为一条摘要 system 消息。
+- **vfs 工作区上限**:`vfs.maxBytes`(默认 4MB)超限按 LRU 淘汰最旧文件。
+
+这些在 `storage: false`(纯内存)下也生效,防 OOM。
+
+### 6.9 子 agent(委派与并行)
+
+主 agent 可委派**独立子 agent**处理子任务,只把最终结论收回主上下文(**过程隔离**,省主 token)。默认开启,Agent 自动获得两个工具:
+
+- `spawn_agent({ prompt, role?, tools?, model? })` —— 委派一个子 agent
+- `spawn_agents({ tasks: [{ prompt, role? }, ...] })` —— 并行委派多个,聚合结论
+
+**适用**:分治大任务、多路调研、多视角审查、批量处理。
+
+```ts
+createPageAgent({
+  // ...
+  tools: [myResearchTool],
+  subagent: {
+    allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读 window + fetch)
+    maxDepth: 1,    // 递归深度(默认 1:主可 spawn,子不可再 spawn)
+    maxParallel: 4, // spawn_agents 并发上限(默认 4)
+    // enabled: false  // 关闭子 agent
+  },
+  maxParallelTools: 1,  // 同轮工具并发(默认 1 串行;与 subagent.maxParallel 不同)
+})
+```
+
+**要点**:
+- **过程隔离**:子 agent 的思考/工具调用**不进入主上下文**,只进最终结论(省 token + 不干扰主推理)。
+- **只读默认**:子 agent 默认只用只读工具(window 只读 + fetch),不直接改页面;写回交主 agent。经 `allowedTools` 放开额外工具。
+- **signal 继承**:主对话停止 → 子 agent 也停。
+- **进度展示**:子 agent 跑时,对话框里 `spawn_agents` 步骤下方**实时嵌套显示**每个子 agent 正在调用的工具(如 `[子任务1] get_source ✅`)。子过程**只进 UI、不进主上下文**。
+
+**自定义子 agent**(4 层级,从简到繁):
+- ① **配置级**:`subagent: { allowedTools, maxDepth, maxParallel, enabled }` —— 放开子 agent 可用工具、控制递归/并发
+- ② **调用级**:LLM 调 spawn 时按需设 `role`(子 agent 身份)/ `tools`(本次限定)/ `model`
+- ③ **引导级**:systemPrompt 指导何时/如何委派(如「多方案对比用 spawn_agents」)
+- ④ **高级**:直接 `createSubagentMiddleware({ llm, allTools, allowedTools, ... })` 自构造中间件(自定义 harness)
+
+> 子 agent 边界:默认**只读**(不改页面)、**过程隔离**(只回结论)、**递归物理切断**(maxDepth)、**signal 继承**(主停则子停)。
+
+**示例**:`npm run dev` 后访问
+- `/subagent.html` —— 方案并行调研(spawn_agents 基础)
+- `/custom.html` —— 多角色自定义评审(role + allowedTools,安全/性能/UX 三视角)
+
+## 7. 高级:自定义中间件
+
+最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。
+
+**8 个钩子**:
+
+| 钩子 | 时机 | 典型用途 |
+|---|---|---|
+| `beforeAgent(state)` | Agent 启动 | 初始化状态 |
+| `beforeModel(req)` | 每轮模型调用前 | 更新 state |
+| `augmentPrompt(state)` | 每轮渲染 system prompt | **增强提示词**(返回追加段) |
+| `compressInput(msgs)` | 构建上下文前 | 压缩历史 |
+| `wrapModelCall(req, next)` | 包裹模型调用 | **拦截/改写请求与响应** |
+| `afterModel(res, state)` | 模型返回后 | 观察/埋点 |
+| `wrapToolCall(ctx, next)` | 包裹工具执行 | **审计/拦截/改写工具** |
+| `tools` | (字段,非钩子) | 贡献自定义工具 |
+
+> 执行顺序:before 类正序、after 类逆序、wrap 类洋葱。用户中间件在内置之后注入。
+
+**例子 1:埋点/审计**(最常用)
+
+```ts
+import { createPageAgent, type Middleware } from 'page-agent'
+
+const analytics: Middleware = {
+  name: 'analytics',
+  afterModel: (res) => {
+    console.log('[埋点] 模型响应', { len: res.content.length, tools: res.toolCalls.length })
+  },
+  wrapToolCall: async (ctx, next) => {
+    const t = Date.now()
+    const result = await next(ctx)
+    console.log('[埋点] 工具', ctx.name, `${Date.now() - t}ms`, result.status)
+    return result
+  },
+  afterAgent: () => console.log('[埋点] 对话结束'),
+}
+
+createPageAgent({ /* ... */ middleware: [analytics] })
+```
+
+**例子 2:Prompt 增强**(注入运行时上下文)
+
+```ts
+const injectCtx: Middleware = {
+  name: 'inject-ctx',
+  augmentPrompt: () => `当前时间:${new Date().toLocaleString('zh-CN')}\n域名:${location.hostname}`,
+}
+```
+
+**例子 3:拦截写操作**
+
+```ts
+const guard: Middleware = {
+  name: 'guard',
+  wrapToolCall: async (ctx, next) => {
+    if (ctx.name === 'set_window_prop' && ctx.args.path === 'app.critical') {
+      return { content: '该字段禁止 Agent 修改', status: 'error' }  // 不调 next = 拦截
+    }
+    return next(ctx)
+  },
+}
+```
+
+> `page-demo/App.vue` 里有一个可直接运行(`npm run dev`)的埋点示例中间件。
+
+## 8. 命令式 API
+
+`createPageAgent()` 返回一个 `PageAgent` 实例:
+
+```ts
+const agent = createPageAgent({ /* ... */ })
+
+await agent.mount()                          // 渲染对话框(异步:含持久化恢复)
+await agent.send('把标题改成 Hello')          // 命令式发送,返回 AI 回复
+const newId = await agent.switchSession()    // 切换/新建会话(storage 未开启时抛错)
+const reply = await agent.stream(msgs, cb)   // 底层流式(高级:自行管理历史)
+agent.unmount()                              // 卸载
+```
+
+`send()` 与 UI 对话框共享同一份消息历史(唯一来源),命令式和 UI 可混用。
+
+**headless 模式**(自建 UI):`ui: false` 不渲染内置对话框,`agent.messages` 暴露**响应式消息数组**,集成方自行渲染 + 用 `send`/`stream` 驱动。适合 React/原生/自定义 UI。
+```ts
+const agent = createPageAgent({ llm, ui: false, id, storage })
+await agent.mount()
+agent.messages                // 响应式数组,自建 UI 据此渲染
+await agent.send('...')       // 发送(数组自动更新)
+agent.unmount()
+```
+
+**预设**(常见场景一键装载):
+```ts
+import { createPageAgent, presets } from 'page-agent'
+createPageAgent({ ...presets.pageBuilder, container: '#root', llm, windowProps })  // 页面构建助手
+createPageAgent({ ...presets.researcher, container, llm })                         // 并行调研
+createPageAgent({ ...presets.minimal, container, llm, windowProps })               // 极简(关高级能力)
+```
+可用预设:`pageBuilder`(读写 window 驱动页面)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
+
+## 9. 框架无关 / CDN 集成
+
+宿主页面无需任何构建链路,用 IIFE 全量包一行接入:
+
+```html
+<!DOCTYPE html>
+<html>
+<body>
+  <div id="agent"></div>
+  <script src="https://unpkg.com/page-agent"></script>
+  <script>
+    const { createPageAgent, z } = window.PageAgent
+    window.app = { count: 0 }
+    createPageAgent({
+      container: '#agent',
+      llm: { apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      windowProps: [{ path: 'app.count', description: '计数', schema: z.number() }],
+    }).mount()
+  </script>
+</body>
+</html>
+```
+
+完整示例见仓库 `demo/plain.html`(importmap + esm.sh)。⚠️ 第三方页注入时,AI 配置对该页 origin 可见,请注意。
+
+## 10. 环境变量
+
+开发时通过 `.env`(前缀 `VITE_`):
+
+| 变量 | 说明 |
+|---|---|
+| `VITE_AI_API_KEY` | API Key |
+| `VITE_AI_BASE_URL` | OpenAI 兼容端点 |
+| `VITE_AI_MODEL` | 模型名 |
+| `VITE_AI_TEMPERATURE` | 温度(操作大 JSON 建议 0.3) |
+| `VITE_AI_MAX_TOKENS` | 输出上限(默认 8192,大 JSON 需调大) |
+| `VITE_AI_SYSTEM_PROMPT` | 系统提示词(**必须单行**) |
+| `VITE_DEBUG` | 调试日志(生产 false) |
+| `VITE_CONTEXT_*` | 上下文压缩配置 |
+
+> 生产环境(库模式)由集成方在 `createPageAgent({ llm })` 显式传入,不依赖 `.env`。
+
+## 11. 常见问题与坑
+
+**Q: 刷新后对话没了?**
+A: 没开持久化。传 `storage: 'indexed'` + 稳定的 `id`(`id` 不传会随机生成并告警,刷新无法恢复)。
+
+**Q: Agent 报 `400 missing field tool_call_id`?**
+A: 这是 SDK 内部 LangChain 消息字段约定,已处理。如果你自定义中间件构造 `ToolMessage`,记得用 snake_case 的 `tool_call_id`。
+
+**Q: Agent 改不了某个 window 属性?**
+A: 该属性没在 `windowProps` 里声明(范围控制),或值不符合 `schema`(校验拦截)。检查这两点。
+
+**Q: 操作大 JSON 时 Agent 报错 / 截断?**
+A: ① 用 `edit_window_prop` 增量 patch 而非 `set` 重传整体;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
+
+**Q: 怎么关闭某项内置能力?**
+A: 用 `capabilities: { planning: false, skills: false, vfs: false, ... }` 关掉对应内置中间件(默认全开)。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+
+**Q: 多个 Agent 同页共存会串数据吗?**
+A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。
+
+**Q: 隐私模式 / 存储满了会崩吗?**
+A: 不会。自动降级内存,数据不丢(可能不再持久化),并触发 `degraded` 事件。
+
+---
+
+## 更多
+
+- 架构与文件清单:见 `doc/architecture.md` / `doc/architecture-files.md`
+- 框架无关集成示例:`demo/plain.html`
+- 开发自举 demo:`examples/page-demo/`(`npm run dev`)
+- 类型声明:`types/index.d.ts`

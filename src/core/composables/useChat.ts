@@ -11,9 +11,10 @@
  */
 import { reactive, ref, nextTick } from 'vue'
 import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
+import { isAbort } from '../harness/retry'
 
-type FetchFn = (messages: AgentMessage[]) => Promise<string>
-type StreamFn = (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>
+type FetchFn = (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>
+type StreamFn = (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
 
 export function useChat(
   opts: {
@@ -21,8 +22,8 @@ export function useChat(
     fetchStream?: StreamFn
     /** 外部共享的消息数组(持久化恢复时传入,与父级共用同一响应式引用) */
     messages?: AgentMessage[]
-    /** 一轮对话完成后回调(用于持久化) */
-    onPersist?: (messages: AgentMessage[]) => void
+    /** 一轮对话完成后回调(用于持久化);可返回 Promise,sendMessage 会 await 确保落盘后再关 loading */
+    onPersist?: (messages: AgentMessage[]) => void | Promise<void>
     /** 清空对话时回调(用于新建会话) */
     onClear?: () => void
   } = {},
@@ -38,6 +39,9 @@ export function useChat(
 
   /** 消息列表容器 DOM 引用,用于自动滚动 */
   const scrollContainer = ref<HTMLElement | null>(null)
+
+  /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage 新建,停止不影响后续发送) */
+  let currentController: AbortController | null = null
 
   function scrollToBottom() {
     nextTick(() => {
@@ -55,6 +59,7 @@ export function useChat(
   /**
    * 发送消息:添加用户消息 → 调用 AI → 添加 AI 回复
    * 优先使用流式(fetchStream),否则回退到非流式(fetchResponse / 模拟回复)
+   * 每次发送新建 AbortController;stop() 可中止,abort 不计入 error
    */
   async function sendMessage(content: string) {
     if (!content.trim() || state.loading) return
@@ -62,6 +67,10 @@ export function useChat(
     addMessage('user', content.trim())
     state.loading = true
     state.error = null
+
+    // 每轮新建 controller(支持停止;停止不影响后续发送)
+    currentController = new AbortController()
+    const signal = currentController.signal
 
     // 流式模式:先创建占位的 assistant 消息,随事件增量更新
     if (fetchStream) {
@@ -101,19 +110,44 @@ export function useChat(
               }
               break
             }
+            case 'subagent': {
+              // 子 agent 进度:挂到最后一个 spawn 步骤的 children 下(嵌套展示,不污染主步骤序列)
+              const spawnStep = assistantMsg.steps[assistantMsg.steps.length - 1]
+              if (!spawnStep) break
+              if (!spawnStep.children) spawnStep.children = []
+              const fullName = event.label ? `[${event.label}] ${event.name}` : event.name
+              if (event.kind === 'tool_call') {
+                spawnStep.children.push({ name: fullName, args: event.args, status: 'running' })
+              } else {
+                // tool_result:配对同名 running 子步骤,写入结果
+                for (let i = spawnStep.children.length - 1; i >= 0; i--) {
+                  if (spawnStep.children[i].status === 'running' && spawnStep.children[i].name === fullName) {
+                    spawnStep.children[i].result = event.result
+                    spawnStep.children[i].status = event.status || 'done'
+                    break
+                  }
+                }
+              }
+              break
+            }
           }
           scrollToBottom()
-        })
+        }, signal)
       } catch (err: any) {
-        state.error = err.message || '请求失败,请重试'
-        // 失败时移除空占位消息
+        // abort(用户停止)不计入 error;其他错误才提示
+        if (!isAbort(err, signal)) {
+          state.error = err.message || '请求失败,请重试'
+        }
+        // 失败时移除空占位消息(abort 时若已生成内容则保留)
         if (!assistantMsg.content && !assistantMsg.reasoning) {
           const idx = state.messages.indexOf(assistantMsg)
           if (idx >= 0) state.messages.splice(idx, 1)
         }
       } finally {
+        // 先 await 持久化完成再关 loading:确保 indexed 等异步后端在用户刷新前已落盘
+        await onPersist?.(state.messages)
         state.loading = false
-        onPersist?.(state.messages) // 持久化(含失败态:占位已移除后的真实状态)
+        currentController = null
       }
       return
     }
@@ -121,13 +155,16 @@ export function useChat(
     // 非流式模式
     try {
       const fetchFn = fetchResponse || defaultFetch
-      const response = await fetchFn(state.messages)
+      const response = await fetchFn(state.messages, signal)
       addMessage('assistant', response)
     } catch (err: any) {
-      state.error = err.message || '请求失败,请重试'
+      if (!isAbort(err, signal)) {
+        state.error = err.message || '请求失败,请重试'
+      }
     } finally {
+      await onPersist?.(state.messages)
       state.loading = false
-      onPersist?.(state.messages)
+      currentController = null
     }
   }
 
@@ -145,5 +182,28 @@ export function useChat(
     state.error = null
   }
 
-  return { state, scrollContainer, sendMessage, clearMessages }
+  /** 停止当前生成(abort) */
+  function stop() {
+    currentController?.abort()
+  }
+
+  /** 重试最后一条用户消息:移除其后所有消息(失败占位),清错误,重发 */
+  async function retry() {
+    if (!state.error) return // 仅出错时重试
+    const msgs = state.messages
+    let lastUserIdx = -1
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx < 0) return
+    const content = msgs[lastUserIdx].content
+    msgs.splice(lastUserIdx) // 移除该 user 及其后所有消息(失败的 assistant 占位)
+    state.error = null
+    await sendMessage(content) // sendMessage 会重新 push 该 user
+  }
+
+  return { state, scrollContainer, sendMessage, clearMessages, stop, retry }
 }
