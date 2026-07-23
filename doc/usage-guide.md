@@ -369,6 +369,25 @@ createPageAgent({
 - `/subagent.html` —— 方案并行调研(spawn_agents 基础)
 - `/custom.html` —— 多角色自定义评审(role + allowedTools,安全/性能/UX 三视角)
 
+### 6.10 MCP(外部工具接入)
+
+连远程 MCP server,动态把其 tools 注入 agent(标准化扩展工具生态):
+
+```ts
+createPageAgent({
+  mcp: [
+    { transport: 'http', url: 'https://mcp.example.com/mcp' },  // StreamableHTTP(推荐,fetch)
+    { transport: 'websocket', url: 'wss://mcp.example.com/ws' },
+    // { transport: 'sse', url: '...' },  // 需 eventsource(旧式)
+  ],
+})
+```
+
+- **浏览器仅远程 transport**:`http`(fetch)/ `websocket`(原生 WebSocket)/ `sse`(eventsource);不支持 `stdio`(无 node)。
+- **动态加载**:仅配了 `mcp` 才加载 `@modelcontextprotocol/sdk`(optional peerDep;ESM/UMD 集成方按需装,IIFE 已打进)。
+- **故障隔离**:单 server 连接失败跳过 + `console.warn`,不影响主 agent 与其他 server。
+- MCP 工具自动出现在 `agent.inspect()` 与 DebugDrawer「Agent 信息」tab。
+
 ## 7. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。

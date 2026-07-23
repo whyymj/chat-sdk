@@ -18,6 +18,7 @@ import { applyUpdate, runBeforeAgent, runAfterModel } from '../harness/middlewar
 import { isAbort, isRetryable, withRetry } from '../harness/retry'
 import { runPool } from '../utils/pool'
 import { createSubagentMiddleware } from '../harness/subagent'
+import { extractText } from '../mcp/client'
 import { createInitialState as createState } from '../harness/state'
 import {
   encodeKey,
@@ -687,6 +688,22 @@ console.log('\n[subagent]')
     return { content: 'ok', status: 'done' as const }
   })
   assert(probe.v, 'subagent: wrapToolCall 透传 next(不阻塞工具执行)')
+}
+
+// ============ mcp(extractText 纯函数:MCP callTool 结果 → 文本) ============
+console.log('\n[mcp]')
+{
+  assert(extractText({ content: [{ type: 'text', text: 'hello' }] }) === 'hello', 'extractText: 单 text 提取')
+  assert(
+    extractText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }) === 'a\nb',
+    'extractText: 多 text 换行拼接',
+  )
+  assert(extractText({ content: [{ type: 'image', data: 'abc123' }] }) === '[image:abc123…]', 'extractText: image 占位')
+  assert(extractText({ content: [] }) === '', 'extractText: 空 content → 空串')
+  assert(extractText({} as any) === '', 'extractText: 无 content 字段 → 空串')
+  const err = extractText({ content: [{ type: 'text', text: '失败原因' }], isError: true })
+  assert(/工具错误/.test(err) && /失败原因/.test(err), 'extractText: isError 标注"工具错误"')
+  assert(extractText({ content: [{ type: 'resource', resource: { text: 'res' } }] }) === 'res', 'extractText: resource.text 提取')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

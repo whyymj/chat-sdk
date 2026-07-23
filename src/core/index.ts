@@ -11,6 +11,8 @@ export { createPageAgent } from './sdk/createPageAgent'
 export type { PageAgentOptions, PageAgent, LLMConfig } from './sdk/createPageAgent'
 export { defineTool, defineToolset } from './sdk/defineTool'
 export { presets } from './presets'
+export { connectMcp, extractText } from './mcp/client'
+export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
 export { createAgent } from './harness/createAgent'
 export type { CreateAgentOptions, DebugLog } from './harness/createAgent'

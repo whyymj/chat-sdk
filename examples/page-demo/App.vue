@@ -11,6 +11,7 @@ import { defineSkill } from '../../src/core/harness/skills'
 import type { Middleware } from '../../src/core/harness/middleware'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
+import DevNav from '../_shared/DevNav.vue'
 import { initialPage, pageWindowProps, pageBuilderSkillContent } from './pageSchema'
 
 const cfg = useAgentConfig()
@@ -89,6 +90,7 @@ onUnmounted(() => agent?.unmount())
 </script>
 
 <template>
+  <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
       <PageRenderer />

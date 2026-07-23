@@ -20,7 +20,12 @@
   - [x] `createPageAgent` middlewares 按 capabilities 条件装载(usePlanning/useSkills/...);subagent 合并 `capabilities.subagent` 与 `subagent.enabled`
   - [x] 文档标注中间件依赖(vfs 关 → 大结果退化截断;summarization 关 → 长会话不压缩):CLAUDE.md / usage-guide(含 FAQ 更新)
   - [x] 门禁 tsc/test/build 通过;`agent.inspect()` 可验证关掉后工具集缩减
-- [ ] **Phase 4 — MCP client**(待规划:新依赖 + 体积评估,拟拆单独 change 推进)
+- [x] **Phase 4 — MCP client** ✅ 已实现(用官方 `@modelcontextprotocol/sdk` 1.29)
+  - [x] 新模块 `src/core/mcp/client.ts`(`connectMcp` + `buildTransport` 按需动态 import transport + `extractText` + `toLangChainTool`)
+  - [x] `createPageAgent({ mcp: [{ transport:'http'|'sse'|'websocket', url, name?, requestInit? }] })`;`AgentCore.mcpClosers`;`initDone` 内 `createAgent` 前 `Promise.allSettled` 连接 + 注入 `allTools`;`release` 关闭
+  - [x] 工具转换:MCP `inputSchema`(JSON Schema)直传 LangChain `tool()`(零转换);故障隔离(单 server 挂跳过 + warn)
+  - [x] 构建:SDK optional peerDep + devDep;ESM/UMD external;IIFE 打进(1.59MB,增 ~210KB);门禁 tsc/test/build 通过(`extractText` 自测 7 项,共 121)
+  - [ ] 浏览器实测接真实 MCP server(需用户接入验证 StreamableHTTP/SSE 实跑)
   - [ ] 新模块 `src/core/mcp/`(client + SSE/WebSocket transport)
   - [ ] `createPageAgent({ mcp: [{ transport, url }, ...] })`
   - [ ] mount 时连 server → listTools → 转 StructuredToolInterface → 合并 allTools

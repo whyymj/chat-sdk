@@ -79,6 +79,7 @@ export interface AgentInfo {
   subagent: SubagentInfo;
 }
 export interface Toolset { name: string; tools: unknown[]; }
+export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
 
@@ -208,6 +209,8 @@ export interface PageAgentOptions {
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number };
+  /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
+  mcp?: McpServerConfig[];
   contextOptions?: any;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;

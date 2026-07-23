@@ -8,7 +8,9 @@
   "types": "./types/index.d.ts",
   "unpkg": "./dist/page-agent.iife.js",
   "jsdelivr": "./dist/page-agent.iife.js",
-  "sideEffects": ["**/*.css"],
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
@@ -17,16 +19,32 @@
     },
     "./style.css": "./dist/page-agent.css"
   },
-  "files": ["dist", "types"],
+  "files": [
+    "dist",
+    "types"
+  ],
   "scripts": {
     "dev": "vite",
+    "mcp:mock": "tsx scripts/mcp-mock-server.ts",
+    "mcp:probe": "tsx scripts/mcp-probe.ts",
     "build": "npm run build:lib && npm run build:iife",
     "build:lib": "vite build",
     "build:iife": "vite build --config vite.iife.config.ts",
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts"
   },
-  "keywords": ["ai", "agent", "llm", "tool-calling", "react", "vue3", "chat", "dialog", "sdk", "window"],
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "tool-calling",
+    "react",
+    "vue3",
+    "chat",
+    "dialog",
+    "sdk",
+    "window"
+  ],
   "author": "",
   "license": "ISC",
   "publishConfig": {
@@ -34,6 +52,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
@@ -52,6 +71,10 @@
   "peerDependencies": {
     "@langchain/core": "^1.2.2",
     "@langchain/openai": "^1.5.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": { "optional": true }
   }
 }

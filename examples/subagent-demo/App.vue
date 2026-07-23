@@ -10,6 +10,7 @@
  */
 import { onMounted, onUnmounted, ref } from 'vue'
 import { createPageAgent, defineTool, z, type PageAgent } from '../../src/core'
+import DevNav from '../_shared/DevNav.vue'
 
 // 模拟三个「方案」(子 agent 并行调研的对象;真实场景可换成 API/数据库/文档源)
 const SOURCES: Record<'A' | 'B' | 'C', { name: string; cost: string; speed: string; risk: string; desc: string }> = {
@@ -40,7 +41,7 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是方案调研助手。当用户要对比/评估多个方案时,【必须】用 spawn_agents 并行委派子 agent:每个子 agent 用 get_source 调研一个方案并给出该方案的评估要点,你再汇总对比并给出推荐。单个方案的问题可用 spawn_agent。子 agent 之间互不通信,由你聚合。',
+      '你是方案调研助手。当用户要对比/评估多个方案时,【必须】用 spawn_agents 并行委派子 agent:每个子 agent 设相应 role(如"A 方案分析师")并用 get_source 调研一个方案,给出该方案的评估要点,你再汇总对比并给出推荐。单个方案的问题可用 spawn_agent(可设 role/tools/model)。子 agent 之间互不通信,由你聚合。',
     tools: [getSource],
     subagent: { allowedTools: ['get_source'] }, // 子 agent 可用 get_source(默认只读 window/fetch 之外)
     debug: true,
@@ -53,6 +54,7 @@ onUnmounted(() => agent?.unmount())
 </script>
 
 <template>
+  <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
       <h2>🧬 子 Agent 并行编排</h2>

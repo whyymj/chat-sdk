@@ -22,6 +22,7 @@
 - **构建**:Vite 8(库模式 `build.lib`)
 - **语言**:TypeScript 7
 - **AI**:LangChain **浏览器子包**(`@langchain/openai` + `@langchain/core`),兼容 OpenAI 协议(默认接 DeepSeek);**provider 抽离**:`llm` 可传任意 LangChain `BaseChatModel` 实例(如 `ChatAnthropic`,装对应 peerDep),或 `LLMConfig` 配置对象(内部构造 `ChatOpenAI`)。**不引入** `langchain` 整包 / LangGraph
+- **MCP**:`@modelcontextprotocol/sdk`(**optional peerDep**,动态 import;仅 `options.mcp` 用时加载,不用 MCP 不强求装)。浏览器仅 http/sse/websocket 远程 transport
 - **校验**:zod 4(window 属性 schema、工具参数)
 - **Markdown**:`marked` + `highlight.js`(打包进库)
 
@@ -31,7 +32,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,114 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,121 项断言)
 ```
 
 ## 环境配置
@@ -60,20 +61,22 @@ src/
     ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
     ├── backends/storage.ts     # IndexedDB 持久化(降级内存)+ 多 agent 隔离 + 配额/LRU 淘汰
+    ├── mcp/client.ts           # MCP client(连远程 server,动态注入 tools;动态 import SDK)
     ├── utils/                  # offload(大结果外存)/ rounds / pool(并发池)
     ├── composables/            # useChat / useContextManager / useMarkdown
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
-    ├── __tests__/selftest.ts   # 自测(114 项)
+    ├── __tests__/selftest.ts   # 自测(121 项)
     └── index.ts                # 库唯一入口(只导出通用核心)
 examples/
+├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
 ├── page-demo/                  # 定制 demo(开发自举):App / main / PageRenderer / pageSchema / useAgentConfig
 ├── subagent-demo/              # 子 agent 并行编排示例(/subagent.html)
-└── subagent-custom/            # 自定义子 agent(多角色评审)示例(/custom.html)
+└── mcp-demo/                   # MCP 集成示例(/mcp.html,需 npm run mcp:mock)
 index.html                      # dev 入口(指向 examples/page-demo/main.ts)
 subagent.html                   # dev 入口(指向 examples/subagent-demo/main.ts)
-custom.html                     # dev 入口(指向 examples/subagent-custom/main.ts)
+mcp.html                        # dev 入口(指向 examples/mcp-demo/main.ts)
 doc/                            # architecture.md(架构图)+ README.md(索引)
 demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 ```
@@ -134,6 +137,14 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **配置**:`subagent: { enabled?, allowedTools?, maxDepth?, maxParallel? }`(默认开启);`maxParallelTools`(同轮工具并发,默认 1 串行,>1 时注意 todos 等有状态中间件计数)
 - **示例**:`examples/subagent-demo/`(`npm run dev` → `/subagent.html`)
 
+### MCP(外部工具标准接入)
+- `createPageAgent({ mcp: [{ transport: 'http'|'sse'|'websocket', url, name?, requestInit? }] })` 连远程 MCP server,动态把其 tools 注入 agent(`Promise.allSettled` 故障隔离)
+- **动态 import** `@modelcontextprotocol/sdk`(optional peerDep,仅用时加载);子路径:`/client`(Client)+ `/client/<transport>.js`(按需 transport)
+- **浏览器仅远程 transport**:`http`(StreamableHTTP/fetch)/ `websocket`(原生)/ `sse`(需 eventsource);不支持 stdio
+- **零转换**:MCP `inputSchema`(JSON Schema)直传 LangChain `tool()`;工具注入在 `initDone` 内 `createAgent` 前(`bindTools` 固化)
+- **构建**:ESM/UMD external(peerDep);IIFE 打进(单文件 ~1.59MB)
+- **dev 预构建坑**:`vite.config.ts` 的 `optimizeDeps.include` 已预声明 SDK 4 个子路径(`/client` + `streamableHttp.js`/`sse.js`/`websocket.js`)。否则 dev **冷启动首次**访问 MCP 页时,动态 import 的深子路径未被预声明 → 首次注入失败(「注入 0 个工具」,reload 后才正常)。排查:`npm run mcp:probe`(node 侧验证 `connectMcp` 连通性)
+
 ## 关键约定与坑
 
 ### LangChain 消息字段名
@@ -152,7 +163,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,114 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent 结构),不依赖 LLM;子 agent 运行时(依赖 LLM)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,121 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText),不依赖 LLM;子 agent / MCP 运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts

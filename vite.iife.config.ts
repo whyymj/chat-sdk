@@ -30,6 +30,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         exports: 'named',
+        // IIFE 单文件(codeSplitting: false)自动内联动态 import → MCP SDK 经此打进(无需显式 inlineDynamicImports)
         // 注入到 IIFE 函数体顶部(IIFE 内局部 var,不污染全局):宿主有 process(Node)则用之,否则用浏览器 shim
         intro:
           'var process=(typeof process!=="undefined")?process:{env:{NODE_ENV:"production"},version:"",platform:"browser",arch:"browser",versions:{},argv:[]};',

@@ -23,7 +23,7 @@
 3. **归档**:实现完成后将 `specs/` 增量合入 `openspec/specs/`(系统真相源),change 移入 `openspec/changes/archive/`。
 
 ## 进行中的 change
-- `changes/generalize-page-agent/`:通用化抽离。**部分完成**(Phase 1 provider / 2 headless / 3 capabilities / 6 presets 已实现并门禁通过);Phase 4 MCP 待规划(单独 change);Phase 5 DataSource 暂缓。详见 `tasks.md`。
+- `changes/generalize-page-agent/`:通用化抽离。**Phase 1/2/3/4/6 已实现**(provider / headless / capabilities / MCP / presets);Phase 5 DataSource 暂缓。待浏览器实测 MCP 后可归档。详见 `tasks.md`。
 
 ## 最近完成的 change(已归档)
 - `changes/archive/refactor-to-page-agent-sdk/`:重构为框架无关页面内 Agent SDK(实现完成,自测 33/33,规范已合入 `openspec/specs/page-agent-core.md`)。

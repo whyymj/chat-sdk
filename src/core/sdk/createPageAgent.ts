@@ -26,6 +26,7 @@ import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import type { Middleware } from '../harness/middleware'
 import { createSubagentMiddleware } from '../harness/subagent'
+import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -112,6 +113,8 @@ export interface PageAgentOptions {
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number }
+  /** MCP server 列表(连远程 server,动态把其 tools 注入 agent;浏览器仅 http/sse/websocket transport) */
+  mcp?: McpServerConfig[]
   /** 上下文压缩配置(false 关闭;默认索引摘要零成本) */
   contextOptions?: Partial<ContextManagerOptions> | false
   /** 流式输出(默认 true 逐字流式);false 时等整段回复再显示(底层仍 stream 聚合) */
@@ -172,6 +175,8 @@ interface AgentCore {
   sessionId: string
   /** 引用计数(shareContext 时多实例共用一个 core) */
   refCount: number
+  /** MCP client closers(unmount/release 时关闭) */
+  mcpClosers: Array<() => Promise<void>>
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -276,6 +281,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     initDone: Promise.resolve(),
     sessionId: '',
     refCount: 0,
+    mcpClosers: [],
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -341,6 +347,8 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           void store.flush()
           store.dispose()
         }
+        const closers = core.mcpClosers.splice(0)
+        if (closers.length) void Promise.allSettled(closers.map((c) => c()))
         sharedCores.delete(agentId)
       }
     },
@@ -441,6 +449,18 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   // 初始化:解析会话 + 恢复 + 构造 agent(异步,不阻塞 buildCore 返回)
   core.initDone = (async (): Promise<void> => {
     await resolveAndLoad()
+    // MCP:连所有 server(故障隔离),工具注入 allTools(createAgent 前 —— 构造后 bindTools 固化)
+    if (options.mcp?.length) {
+      const results = await Promise.allSettled(options.mcp.map((c) => connectMcp(c)))
+      core.mcpClosers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
+      const mcpTools = results.flatMap((r, i) => {
+        if (r.status === 'fulfilled') return r.value.tools
+        console.warn(`[page-agent][mcp] server ${options.mcp![i].name ?? options.mcp![i].url} 连接失败:`, r.reason)
+        return []
+      })
+      allTools.push(...mcpTools)
+      if (options.debug) console.log(`[page-agent][mcp] 注入 ${mcpTools.length} 个工具`)
+    }
     core.agent = createAgent({
       // provider 抽离:llm 为模型实例则注入,否则按配置构造 ChatOpenAI
       ...(isChatModel(options.llm)
