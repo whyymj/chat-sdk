@@ -22,7 +22,7 @@ export type { PermissionRule, PermissionOp } from './harness/permissions'
 // 虚拟工作区
 export { createVfs } from './backends/vfs'
 // 持久化存储(IndexedDB + 多 agent 隔离 + 全局配额/LRU 淘汰)
-export { createSessionStore, createMemoryBackend, createWebStorageBackend } from './backends/storage'
+export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, ToolStep } from './types'

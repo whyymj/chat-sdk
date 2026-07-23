@@ -20,6 +20,8 @@ import {
   encodeKey,
   estimateBytes,
   selectForEviction,
+  isQuotaError,
+  defaultMaxBytesFor,
   createMemoryBackend,
   createSessionStore,
 } from '../backends/storage'
@@ -212,6 +214,15 @@ console.log('\n[vfs]')
 
   r = await invoke(t['vfs_read'], { path: 'a.txt', offset: 1, limit: 1 })
   assert(/LINE2/.test(r), 'vfs_read 分页(offset/limit)')
+
+  // 内存上限 + LRU 淘汰:maxBytes 极小,写入超限 → 淘汰到 ≤ watermark(剩 2 个,无关哪个被删)
+  const store2 = createVfs({}, { maxBytes: 30 })
+  const t2 = byName(createVfsTools(store2))
+  await invoke(t2['vfs_write'], { path: 'a.txt', content: 'A'.repeat(10) })
+  await invoke(t2['vfs_write'], { path: 'b.txt', content: 'B'.repeat(10) })
+  await invoke(t2['vfs_write'], { path: 'c.txt', content: 'C'.repeat(10) })
+  await invoke(t2['vfs_write'], { path: 'd.txt', content: 'D'.repeat(10) }) // 总 40 > 30
+  assert(Object.keys(store2.files).length === 2, 'vfs maxBytes 淘汰:超限后 LRU 删到 ≤ watermark(剩 2 个)')
 }
 
 // ============ todos 中间件 ============
@@ -312,6 +323,16 @@ console.log('\n[storage]')
   const cyclic: Record<string, unknown> = {}
   cyclic.self = cyclic
   assert(estimateBytes(cyclic) === 0, 'estimateBytes 不可序列化(循环引用)返回 0')
+
+  // isQuotaError(运行时降级判定)
+  assert(isQuotaError({ name: 'QuotaExceededError' }) === true, 'isQuotaError 识别 QuotaExceededError')
+  assert(isQuotaError({ name: 'NS_ERROR_DOM_QUOTA_REACHED' }) === true, 'isQuotaError 识别 Firefox 配额错误名')
+  assert(isQuotaError(new Error('x')) === false, 'isQuotaError 普通错误返回 false')
+  assert(isQuotaError(null) === false, 'isQuotaError null 安全返回 false')
+
+  // 默认配额按后端类型(WebStorage 贴合浏览器 ~5MB 上限并留余量)
+  assert(defaultMaxBytesFor('local') === 4 * 1024 * 1024 && defaultMaxBytesFor('session') === 4 * 1024 * 1024, '默认配额:local/session = 4MB')
+  assert(defaultMaxBytesFor('indexed') === 50 * 1024 * 1024 && defaultMaxBytesFor('memory') === 50 * 1024 * 1024, '默认配额:indexed/memory = 50MB')
 
   // LRU 选择
   const metas = [
@@ -455,6 +476,56 @@ console.log('\n[storage]')
   })
   const ok8 = await s8.ready
   assert(ok8 === false && !memDegraded, 'backend:memory → 显式内存后端(ready=false,非降级不触发 degraded)')
+
+  // 运行时 QuotaExceeded:mock sessionStorage setItem 超量抛错 → 淘汰最旧 + 降级 memory + degraded 事件 + 数据不丢
+  const quotaStorage = () => {
+    const m = new Map<string, string>()
+    return {
+      get length() {
+        return m.size
+      },
+      key: (i: number) => Array.from(m.keys())[i] ?? null,
+      getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+      setItem: (k: string, v: string) => {
+        if (m.size >= 2) {
+          // 模拟浏览器配额超限
+          const e = new Error('quota exceeded')
+          ;(e as Error & { name: string }).name = 'QuotaExceededError'
+          throw e
+        }
+        m.set(k, v)
+      },
+      removeItem: (k: string) => {
+        m.delete(k)
+      },
+      clear: () => {
+        m.clear()
+      },
+    }
+  }
+  ;(globalThis as any).sessionStorage = quotaStorage()
+  const s9 = createSessionStore({ backend: 'session', debounceMs: 10 })
+  let runtimeDegraded = false
+  s9.onEvent((e) => {
+    if (e.type === 'degraded') runtimeDegraded = true
+  })
+  await s9.ready
+  const sid9 = await s9.createSession('q9') // 写 1 条 meta
+  await s9.save('q9', sid9, { memory: 'X'.repeat(50) }) // 写 memory 成功 + 写 meta 撞配额
+  await s9.flush()
+  await new Promise((r) => setTimeout(r, 20)) // 等 degraded emit 的微任务
+  const snap9 = await s9.load('q9', sid9)
+  assert(runtimeDegraded && snap9?.memory === 'X'.repeat(50), '运行时 QuotaExceeded → 淘汰+降级 memory(degraded 事件)+ 数据不丢(load 可读)')
+
+  // backend:local → localStorage round-trip(对称已测的 session;IdbBackend 需真实 IndexedDB,仅手动验证)
+  ;(globalThis as any).localStorage = mockStorage()
+  const s10 = createSessionStore({ backend: 'local', debounceMs: 10 })
+  assert((await s10.ready) === true, 'backend:local → ready=true(持久,路由 localStorage)')
+  const sid10 = await s10.createSession('weblocal')
+  await s10.save('weblocal', sid10, { memory: 'hello-local' })
+  await s10.flush()
+  const snap10 = await s10.load('weblocal', sid10)
+  assert(snap10?.memory === 'hello-local', 'backend:local → localStorage save/load round-trip')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

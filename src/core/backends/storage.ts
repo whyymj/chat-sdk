@@ -18,7 +18,8 @@ import { makeId } from '../utils/id'
 
 // ===== 默认值 =====
 const DEFAULT_DB_NAME = 'page-agent'
-const DEFAULT_MAX_BYTES = 50 * 1024 * 1024 // 全局总配额 50MB
+const DEFAULT_MAX_BYTES = 50 * 1024 * 1024 // indexed/memory 默认全局总配额 50MB
+const DEFAULT_WEB_STORAGE_MAX_BYTES = 4 * 1024 * 1024 // local/session 默认配额 4MB(浏览器 WebStorage ~5MB,留余量给宿主页)
 const DEFAULT_MAX_BYTES_PER_SESSION = 10 * 1024 * 1024 // 单会话软上限 10MB
 const DEFAULT_WATERMARK = 0.9 // 淘汰到 0.9*maxBytes 留余量
 const DEFAULT_DEBOUNCE_MS = 500
@@ -97,6 +98,19 @@ export interface StorageBackend {
   scan(prefix: string, cb: (key: string, value: unknown) => boolean | void): Promise<void>
   /** 范围删除(游标逐条 startsWith 精确删) */
   clearPrefix(prefix: string): Promise<void>
+}
+
+/** 后端类型 → 默认全局配额(WebStorage 贴合浏览器 ~5MB 上限并留余量,避免运行时频繁 QuotaExceeded) */
+export function defaultMaxBytesFor(backendType: StorageBackendType): number {
+  return backendType === 'local' || backendType === 'session' ? DEFAULT_WEB_STORAGE_MAX_BYTES : DEFAULT_MAX_BYTES
+}
+
+/** 判断是否存储配额超限错误(QuotaExceededError / NS_ERROR_DOM_QUOTA_REACHED / legacy code) */
+export function isQuotaError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') return false
+  const e = err as { name?: string; code?: number }
+  if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') return true
+  return e.code === 22 || e.code === 1014 // DOMException.QUOTA_ERR(legacy)
 }
 
 // ===== 纯函数:key 编码 / 字节估算 / LRU 选择(可单测)=====
@@ -314,7 +328,8 @@ function runSerial<T>(chains: Map<string, Promise<unknown>>, key: string, fn: ()
 // ===== SessionStore(编排层)=====
 export function createSessionStore(config: StorageConfig = {}): SessionStore {
   const dbName = config.dbName ?? DEFAULT_DB_NAME
-  const maxBytes = config.maxBytes ?? DEFAULT_MAX_BYTES
+  const backendType = config.backend ?? 'indexed'
+  const maxBytes = config.maxBytes ?? defaultMaxBytesFor(backendType)
   const maxBytesPerSession = config.maxBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION
   const watermark = config.evictionWatermark ?? DEFAULT_WATERMARK
   const debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE_MS
@@ -331,6 +346,7 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
   }
 
   let backend: StorageBackend
+  let degradedToMemory = false // 运行时撞配额后一次性降级标志(避免反复重试)
   let readyResolve!: (v: boolean) => void
   const ready = new Promise<boolean>((r) => {
     readyResolve = r
@@ -338,7 +354,6 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
 
   // 启动:按 backend 类型选后端;不可用降级 memory(永不冒泡)
   ;(async () => {
-    const backendType = config.backend ?? 'indexed'
     try {
       if (backendType === 'indexed') {
         if (typeof indexedDB === 'undefined') throw new Error('indexedDB 不可用')
@@ -382,7 +397,8 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
   function commit(fullKey: string, value: unknown, agentId: string, sessionId: string): Promise<void> {
     const metaKey = encodeKey(dbName, agentId, sessionId, META_KIND)
     return runSerial(chains, metaKey, async () => {
-      try {
+      // 单次写:读 meta → 配额检查 → set 数据 → set meta → 触发淘汰
+      const writeOnce = async (): Promise<void> => {
         const meta = (await backend.get(metaKey)) as SessionMeta | undefined
         const old = await backend.get(fullKey)
         const oldBytes = old != null ? estimateBytes(old) : 0
@@ -400,8 +416,29 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
         updated.lastAccessed = now
         await backend.set(metaKey, updated)
         scheduleEviction()
-      } catch {
-        // 写失败不抛(降级语义:storage 永不冒泡到用户代码)
+      }
+      try {
+        await writeOnce()
+      } catch (err) {
+        // 运行时撞浏览器真实配额(QuotaExceededError):先淘汰最旧会话腾空间,再降级内存兜底重写
+        if (isQuotaError(err) && !degradedToMemory) {
+          degradedToMemory = true
+          try {
+            await maybeEvict()
+          } catch {
+            /* 淘汰失败忽略 */
+          }
+          backend = createMemoryBackend()
+          Promise.resolve().then(() =>
+            emit({ type: 'degraded', reason: '存储配额超限(QuotaExceededError),已淘汰最旧会话并降级内存' }),
+          )
+          try {
+            await writeOnce() // 降级后重写(写进内存,数据不丢)
+          } catch {
+            /* 降级后仍失败则放弃,不冒泡 */
+          }
+        }
+        // 其它写失败:静默不抛(降级语义:storage 永不冒泡到用户代码)
       }
     })
   }

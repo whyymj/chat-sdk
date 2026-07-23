@@ -149,18 +149,24 @@ export interface PageAgentOptions {
   storage?: StorageBackendType | StorageConfig | false;
   /** 会话控制 */
   session?: SessionOptions;
+  /** 共享上下文:默认 false;true 时同 id 复用同一核心(messages/agent/工作区) */
+  shareContext?: boolean;
   systemPrompt?: string;
   tools?: any[];
   skills?: SkillSpec[];
   memory?: string;
   windowProps?: WindowPropSpec[];
   permissions?: PermissionRule[];
-  vfs?: { initialFiles?: Record<string, string> };
+  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
   /** 每个 window 属性最多保留快照数(默认 20) */
   maxSnapshots?: number;
+  /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
+  maxMemoryRounds?: number;
   debug?: boolean;
   maxToolRounds?: number;
   contextOptions?: any;
+  /** 流式输出(默认 true);false 时等整段回复再显示 */
+  streaming?: boolean;
   title?: string;
   placeholder?: string;
 }
@@ -169,6 +175,7 @@ export interface PageAgent {
   mount(): Promise<void>;
   unmount(): void;
   send(message: string): Promise<string>;
+  switchSession(sessionId?: string): Promise<string>;
   stream: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>;
 }
 
@@ -184,3 +191,4 @@ export declare function createAgent(options: any): any;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
+export declare function isQuotaError(err: unknown): boolean;

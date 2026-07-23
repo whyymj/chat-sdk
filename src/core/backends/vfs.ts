@@ -18,6 +18,19 @@ export interface VfsPersist {
   save?: (files: Record<string, VfsFile>) => void
 }
 
+/** createVfs 选项 */
+export interface VfsOptions {
+  /** 持久化钩子(可选) */
+  persist?: VfsPersist
+  /** 工作区内存字节上限(默认 4MB);超限按 updatedAt 最旧 LRU 淘汰。纯内存(storage:false)也生效 */
+  maxBytes?: number
+}
+
+/** 工作区默认内存上限(大结果外存累积的 OOM 兜底) */
+export const DEFAULT_VFS_MAX_BYTES = 4 * 1024 * 1024
+/** 淘汰水位:淘汰到 maxBytes*0.9 留余量(与 storage 口径一致) */
+const DEFAULT_VFS_WATERMARK = 0.9
+
 export interface VfsStore {
   files: Record<string, VfsFile>
   /** 持久化恢复:直接灌入 raw target,不触发 save(仅 persist 模式) */
@@ -35,7 +48,7 @@ export interface VfsStore {
  */
 export function createVfs(
   initialFiles?: Record<string, string>,
-  opts: { persist?: VfsPersist } = {},
+  opts: VfsOptions = {},
 ): VfsStore {
   // Object.create(null):无原型链,防 __proto__/constructor 原型污染(LLM 可控的 path)
   const files = Object.create(null) as Record<string, VfsFile>
@@ -46,6 +59,23 @@ export function createVfs(
   }
 
   const { persist } = opts
+  const maxBytes = opts.maxBytes ?? DEFAULT_VFS_MAX_BYTES
+
+  /**
+   * 内存上限淘汰:总字节超 maxBytes → 按 updatedAt 最旧 LRU 删到 ≤ maxBytes*watermark。
+   * 直接操作 raw target(不触发 Proxy 拦截,避免递归)。
+   * 纯内存(storage:false)也生效 —— 大结果外存累积的 OOM 兜底。
+   */
+  function enforceLimit(): void {
+    if (estimateFileBytes(files) <= maxBytes) return
+    const target = maxBytes * DEFAULT_VFS_WATERMARK
+    const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+    for (const [k] of ordered) {
+      delete files[k]
+      if (estimateFileBytes(files) <= target) break
+    }
+  }
+
   let saveTimer: ReturnType<typeof setTimeout> | null = null
 
   function doSave(): void {
@@ -64,27 +94,31 @@ export function createVfs(
     }, 800)
   }
 
-  // Proxy 捕获 set/deleteProperty → debounce save;6 个 vfs 工具 + offload 写入点零改动
-  const proxy = persist
-    ? new Proxy(files, {
-        set(target, key, value) {
-          const ok = Reflect.set(target, key, value)
-          if (ok) scheduleSave()
-          return ok
-        },
-        deleteProperty(target, key) {
-          const ok = Reflect.deleteProperty(target, key)
-          if (ok) scheduleSave()
-          return ok
-        },
-      })
-    : files
+  // Proxy 统一捕获 set/deleteProperty(无论是否持久化都包裹):
+  //   - set 后 enforceLimit(纯内存上限保护,storage:false 也生效)+ scheduleSave(persist 模式 debounce 落盘,非 persist 内部短路)
+  //   - 6 个 vfs 工具 + offload 写入点零改动
+  const proxy = new Proxy(files, {
+    set(target, key, value) {
+      const ok = Reflect.set(target, key, value)
+      if (ok) {
+        enforceLimit()
+        scheduleSave()
+      }
+      return ok
+    },
+    deleteProperty(target, key) {
+      const ok = Reflect.deleteProperty(target, key)
+      if (ok) scheduleSave()
+      return ok
+    },
+  })
 
   const store: VfsStore = { files: proxy }
   if (persist) {
     store.hydrate = (incoming) => {
-      // 恢复:直接写 raw target,不触发 save
+      // 恢复:直接写 raw target,不触发 save;恢复后限上限(防快照过大撑爆内存)
       for (const [k, v] of Object.entries(incoming)) files[normalize(k)] = v
+      enforceLimit()
     }
     store.flush = () => {
       if (saveTimer) {
@@ -100,6 +134,15 @@ export function createVfs(
     }
   }
   return store
+}
+
+let _vfsEncoder: TextEncoder | null = null
+/** 工作区总字节估算(文件内容 UTF-8 长度,与 storage.estimateBytes 口径一致) */
+function estimateFileBytes(files: Record<string, VfsFile>): number {
+  if (!_vfsEncoder) _vfsEncoder = new TextEncoder()
+  let total = 0
+  for (const f of Object.values(files)) total += _vfsEncoder.encode(f.content).length
+  return total
 }
 
 /** 规范化路径:去前导/、去重复斜杠 */
