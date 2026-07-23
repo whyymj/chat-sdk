@@ -11,6 +11,13 @@ import { resolve } from 'path'
  */
 export default defineConfig({
   plugins: [vue()],
+  // IIFE 全量把 vue/zod/@langchain 全打包进,这些库引用 Node 的 process(process.env.NODE_ENV / process.version 等);
+  // vite 库模式不自动 polyfill,浏览器顶层求值会抛 "process is not defined"。这里两步处置:
+  //  1) define 静态替换 NODE_ENV → production(Vue 等走 prod 分支,去 dev 警告代码、减体积)
+  //  2) rollup intro 注入 process shim,运行时兜底裸 process / process.version / process.platform 等环境探测
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
   publicDir: false,
   build: {
     emptyOutDir: false, // 追加到 build:lib 产物,避免清空 ESM/UMD
@@ -21,7 +28,12 @@ export default defineConfig({
       formats: ['iife'],
     },
     rollupOptions: {
-      output: { exports: 'named' },
+      output: {
+        exports: 'named',
+        // 注入到 IIFE 函数体顶部(IIFE 内局部 var,不污染全局):宿主有 process(Node)则用之,否则用浏览器 shim
+        intro:
+          'var process=(typeof process!=="undefined")?process:{env:{NODE_ENV:"production"},version:"",platform:"browser",arch:"browser",versions:{},argv:[]};',
+      },
     },
   },
 })
