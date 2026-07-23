@@ -16,6 +16,7 @@ const emit = defineEmits<{
 
 const filter = ref<DebugLog['type'] | 'all'>('all')
 const rawExpanded = ref<Set<number>>(new Set())
+const bodyExpanded = ref<Set<number>>(new Set())
 
 const typeMeta: Record<string, { label: string; color: string; icon: string }> = {
   context: { label: '上下文', color: '#667eea', icon: '🧩' },
@@ -27,13 +28,14 @@ const typeMeta: Record<string, { label: string; color: string; icon: string }> =
   middleware: { label: '中间件', color: '#0891b2', icon: '⚙️' },
 }
 
+const logs = computed(() => (Array.isArray(props.logs) ? props.logs : []))
 const filteredLogs = computed(() =>
-  filter.value === 'all' ? props.logs : props.logs.filter((l) => l.type === filter.value)
+  filter.value === 'all' ? logs.value : logs.value.filter((l) => l.type === filter.value)
 )
 
 const counts = computed(() => {
-  const c: Record<string, number> = { all: props.logs.length }
-  for (const l of props.logs) c[l.type] = (c[l.type] || 0) + 1
+  const c: Record<string, number> = { all: logs.value.length }
+  for (const l of logs.value) c[l.type] = (c[l.type] || 0) + 1
   return c
 })
 
@@ -46,6 +48,12 @@ function toggleRaw(idx: number) {
   const s = new Set(rawExpanded.value)
   s.has(idx) ? s.delete(idx) : s.add(idx)
   rawExpanded.value = s
+}
+
+function toggleBody(idx: number) {
+  const s = new Set(bodyExpanded.value)
+  s.has(idx) ? s.delete(idx) : s.add(idx)
+  bodyExpanded.value = s
 }
 
 function formatJson(data: any): string {
@@ -142,15 +150,27 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
                 <template v-else-if="log.type === 'llm_request'">
                   <div class="badge-row">
                     <span class="badge">第 {{ log.data.round }} 轮</span>
-                    <span class="badge muted">{{ log.data.messageCount }} 条消息</span>
+                    <span v-if="log.data.model" class="badge muted">{{ log.data.model }}</span>
+                    <span class="badge muted">{{ (log.data.messages || []).length }} 条消息</span>
+                    <span v-if="log.data.tools?.length" class="badge muted">{{ log.data.tools.length }} 工具</span>
+                    <button class="view-toggle" @click="toggleBody(idx)">
+                      {{ bodyExpanded.has(idx) ? '🗂 卡片视图' : '📋 请求体' }}
+                    </button>
                   </div>
-                  <div class="msg-list">
+                  <div v-if="!bodyExpanded.has(idx)" class="msg-list">
                     <div v-for="(m, mi) in log.data.messages" :key="mi" class="msg-row">
-                      <span class="msg-role" :style="{ background: roleOf(m.type).color }">{{ roleOf(m.type).label }}</span>
-                      <span class="msg-text">{{ m.content }}</span>
-                      <span v-if="m.tool_calls?.length" class="msg-tool-hint">🔧 {{ m.tool_calls.length }} 个工具调用</span>
+                      <span class="msg-role" :style="{ background: roleOf(m.role).color }">{{ roleOf(m.role).label }}</span>
+                      <div class="msg-detail">
+                        <span v-if="m.content" class="msg-text">{{ m.content }}</span>
+                        <div v-for="(tc, ti) in m.tool_calls || []" :key="ti" class="tc-inline">
+                          <span class="tc-inline-name">🔧 {{ tc.function?.name || tc.name }}</span>
+                          <code class="tc-inline-args">{{ tc.function?.arguments ?? tc.args }}</code>
+                        </div>
+                        <span v-if="m.tool_call_id" class="tc-id">↳ tool_call_id: {{ m.tool_call_id }}</span>
+                      </div>
                     </div>
                   </div>
+                  <pre v-else class="log-raw"><code>{{ formatJson(log.data.messages) }}</code></pre>
                 </template>
 
                 <!-- LLM 响应：内容 + 工具调用 + 用量 -->
@@ -272,6 +292,13 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 .usage-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .usage { font-size: 11px; padding: 2px 8px; background: #ecfdf5; color: #047857; border-radius: 10px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .err-box { font-size: 12px; color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+.msg-detail { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.tc-inline { font-size: 11px; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 4px; padding: 2px 6px; display: flex; gap: 4px; align-items: baseline; }
+.tc-inline-name { color: #6d28d9; font-weight: 600; white-space: nowrap; }
+.tc-inline-args { font-family: 'SF Mono', Monaco, Consolas, monospace; color: #4c1d95; word-break: break-all; font-size: 10px; }
+.tc-id { font-size: 10px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.view-toggle { margin-left: auto; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer; }
+.view-toggle:hover { background: #e0e7ff; }
 .drawer-enter-active, .drawer-leave-active { transition: opacity 0.25s ease; }
 .drawer-enter-active .drawer-panel, .drawer-leave-active .drawer-panel { transition: transform 0.25s ease; }
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }

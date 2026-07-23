@@ -3,13 +3,22 @@
  *
  * 对齐 Deep Agents 的 memory middleware:一段持久指令(偏好/约定/项目指引),
  * 作为 system prompt 前段始终注入。
+ * reset 支持运行期重置(持久化恢复时由 createPageAgent 注入)。
  */
 import type { Middleware } from './middleware'
 
-export function createMemoryMiddleware(memory: string): Middleware {
-  return {
+export function createMemoryMiddleware(
+  memory = '',
+): Middleware & { reset: (memory: string) => void } {
+  let mem = memory
+  const mw: Middleware & { reset: (memory: string) => void } = {
     name: 'memory',
-    beforeAgent: () => ({ memory }),
+    beforeAgent: () => ({ memory: mem }),
     augmentPrompt: (state) => (state.memory ? `## 持久指令(Memory)\n${state.memory}` : undefined),
+    // 运行期重置(持久化恢复时由 createPageAgent 注入:options.memory 优先,snap.memory 兜底)
+    reset: (m: string) => {
+      mem = m
+    },
   }
+  return mw
 }

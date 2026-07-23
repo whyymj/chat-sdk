@@ -7,6 +7,7 @@
  *  - wrapToolCall 拒绝一轮内并行的多个 write_todos(整表替换语义冲突)
  *
  * 工具通过闭包维护 todos;beforeModel 每轮同步进 state(供 UI)。
+ * createTodosMiddleware(initialTodos) 支持从持久化恢复注入;reset 运行期可重置。
  */
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
@@ -24,8 +25,10 @@ function renderTodos(todos: Todo[]): string | undefined {
   ].join('\n')
 }
 
-export function createTodosMiddleware(): Middleware {
-  let todos: Todo[] = []
+export function createTodosMiddleware(
+  initialTodos: Todo[] = [],
+): Middleware & { reset: (todos: Todo[]) => void } {
+  let todos: Todo[] = initialTodos.map((t) => ({ ...t }))
   let writeTodosThisRound = 0
 
   const writeTodosTool = tool(
@@ -50,10 +53,10 @@ export function createTodosMiddleware(): Middleware {
     },
   )
 
-  return {
+  const mw: Middleware & { reset: (todos: Todo[]) => void } = {
     name: 'todos',
     tools: [writeTodosTool],
-    beforeAgent: () => ({ todos: [] }),
+    beforeAgent: () => ({ todos }),
     beforeModel: () => {
       writeTodosThisRound = 0
       return { todos } // 同步闭包 todos 进 state
@@ -71,5 +74,10 @@ export function createTodosMiddleware(): Middleware {
       }
       return next(ctx)
     },
+    // 运行期重置(持久化恢复时由 createPageAgent 注入 snap.todos)
+    reset: (next: Todo[]) => {
+      todos = next.map((t) => ({ ...t }))
+    },
   }
+  return mw
 }

@@ -3,6 +3,11 @@
  *
  * 管理消息列表、loading 状态、错误信息,并提供发送消息的入口。
  * 支持流式(fetchStream)与非流式(fetchResponse)两种模式。纯状态管理,不耦合任何业务工具。
+ *
+ * messages/onPersist/onClear 为持久化集成预留(由 createPageAgent 注入):
+ *  - messages:外部共享响应式数组,与父级共用同一引用(刷新恢复时灌入)
+ *  - onPersist:一轮完成后回调(落盘)
+ *  - onClear:清空时回调(新建会话)
  */
 import { reactive, ref, nextTick } from 'vue'
 import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
@@ -10,12 +15,23 @@ import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types
 type FetchFn = (messages: AgentMessage[]) => Promise<string>
 type StreamFn = (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>
 
-export function useChat(opts: { fetchResponse?: FetchFn; fetchStream?: StreamFn } = {}) {
-  const { fetchResponse, fetchStream } = opts
+export function useChat(
+  opts: {
+    fetchResponse?: FetchFn
+    fetchStream?: StreamFn
+    /** 外部共享的消息数组(持久化恢复时传入,与父级共用同一响应式引用) */
+    messages?: AgentMessage[]
+    /** 一轮对话完成后回调(用于持久化) */
+    onPersist?: (messages: AgentMessage[]) => void
+    /** 清空对话时回调(用于新建会话) */
+    onClear?: () => void
+  } = {},
+) {
+  const { fetchResponse, fetchStream, onPersist, onClear } = opts
 
-  /** 对话状态:消息列表 + loading + 错误 */
+  /** 对话状态:消息列表 + loading + 错误(messages 可与父级共享同一引用) */
   const state = reactive<AgentState>({
-    messages: [],
+    messages: (opts.messages ?? []) as AgentMessage[],
     loading: false,
     error: null,
   })
@@ -97,6 +113,7 @@ export function useChat(opts: { fetchResponse?: FetchFn; fetchStream?: StreamFn 
         }
       } finally {
         state.loading = false
+        onPersist?.(state.messages) // 持久化(含失败态:占位已移除后的真实状态)
       }
       return
     }
@@ -110,6 +127,7 @@ export function useChat(opts: { fetchResponse?: FetchFn; fetchStream?: StreamFn 
       state.error = err.message || '请求失败,请重试'
     } finally {
       state.loading = false
+      onPersist?.(state.messages)
     }
   }
 
@@ -121,7 +139,9 @@ export function useChat(opts: { fetchResponse?: FetchFn; fetchStream?: StreamFn 
   }
 
   function clearMessages() {
-    state.messages = []
+    onClear?.() // 通知父级(如新建会话)
+    // 清空:splice 保持共享引用(若 state.messages 与父级共用同一数组)
+    state.messages.splice(0, state.messages.length)
     state.error = null
   }
 

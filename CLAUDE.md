@@ -4,11 +4,11 @@
 
 ## 项目概述
 
-`page-agent`(npm 包名待定,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
+`page-agent`(npm 包名 `page-agent`,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
 
 由原 `zhuanti-agent`(Vue3 库、绑定"什么值得买专题"业务)重构而来,采用**自研 Deep Agents 风格 harness**(规避 `deepagentsjs#292` 浏览器打包阻塞,不引入 LangGraph/langchain 整包)。
 
-- 构建产物:`dist/zhuanti-agent.js`(ESM)、`dist/zhuanti-agent.umd.cjs`(UMD)、`dist/zhuanti-agent.css`
+- 构建产物:`dist/page-agent.js`(ESM,peer 外置)、`dist/page-agent.umd.cjs`(UMD)、`dist/page-agent.iife.js`(IIFE 全量,供 CDN `<script>` 直引)、`dist/page-agent.css`
 - 类型声明:`types/index.d.ts`(手动维护,构建不自动生成)
 - 入口:`src/index.ts`
 
@@ -57,6 +57,7 @@ src/
     ├── sdk/                    # createPageAgent(命令式入口)/ defineTool
     ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
+    ├── backends/storage.ts     # IndexedDB 持久化(降级内存)+ 多 agent 隔离 + 配额/LRU 淘汰
     ├── utils/                  # offload(大结果外存)/ rounds
     ├── composables/            # useChat / useContextManager / useMarkdown
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI)
@@ -93,7 +94,17 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 `window.page` 用 Vue `reactive()`;Agent `set` 子属性(**不替换引用**)→ `PageRenderer` 响应式更新。
 
 ### 记忆管理
-纯内存、会话级。`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)。
+上下文压缩(纯内存、会话级,非持久化)。`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)。
+
+### 持久化存储(多后端 + 多 agent 隔离 + 全局配额/LRU 淘汰)
+- **默认关闭,赋值开启**:`storage` 不传 / `false` / `{ enabled: false }` → 关闭(纯内存);赋值后端字符串 `'indexed'`/`'session'`/`'local'`/`'memory'` 或配置对象 → 开启。例:`storage: 'session'`、`storage: { backend: 'local', maxBytes: 2*1024*1024 }`
+- **三层命名空间**:`DB(page-agent)→ agentId → sessionId`,单 DB + 单 `kv` objectStore,复合 key `v:1::{dbName}::{agentId}::{sessionId}::{kind}`(kind ∈ messages/vfs/todos/memory/__meta__)
+- **id 必传稳定值**:多 agent 共存靠 `options.id` 隔离;不传则随机生成 + `console.warn`(刷新后无法恢复)
+- **可注入后端**(`backends/storage.ts`):`StorageBackend` 实现 = `IdbBackend`(原生 IndexedDB)/ `WebStorageBackend`(localStorage·sessionStorage)/ `MemoryBackend`(测试+降级);指定后端不可用(隐私模式/QuotaExceeded)自动降级内存,不崩溃
+- **配额与淘汰**:全局总配额(默认 50MB)+ 单会话软上限(默认 10MB);超限按 `lastAccessed` **整会话 LRU 淘汰**到 0.9 水位线;`SessionStore.onEvent` 收 degraded/quota/evicted/flush
+- **持久化数据**:对话历史 / vfs 工作区 / todos / memory;**window 快照栈不持久化**(刷新后宿主值已变)
+- **集成**:vfs 经 Proxy 捕获 `store.files` 变更 → debounce save(工具层无感);`mount()` 异步 init(await ready → 解析 sessionId → load 恢复 → 构造 agent);`send()` 与 UI 共享同一响应式 `messages` 数组(唯一来源);`pagehide`/`visibilitychange` → `flush()` 兜底
+- **自测**:`selftest.ts` 用 `createMemoryBackend` + 纯函数(encodeKey/estimateBytes/selectForEviction)覆盖隔离/save-load/配额/淘汰/降级(IdbBackend 仅手动验证)
 
 ## 关键约定与坑
 
@@ -132,5 +143,11 @@ createPageAgent({
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
-## 发布
-`package.json` 已配 `exports`/`files`(发布 `dist` + `types`)。`vue` 打包进(非 peer)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/index.ts` 导出一致。
+## 发布与引入
+包名 `page-agent`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`/`sideEffects`)。`vue` 打包进库(非 peer);`zod`/`@langchain/*` 为 peer(npm 安装时由消费者装)。三种引入方式:
+
+- **npm**:`npm install page-agent` → `import { createPageAgent, z } from 'page-agent'`(同时装 peer:`zod`、`@langchain/openai`、`@langchain/core`)。
+- **CDN · ESM(esm.sh)**:`import { createPageAgent, z } from 'https://esm.sh/page-agent'`(peer 由 esm.sh 自动解析,体积小,推荐模块化场景)。
+- **CDN · IIFE 全量**:`<script src="https://unpkg.com/page-agent"></script>` → 全局 `window.PageAgent`(`PageAgent.createPageAgent` / `PageAgent.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
+
+构建:`npm run build` = `build:lib`(ESM + UMD,peer 外置)+ `build:iife`(IIFE 全量,配置 `vite.iife.config.ts`)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。

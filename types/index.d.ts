@@ -1,4 +1,5 @@
 import { DefineComponent } from 'vue';
+export { z } from 'zod';
 
 export interface ToolStep {
   name: string;
@@ -85,9 +86,69 @@ export interface SkillSpec {
   getContent: () => string | Promise<string>;
 }
 
+// ===== 持久化存储 =====
+export type StorageBackendType = 'indexed' | 'session' | 'local' | 'memory';
+export interface StorageConfig {
+  backend?: StorageBackendType;
+  enabled?: boolean;
+  dbName?: string;
+  maxBytes?: number;
+  maxBytesPerSession?: number;
+  evictionWatermark?: number;
+  debounceMs?: number;
+}
+export interface SessionMeta {
+  agentId: string;
+  sessionId: string;
+  createdAt: number;
+  lastAccessed: number;
+  bytes: number;
+  title?: string;
+}
+export interface SessionSnapshot {
+  messages: AgentMessage[];
+  vfs: Record<string, { content: string; mimeType?: string; updatedAt: number }>;
+  todos: { content: string; status: 'pending' | 'in_progress' | 'completed' }[];
+  memory: string;
+}
+export type StorageEvent =
+  | { type: 'degraded'; reason: string }
+  | { type: 'quota'; sessionBytes: number; limit: number }
+  | { type: 'evicted'; agentId: string; sessionId: string; bytes: number }
+  | { type: 'flush' };
+export interface StorageBackend {
+  get(key: string): Promise<unknown | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+  del(key: string): Promise<void>;
+  scan(prefix: string, cb: (key: string, value: unknown) => boolean | void): Promise<void>;
+  clearPrefix(prefix: string): Promise<void>;
+}
+export interface SessionStore {
+  ready: Promise<boolean>;
+  listSessions(agentId: string): Promise<SessionMeta[]>;
+  load(agentId: string, sessionId: string): Promise<SessionSnapshot | undefined>;
+  save(agentId: string, sessionId: string, snap: Partial<SessionSnapshot>): Promise<void>;
+  flush(): Promise<void>;
+  deleteSession(agentId: string, sessionId: string): Promise<void>;
+  createSession(agentId: string, title?: string, sessionId?: string): Promise<string>;
+  onEvent(cb: (e: StorageEvent) => void): void;
+  dispose(): void;
+}
+export interface SessionOptions {
+  id?: string;
+  autoResume?: boolean;
+  title?: string;
+}
+
 export interface PageAgentOptions {
   container: string | HTMLElement;
   llm: LLMConfig;
+  /** agent 实例 id(多 agent 共存隔离;不传则随机生成并告警,刷新后无法恢复) */
+  id?: string;
+  /** 持久化:默认关闭;赋值后端字符串('indexed'/'session'/'local'/'memory')或配置对象开启;false 关闭 */
+  storage?: StorageBackendType | StorageConfig | false;
+  /** 会话控制 */
+  session?: SessionOptions;
   systemPrompt?: string;
   tools?: any[];
   skills?: SkillSpec[];
@@ -105,7 +166,7 @@ export interface PageAgentOptions {
 }
 
 export interface PageAgent {
-  mount(): void;
+  mount(): Promise<void>;
   unmount(): void;
   send(message: string): Promise<string>;
   stream: (messages: AgentMessage[], onEvent: StreamHandler) => Promise<string>;
@@ -120,3 +181,6 @@ export declare function defineTool(opts: {
 }): any;
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
+export declare function createSessionStore(config?: StorageConfig): SessionStore;
+export declare function createMemoryBackend(): StorageBackend;
+export declare function createWebStorageBackend(storage: Storage): StorageBackend;

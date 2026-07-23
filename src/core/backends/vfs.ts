@@ -12,19 +12,94 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { Middleware } from '../harness/middleware'
 import type { VfsFile } from '../harness/state'
 
-export interface VfsStore {
-  files: Record<string, VfsFile>
+/** 持久化钩子(可选):由 createPageAgent 注入,工具层无感 */
+export interface VfsPersist {
+  /** 文件变更后回调(debounce 由 createPageAgent 控制落盘) */
+  save?: (files: Record<string, VfsFile>) => void
 }
 
-/** 创建一个 vfs 实例(initialFiles: path → content) */
-export function createVfs(initialFiles?: Record<string, string>): VfsStore {
-  const files: Record<string, VfsFile> = {}
+export interface VfsStore {
+  files: Record<string, VfsFile>
+  /** 持久化恢复:直接灌入 raw target,不触发 save(仅 persist 模式) */
+  hydrate?: (files: Record<string, VfsFile>) => void
+  /** 立即落盘(清 debounce 窗口);pagehide 兜底用(仅 persist 模式) */
+  flush?: () => void
+  /** 清空工作区 + 触发落盘空(新会话用,仅 persist 模式) */
+  clear?: () => void
+}
+
+/**
+ * 创建一个 vfs 实例。
+ * @param initialFiles 初始文件(path → content)
+ * @param opts.persist 持久化钩子;提供则用 Proxy 捕获 store.files 变更 → debounce save
+ */
+export function createVfs(
+  initialFiles?: Record<string, string>,
+  opts: { persist?: VfsPersist } = {},
+): VfsStore {
+  // Object.create(null):无原型链,防 __proto__/constructor 原型污染(LLM 可控的 path)
+  const files = Object.create(null) as Record<string, VfsFile>
   if (initialFiles) {
     for (const [k, v] of Object.entries(initialFiles)) {
       files[normalize(k)] = { content: v, updatedAt: now() }
     }
   }
-  return { files }
+
+  const { persist } = opts
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+  function doSave(): void {
+    if (!persist?.save) return
+    // 拷贝纯对象(解 Proxy),隔离后续变更,避免序列化句柄
+    const snapshot: Record<string, VfsFile> = {}
+    for (const [k, v] of Object.entries(files)) snapshot[k] = { ...v }
+    persist.save!(snapshot)
+  }
+  function scheduleSave(): void {
+    if (!persist?.save) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      doSave()
+    }, 800)
+  }
+
+  // Proxy 捕获 set/deleteProperty → debounce save;6 个 vfs 工具 + offload 写入点零改动
+  const proxy = persist
+    ? new Proxy(files, {
+        set(target, key, value) {
+          const ok = Reflect.set(target, key, value)
+          if (ok) scheduleSave()
+          return ok
+        },
+        deleteProperty(target, key) {
+          const ok = Reflect.deleteProperty(target, key)
+          if (ok) scheduleSave()
+          return ok
+        },
+      })
+    : files
+
+  const store: VfsStore = { files: proxy }
+  if (persist) {
+    store.hydrate = (incoming) => {
+      // 恢复:直接写 raw target,不触发 save
+      for (const [k, v] of Object.entries(incoming)) files[normalize(k)] = v
+    }
+    store.flush = () => {
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+      }
+      doSave()
+    }
+    store.clear = () => {
+      // 清空 raw target(新会话),触发落盘空
+      for (const k of Object.keys(files)) delete files[k]
+      scheduleSave()
+    }
+  }
+  return store
 }
 
 /** 规范化路径:去前导/、去重复斜杠 */

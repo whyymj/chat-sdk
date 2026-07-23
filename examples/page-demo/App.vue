@@ -27,6 +27,8 @@ let agent: PageAgent | null = null
 onMounted(() => {
   agent = createPageAgent({
     container: root.value!,
+    id: 'page-demo',                             // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
+    storage: 'indexed',                          // ← 开启持久化(默认关闭);可选 'session'/'local'/'memory'
     llm: {
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,

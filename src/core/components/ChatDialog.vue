@@ -13,6 +13,12 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   /** 调试日志(响应式数组),传入则显示调试按钮 */
   debugLogs?: DebugLog[]
+  /** 初始消息(持久化恢复,与父级共享响应式引用) */
+  initialMessages?: AgentMessage[]
+  /** 一轮完成后持久化回调 */
+  onPersist?: (messages: AgentMessage[]) => void
+  /** 清空时回调(新建会话) */
+  onClear?: () => void
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -21,6 +27,9 @@ const props = withDefaults(defineProps<{
 const { state, scrollContainer, sendMessage, clearMessages } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
+  messages: props.initialMessages,
+  onPersist: props.onPersist,
+  onClear: props.onClear,
 })
 
 const inputText = ref('')
@@ -38,6 +47,12 @@ function toggleReasoning(idx: number) {
 
 function stepStatusIcon(step: ToolStep) {
   return step.status === 'running' ? '⏳' : step.status === 'error' ? '❌' : '✅'
+}
+
+/** 占位 assistant 消息:流式等待首个输出时(content/reasoning 均空)→ 在该消息内显示三点,避免再叠加一个底部 loading 头像 */
+function isPendingAssistant(idx: number): boolean {
+  const m = state.messages[idx] as any
+  return !!m && m.role === 'assistant' && state.loading && idx === state.messages.length - 1 && !m.content && !m.reasoning
 }
 
 function handleSend() {
@@ -77,11 +92,12 @@ function formatTime(timestamp: number) {
           title="请求日志(查看上下文历史)"
           @click="debugVisible = true"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path>
             <path d="M9 2h6"></path>
             <path d="M9 18h6"></path>
           </svg>
+          <span class="debug-label">日志</span>
           <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
         </button>
         <button class="action-btn" title="清空对话" @click="clearMessages" :disabled="!hasMessages">
@@ -143,13 +159,14 @@ function formatTime(timestamp: number) {
             </div>
           </div>
 
-          <div class="message-bubble">
-            <MessageContent v-if="msg.role === 'assistant'" :content="msg.content" />
-            <template v-else>{{ msg.content }}</template>
-            <span
-              v-if="msg.role === 'assistant' && state.loading && idx === state.messages.length - 1 && !msg.content"
-              class="typing-cursor"
-            ></span>
+          <div class="message-bubble" :class="{ typing: isPendingAssistant(idx) }">
+            <template v-if="isPendingAssistant(idx)">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </template>
+            <template v-else>
+              <MessageContent v-if="msg.role === 'assistant'" :content="msg.content" />
+              <template v-else>{{ msg.content }}</template>
+            </template>
           </div>
           <span
             v-if="msg.role === 'assistant' && state.loading && idx === state.messages.length - 1 && msg.content"
@@ -159,8 +176,8 @@ function formatTime(timestamp: number) {
         </div>
       </div>
 
-      <!-- 加载指示器 -->
-      <div v-if="state.loading" class="message-row assistant">
+      <!-- 加载指示器:仅当最后一条不是 assistant 占位时(非流式等待)才单独显示,避免与流式占位消息叠加成两个 AI 头像 -->
+      <div v-if="state.loading && state.messages[state.messages.length - 1]?.role !== 'assistant'" class="message-row assistant">
         <div class="message-avatar">🤖</div>
         <div class="message-content">
           <div class="message-bubble typing">
@@ -239,7 +256,8 @@ function formatTime(timestamp: number) {
 }
 .action-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.action-btn.debug-btn { position: relative; }
+.action-btn.debug-btn { position: relative; width: auto; padding: 0 10px; gap: 4px; font-size: 12px; font-weight: 600; }
+.action-btn.debug-btn .debug-label { font-size: 12px; line-height: 1; }
 .action-btn.debug-btn.active { background: rgba(255, 255, 255, 0.45); }
 .debug-badge {
   position: absolute; top: -2px; right: -2px;

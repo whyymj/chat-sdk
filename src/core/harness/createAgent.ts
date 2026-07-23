@@ -7,7 +7,7 @@
  *   beforeAgent → while(rounds < max){ beforeModel → wrapModelCall → afterModel
  *     → (有 tool_calls) wrapToolCall(逐个) } → afterAgent
  */
-import { ref } from 'vue'
+import { shallowRef, triggerRef } from 'vue'
 import { ChatOpenAI } from '@langchain/openai'
 import {
   HumanMessage,
@@ -71,10 +71,12 @@ export function createAgent(options: CreateAgentOptions) {
     debug = false,
   } = options
 
-  const debugLogs = ref<DebugLog[]>([])
+  // shallowRef:浅响应式,不深度代理 push 进来的 data 对象,避免与 currentMessages 共享引用污染日志快照
+  const debugLogs = shallowRef<DebugLog[]>([])
   function log(type: DebugLog['type'], data: any) {
     // 始终记录到 debugLogs(供日志抽屉查看请求上下文历史);debug 时额外输出到 console
     debugLogs.value.push({ timestamp: Date.now(), type, data })
+    triggerRef(debugLogs)
     if (debug) console.log(`%c[Agent] ${type}`, 'color:#667eea;font-weight:bold', data)
   }
 
@@ -173,13 +175,28 @@ export function createAgent(options: CreateAgentOptions) {
     return 'unknown'
   }
 
-  /** 完整格式化消息用于调试日志(不截断,便于查看详细历史) */
+  /** 格式化消息为接近实际请求体的结构(role 用接口名 user/assistant/tool/system,含 tool_calls/tool_call_id),按发送顺序 */
   function formatForLog(messages: BaseMessage[]) {
-    return messages.map((m) => ({
-      type: typeOf(m),
-      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-      ...((m as any).tool_calls?.length ? { tool_calls: (m as any).tool_calls } : {}),
-    }))
+    // map 返回独立对象;配合外层 shallowRef(不深度代理),快照天然独立,无需深拷贝
+    return messages.map((m) => {
+      const t = typeOf(m)
+      const entry: Record<string, unknown> = {
+        role: t === 'human' ? 'user' : t === 'ai' ? 'assistant' : t,
+      }
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      if (content) entry.content = content
+      const toolCalls = (m as any).tool_calls
+      if (Array.isArray(toolCalls) && toolCalls.length) {
+        entry.tool_calls = toolCalls.map((tc: any) => ({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args) },
+        }))
+      }
+      const toolCallId = (m as any).tool_call_id
+      if (toolCallId) entry.tool_call_id = toolCallId
+      return entry
+    })
   }
 
   /**
@@ -217,7 +234,12 @@ export function createAgent(options: CreateAgentOptions) {
       state = runBeforeModel(middlewares, { messages: currentMessages, state })
       currentMessages = replaceSystem(currentMessages)
 
-      log('llm_request', { round: rounds + 1, messageCount: currentMessages.length, messages: formatForLog(currentMessages) })
+      log('llm_request', {
+        round: rounds + 1,
+        model,
+        tools: allTools.map((t) => t.name),
+        messages: formatForLog(currentMessages),
+      })
 
       const response = await modelHandler({ messages: currentMessages, state })
       currentMessages.push(response.message)

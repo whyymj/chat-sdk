@@ -3,46 +3,37 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>page-agent · 框架无关集成示例(纯 HTML,无需 Vue)</title>
-  <link rel="stylesheet" href="../dist/zhuanti-agent.css" />
+  <title>page-agent · CDN 引入示例(IIFE 一行 script)</title>
+  <!-- 本地预览用构建产物;发布后换成 https://unpkg.com/page-agent/dist/page-agent.css -->
+  <link rel="stylesheet" href="../dist/page-agent.css" />
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f5f7fa; }
     .hint { padding: 12px 16px; font-size: 13px; color: #555; background: #fff; border-bottom: 1px solid #eee; }
     .hint code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
     #root { width: 460px; height: calc(100vh - 48px); margin-left: auto; background: #fff; border-left: 1px solid #e5e7eb; }
   </style>
-  <script type="importmap">
-  {
-    "imports": {
-      "zhuanti-agent": "../dist/zhuanti-agent.js",
-      "zod": "https://esm.sh/zod@4.4.3",
-      "@langchain/openai": "https://esm.sh/@langchain/openai@1.5.5",
-      "@langchain/openai/": "https://esm.sh/@langchain/openai@1.5.5/",
-      "@langchain/core": "https://esm.sh/@langchain/core@1.2.2",
-      "@langchain/core/": "https://esm.sh/@langchain/core@1.2.2/",
-      "@langchain/textsplitters": "https://esm.sh/@langchain/textsplitters@1.0.1",
-      "@langchain/textsplitters/": "https://esm.sh/@langchain/textsplitters@1.0.1/"
-    }
-  }
-  </script>
 </head>
 <body>
   <div class="hint">
-    框架无关集成:本页未引入 Vue,仅 <code>&lt;script type="module"&gt;</code> 调用
-    <code>createPageAgent(...).mount()</code>。peer dep(zod / @langchain/*)由 importmap + esm.sh 提供。
-    运行:项目根 <code>npx serve .</code> 后访问 <code>/demo/plain.html</code>,并填入下方 apiKey。
+    <b>CDN 一行引入</b>(IIFE 全量,无需 Vue / importmap / peer 依赖):
+    <code>&lt;script src="https://unpkg.com/page-agent"&gt;</code> → 全局 <code>window.PageAgent</code>(含 <code>createPageAgent</code> 与 <code>z</code>)。
+    本地预览用 <code>../dist/page-agent.iife.js</code>;发布后换成 unpkg / jsdelivr 的 CDN 地址。运行:项目根 <code>npx serve .</code> 后访问 <code>/demo/plain.html</code>。
   </div>
   <div id="root"></div>
 
-  <script type="module">
-    import { createPageAgent } from 'zhuanti-agent'
-    import { z } from 'zod'
+  <!-- IIFE 全量:vue / zod / @langchain 全打包进,暴露 window.PageAgent -->
+  <script src="../dist/page-agent.iife.js"></script>
+  <!-- 发布后 CDN:<script src="https://unpkg.com/page-agent"></script> -->
 
+  <script>
+    const { createPageAgent, z } = window.PageAgent
     // 预置可操作的 window 属性
     window.app = { theme: 'light', count: 0 }
 
     createPageAgent({
       container: '#root',
+      id: 'plain-demo',                          // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
+      storage: 'indexed',                        // ← 开启持久化(默认关闭);可选 'session'/'local'/'memory'
       llm: {
         apiKey: 'YOUR_API_KEY',                   // ← 填你的 key
         baseUrl: 'https://api.deepseek.com/v1',   // ← 兼容 OpenAI 协议的接口
@@ -55,7 +46,7 @@
         { path: 'app.count', description: '计数器(整数)', schema: z.number().int() },
       ],
       debug: true,
-      title: '页面内 Agent',
+      title: '页面内 Agent(CDN)',
       placeholder: '把 app.theme 改成 dark …',
     }).mount()
   </script>

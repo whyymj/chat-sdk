@@ -1,38 +1,38 @@
 {
-  "name": "zhuanti-agent",
+  "name": "page-agent",
   "version": "1.0.0",
   "type": "module",
-  "description": "AI Agent 对话框组件",
-  "main": "./dist/zhuanti-agent.umd.cjs",
-  "module": "./dist/zhuanti-agent.js",
+  "description": "框架无关的页面内 Agent JS SDK —— 以对话框形态挂载到任意网页,通过自定义 tool 读写宿主 window 属性(GET 抓文档),具备 planning/skills/虚拟工作区/快照回退/context 管理能力。Vue 打包进库,使用者无需安装 Vue。",
+  "main": "./dist/page-agent.umd.cjs",
+  "module": "./dist/page-agent.js",
   "types": "./types/index.d.ts",
+  "unpkg": "./dist/page-agent.iife.js",
+  "jsdelivr": "./dist/page-agent.iife.js",
+  "sideEffects": ["**/*.css"],
   "exports": {
     ".": {
-      "import": "./dist/zhuanti-agent.js",
-      "require": "./dist/zhuanti-agent.umd.cjs",
-      "types": "./types/index.d.ts"
+      "types": "./types/index.d.ts",
+      "import": "./dist/page-agent.js",
+      "require": "./dist/page-agent.umd.cjs"
     },
-    "./style.css": "./dist/zhuanti-agent.css"
+    "./style.css": "./dist/page-agent.css"
   },
-  "files": [
-    "dist",
-    "types"
-  ],
+  "files": ["dist", "types"],
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:lib && npm run build:iife",
+    "build:lib": "vite build",
+    "build:iife": "vite build --config vite.iife.config.ts",
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts"
   },
-  "keywords": [
-    "ai",
-    "agent",
-    "vue3",
-    "chat",
-    "dialog"
-  ],
+  "keywords": ["ai", "agent", "llm", "tool-calling", "react", "vue3", "chat", "dialog", "sdk", "window"],
   "author": "",
   "license": "ISC",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.7",
     "tsx": "^4.23.1",
