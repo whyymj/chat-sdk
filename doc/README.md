@@ -3,6 +3,7 @@
 | 文档 | 内容 |
 |---|---|
 | [功能架构](./architecture.md) | 分层结构 / 运行控制流(ReAct+中间件)/ window 操作安全流(三张 mermaid 图 + 模块映射) |
+| [文件全览(Review 版)](./architecture-files.md) | 逐文件职责 / 模块依赖 / import 图 / 一次请求数据流 / Review 关注点 |
 
 ## 其他信息源(仓库内)
 - **规范真相源**(Requirements):[`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)

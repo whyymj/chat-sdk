@@ -93,15 +93,21 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 ### 响应式绑定(测试模块 `demo/pageSchema.ts`)
 `window.page` 用 Vue `reactive()`;Agent `set` 子属性(**不替换引用**)→ `PageRenderer` 响应式更新。
 
-### 记忆管理
-上下文压缩(纯内存、会话级,非持久化)。`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)。
+### 记忆管理(含纯内存上限,防 OOM)
+- 上下文压缩(纯内存、会话级,非持久化):`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)
+- **纯内存上限**(storage:false 也生效,防长会话/大结果外存撑爆内存):
+  - vfs 工作区:`maxBytes`(默认 4MB,`createVfs` opts / `options.vfs.maxBytes`)→ 超限按 `updatedAt` 最旧 **LRU 淘汰文件**
+  - 对话历史:`maxMemoryRounds`(默认 50,`options.maxMemoryRounds`)→ 超限把最旧轮次**压缩为一条摘要 system 消息**(`trimMemoryMessages`,经 `afterRound` 在每轮后收口;0 关闭)
 
 ### 持久化存储(多后端 + 多 agent 隔离 + 全局配额/LRU 淘汰)
 - **默认关闭,赋值开启**:`storage` 不传 / `false` / `{ enabled: false }` → 关闭(纯内存);赋值后端字符串 `'indexed'`/`'session'`/`'local'`/`'memory'` 或配置对象 → 开启。例:`storage: 'session'`、`storage: { backend: 'local', maxBytes: 2*1024*1024 }`
 - **三层命名空间**:`DB(page-agent)→ agentId → sessionId`,单 DB + 单 `kv` objectStore,复合 key `v:1::{dbName}::{agentId}::{sessionId}::{kind}`(kind ∈ messages/vfs/todos/memory/__meta__)
 - **id 必传稳定值**:多 agent 共存靠 `options.id` 隔离;不传则随机生成 + `console.warn`(刷新后无法恢复)
 - **可注入后端**(`backends/storage.ts`):`StorageBackend` 实现 = `IdbBackend`(原生 IndexedDB)/ `WebStorageBackend`(localStorage·sessionStorage)/ `MemoryBackend`(测试+降级);指定后端不可用(隐私模式/QuotaExceeded)自动降级内存,不崩溃
-- **配额与淘汰**:全局总配额(默认 50MB)+ 单会话软上限(默认 10MB);超限按 `lastAccessed` **整会话 LRU 淘汰**到 0.9 水位线;`SessionStore.onEvent` 收 degraded/quota/evicted/flush
+- **配额与淘汰(各后端达上限均淘汰老旧数据)**:全局总配额**按后端类型给默认**(indexed/memory 50MB;local/session 4MB,贴合浏览器 WebStorage ~5MB 留余量;均可 `maxBytes` 覆盖)+ 单会话软上限(默认 10MB);超限按 `lastAccessed` **整会话 LRU 淘汰**到 0.9 水位线;**运行时撞浏览器真实配额**(`QuotaExceededError`,导出的 `isQuotaError` 判定)→ 先淘汰最旧会话腾空间 → 仍失败则**降级内存重写**(数据不丢)+ `emit degraded`;`SessionStore.onEvent` 收 degraded/quota/evicted/flush
+- **切换上下文**:`PageAgent.switchSession(sessionId?)`(传 id 载入/不存在则以该 id 新建;不传则新建)→ flush 当前 → 清内存态 + 灌入目标快照(替换语义)→ 返回新 id。**storage 未开启时抛错**。同实例切上下文用此 API;换 agentId(切命名空间)需重建实例
+- **共享上下文(同页)**:`shareContext: true` 时同 `id` 的多个 createPageAgent 复用同一 `AgentCore`(messages/agent/vfs/store/todos/memory 全共享 = 同一 agent 的多个对话框视图);模块级 `sharedCores` 注册表 + 引用计数,`unmount` 归零才真销毁。默认 `false`(每实例独立)
+- **流式输出**:`streaming`(默认 `true` 逐字流式);`false` 时 ChatDialog 走 `fetchResponse`(等整段回复,底层仍 stream 聚合)
 - **持久化数据**:对话历史 / vfs 工作区 / todos / memory;**window 快照栈不持久化**(刷新后宿主值已变)
 - **集成**:vfs 经 Proxy 捕获 `store.files` 变更 → debounce save(工具层无感);`mount()` 异步 init(await ready → 解析 sessionId → load 恢复 → 构造 agent);`send()` 与 UI 共享同一响应式 `messages` 数组(唯一来源);`pagehide`/`visibilitychange` → `flush()` 兜底
 - **自测**:`selftest.ts` 用 `createMemoryBackend` + 纯函数(encodeKey/estimateBytes/selectForEviction)覆盖隔离/save-load/配额/淘汰/降级(IdbBackend 仅手动验证)
@@ -124,7 +130,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,51 项)覆盖核心逻辑,不依赖 LLM。
+`npm test`(tsx 跑 `selftest.ts`,78 项)覆盖核心逻辑,不依赖 LLM。
 
 ## SDK 用法
 ```ts
