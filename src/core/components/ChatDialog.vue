@@ -107,15 +107,14 @@ function copyText(text: string) {
         <button
           class="action-btn debug-btn"
           :class="{ active: debugVisible }"
-          title="请求日志(查看上下文历史)"
+          title="日志 / 执行流程 / Agent 信息"
           @click="debugVisible = true"
         >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path>
             <path d="M9 2h6"></path>
             <path d="M9 18h6"></path>
           </svg>
-          <span class="debug-label">日志</span>
           <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
         </button>
         <button class="action-btn" title="清空对话" @click="clearMessages" :disabled="!hasMessages">
@@ -230,9 +229,9 @@ function copyText(text: string) {
 
     <!-- 输入区域 -->
     <div v-show="isExpanded" class="chat-footer">
-      <button v-if="props.getInfo" class="cap-badge" title="查看 Agent 信息(MCP / 工具)" @click="debugVisible = true">
+      <span v-if="props.getInfo" class="cap-badge" title="能力概览(MCP / 工具数)">
         🔌{{ summary.mcp }} · 🔧{{ summary.tools }}
-      </button>
+      </span>
       <textarea
         v-model="inputText"
         class="chat-input"
@@ -304,8 +303,7 @@ function copyText(text: string) {
 }
 .action-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.action-btn.debug-btn { position: relative; width: auto; padding: 0 10px; gap: 4px; font-size: 12px; font-weight: 600; }
-.action-btn.debug-btn .debug-label { font-size: 12px; line-height: 1; }
+.action-btn.debug-btn { position: relative; } /* 与其他 action-btn 一致(28x28);badge 绝对定位角标 */
 .action-btn.debug-btn.active { background: rgba(255, 255, 255, 0.45); }
 .debug-badge {
   position: absolute; top: -2px; right: -2px;
@@ -388,9 +386,8 @@ function copyText(text: string) {
 .send-btn.stop-btn { background: #9ca3af; }
 .send-btn.stop-btn:hover:not(:disabled) { background: #6b7280; transform: none; }
 
-/* 能力徽标(footer 左,MCP/工具数,点击开 Agent 信息) */
-.cap-badge { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-.cap-badge:hover { border-color: var(--cs-primary); color: var(--cs-primary); }
+/* 能力徽标(footer 左,纯展示 MCP/工具数;位置预留后续拓展) */
+.cap-badge { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; white-space: nowrap; user-select: none; }
 
 /* 最后一条 assistant 操作(复制/重新生成,hover 显示) */
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }
