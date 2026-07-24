@@ -58,7 +58,7 @@ export interface ChatDialogProps {
   getInfo?: () => AgentInfo;
 }
 
-export interface ToolInfo { name: string; description: string; schema?: unknown }
+export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
 export interface SkillInfo { name: string; description: string; whenToUse?: string }
 export interface WindowPropInfo { path: string; description: string; schema?: unknown }
 export interface SubagentInfo {
@@ -78,11 +78,15 @@ export interface AgentInfo {
   todos: { content: string; status: string }[];
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
+  mcp?: { servers: { name: string; url: string; toolCount: number }[] };
 }
 export interface Toolset { name: string; tools: unknown[]; }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
+export declare const MessageContent: DefineComponent<any>;
+export declare const CodePreview: DefineComponent<any>;
+export declare function useChat(opts?: any): any;
 
 // ===== 框架无关 SDK(页面内 Agent)=====
 export interface LLMConfig {
@@ -147,7 +151,7 @@ export type VerifyCheck = (ctx: VerifyCheckContext) => Promise<VerifyCheckResult
 export interface VerifyMiddlewareOptions {
   check: VerifyCheck;
   /** 对抗式验证:check 通过后 spawn 找茬子 agent 审查;verdict 无问题放行,否则回灌 */
-  adversarial?: { llm: any };
+  adversarial?: { llm: any; tools?: any[] };
 }
 /** createWriteBackCheck 选项 */
 export interface WriteBackCheckOptions {

@@ -40,10 +40,12 @@ export interface VerifyMiddlewareOptions {
   /** 领域校验函数(必填) */
   check: VerifyCheck
   /**
-   * 对抗式验证:check 通过后 spawn 一个无工具的"找茬"子 agent(refute 姿态)审查 agent 回复找错误,
-   * 突破自审 confirmation bias;verdict 表明无问题 → 放行,否则回灌。复查 window 交 createWriteBackCheck,故子 agent 无工具。
+   * 对抗式验证:check 通过后 spawn 一个"找茬"子 agent(refute 姿态)审查 agent 回复找错误,
+   * 突破自审 confirmation bias;verdict 表明无问题 → 放行,否则回灌。
+   * tools:只读工具集(由 createPageAgent 从 allTools 白名单筛选注入),让子 agent 能实证读回 window 检查而非臆测;
+   *        省略/为空则退化为单轮纯文本审查(复查 window 交 createWriteBackCheck)。
    */
-  adversarial?: { llm: SubagentLlmConfig | BaseChatModel }
+  adversarial?: { llm: SubagentLlmConfig | BaseChatModel; tools?: unknown[] }
 }
 
 /**
@@ -64,8 +66,8 @@ export function createVerifyMiddleware(opts: VerifyMiddlewareOptions): Middlewar
       if (!res.ok) return res.feedback ?? '结果未通过验证,请复查。'
       // check 通过 + 对抗验证开启:spawn 找茬子 agent(refute 姿态)再审,突破自审 confirmation bias
       if (opts.adversarial) {
-        log?.('middleware', { stage: 'adversarial_start', model: describeLlm(opts.adversarial.llm) })
-        const advFeedback = await runAdversarial(messages, opts.adversarial.llm, log)
+        log?.('middleware', { stage: 'adversarial_start', model: describeLlm(opts.adversarial.llm), tools: (opts.adversarial.tools ?? []).length })
+        const advFeedback = await runAdversarial(messages, opts.adversarial.llm, log, opts.adversarial.tools)
         log?.('middleware', { stage: 'adversarial_done', clean: advFeedback === null, feedback: advFeedback })
         if (advFeedback) return advFeedback
       }
@@ -214,22 +216,28 @@ async function runAdversarial(
   messages: BaseMessage[],
   llm: SubagentLlmConfig | BaseChatModel,
   log?: (type: string, data: unknown) => void,
+  tools?: unknown[],
 ): Promise<string | null> {
   const { lastUser, lastReply } = extractLastTurn(messages)
   if (!lastReply) return null // 无最终回复可审,放行
+  const hasTools = Array.isArray(tools) && tools.length > 0
   const prompt = [
     '你是严格的对抗式审查者,目标是找出以下 AI 助手回复的错误并证明它有问题(事实错误 / 遗漏 / 逻辑矛盾 / 与需求不符)。',
     `用户需求:${lastUser || '(未明确)'}`,
     `助手回复:${lastReply}`,
-    '只报告具体、可验证的问题。若确实无问题,只回复"无问题"。',
+    hasTools
+      ? '重点检查 window 修改:① 属性路径是否正确(是否误写未注册路径);② 值类型是否符合该属性 schema;③ 语义是否符合属性 description。可用只读工具(get_window_prop / list_window_props 等)读回实际值实证。'
+      : '只报告具体、可验证的问题。',
+    '若确实无问题,只回复"无问题"。',
   ].join('\n')
   const sys = '你是严格的对抗式审查者,只找问题不赞美。目标是反驳,不是改进。'
   // 对抗子 agent 的日志经 onLog 转发到主 debugLogs(带 source:'adversarial' 标签,调试面板可区分)
   const forwardLog = log ? (e: { type: string; data: unknown }) => log(e.type, { ...(e.data as object), source: 'adversarial' }) : undefined
+  // 配只读工具 → 多轮实证审查(maxToolRounds 4);无工具 → 单轮文本审查(退化为现状)
   const child = createAgent(
     isChatModel(llm)
-      ? { llm, maxToolRounds: 1, systemPrompt: sys, onLog: forwardLog }
-      : { apiKey: llm.apiKey, baseUrl: llm.baseUrl, model: llm.model, temperature: 0, maxTokens: llm.maxTokens, maxToolRounds: 1, systemPrompt: sys, onLog: forwardLog },
+      ? { llm, tools: tools as any, maxToolRounds: hasTools ? 4 : 1, systemPrompt: sys, onLog: forwardLog }
+      : { apiKey: llm.apiKey, baseUrl: llm.baseUrl, model: llm.model, temperature: 0, maxTokens: llm.maxTokens, tools: tools as any, maxToolRounds: hasTools ? 4 : 1, systemPrompt: sys, onLog: forwardLog },
   )
   const verdict = await child.invoke([{ role: 'user', content: prompt, timestamp: Date.now() }])
   log?.('middleware', { stage: 'adversarial_verdict', verdict, source: 'adversarial' })

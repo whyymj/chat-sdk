@@ -195,6 +195,11 @@ Agent 自主调用这些内置工具(无需你写):
 - **范围控制**:Agent 只能动 `windowProps` 里声明的路径,其它一律拒绝。
 - **schema 校验**:`set`/`edit` 不合法值会被拦截(不写入),返回结构化错误给 Agent 自纠。
 - **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_window_snapshot` 一键回退。
+  - 自动快照:写操作前自动入栈(per-path,默认 20,FIFO 丢最旧)
+  - 手动检查点:`snapshot_window_prop(path, label?)` 命名快照
+  - 查看时间线:`list_window_snapshots(path?)` —— 序号 / op / 标签 / 大小
+  - 回退:`restore_window_snapshot(path, id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈
+  - 例:Agent 误改 `page.theme`,对话「回退 page.theme 最近一次修改」→ Agent 调 `restore_window_snapshot({ path: 'page.theme' })`
 - **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **零桥接**:工具直接操作宿主页面主 `window`,无 iframe/shadow 隔离。
 
@@ -405,7 +410,9 @@ verify: {
 
 **查看状态**:`agent.inspect().verify` → `{ enabled, maxAttempts }`。
 
-> **对抗验证**(`verify.adversarial: true`):check 通过后 spawn 一个"找茬"子 agent(refute 姿态,目标是证明回复有问题,突破自审偏差)再审一遍。默认关(每次烧一个子 agent token)。
+> **对抗验证**(`verify.adversarial: true`):check 通过后 spawn 一个**配只读工具**的"找茬"子 agent(refute 姿态,可实证读回 window 检查而非臆测,突破自审偏差)再审一遍。默认关(每次烧一个多轮子 agent token)。
+>
+> **window 场景策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)。
 
 ### 6.10 MCP(外部工具接入)
 
@@ -515,6 +522,13 @@ await agent.mount()
 agent.messages                // 响应式数组,自建 UI 据此渲染
 await agent.send('...')       // 发送(数组自动更新)
 agent.unmount()
+```
+
+**复用内置 UI 模块**:headless 模式下也可 `import { ChatDialog, useChat }` 复用内置对话框组件与流式/重试/停止/重新生成逻辑(`ChatDialog` 接 `fetchStream`/`getInfo` 等 props),而不必从零实现 UI。
+
+**主题定制**:`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(`--pa-primary` 等,默认中性主题)与 props(`showAvatar`/`showTyping` 关头像/打字动画)。覆盖变量即可换主题:
+```css
+.pa-chat { --pa-primary: #0ea5e9; }  /* 改主色(类名按实际容器) */
 ```
 
 **预设**(常见场景一键装载):

@@ -74,7 +74,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: 对抗式验证(可选)
 
-`verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**无工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复;verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个子 agent token),`createPageAgent` 透传主 `llm` 构造子 agent。
+`verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**配只读工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复。子 agent 配备只读工具(读 window 的 `get_window_prop`/`get_window_paths`/`list_window_props`/`describe_window_prop` + `fetch_document`,由 `createPageAgent` 从 `allTools` 白名单筛选注入)与多轮工具调用预算(`maxToolRounds` 提升至 4),可实证读回被改属性检查而非臆测;审查聚焦 window 修改的典型错误(属性路径 / 值类型 / 语义)。无只读工具可装时(如 `capabilities.windowOps:false`)退化为单轮文本审查。verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个多轮子 agent token),`createPageAgent` 透传主 `llm` 与筛选后的只读工具构造子 agent。
 
 ## Requirement: 内置工具按需装载
 
@@ -87,3 +87,19 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 ## Requirement: 能力用法默认提示(克制注入)
 
 各内置能力(planning / window 快照回退 / subagent)在**该能力开启**时,由 `createPageAgent` 统一经 `usageHints` 中间件向 system prompt 注入一行简短用法提示(如「多步任务先 `write_todos` 拆解」「误改可用 `restore_window_snapshot` 回退」「独立子任务可 `spawn_agent` 委派」)。提示仅在该能力开启时注入,全部关闭时不注入(返回 `undefined`,不增加上下文);绝不覆盖集成方自定义 `systemPrompt`(拼接在其后)。子 agent 的默认 systemPrompt 明示其只具备只读工具、应给出简洁结论。
+
+## Requirement: Agent 信息含 MCP 与工具来源
+
+`inspect()`(getInfo)返回已连接 MCP server 列表(`mcp.servers: [{name, url, toolCount}]`)与每个工具的来源标注(`source: 'builtin' | 'mcp:<name>' | 'user'`)。内置工具标 `builtin`,MCP 注入工具标 `mcp:<serverName>`,用户 `tools`/`toolsets` 标 `user`。DebugDrawer「Agent 信息」展示 MCP 区块与工具来源标签,使集成方能看清工具来源构成。
+
+## Requirement: 对话 regenerate 与复制
+
+正常(非错误)assistant 回复支持「复制」与「重新生成」:重新生成移除该回复,以当前对话历史(含最后一条 user)重发流式生成。错误时的「重试」、生成中的「停止」(abort)保留。loading 期间禁用复制/重新生成。
+
+## Requirement: UI 模块可独立导出
+
+`ChatDialog` / `MessageContent` / `CodePreview` 组件与 `useChat` composable 从 SDK 入口导出,支持 headless(`ui:false`)模式下集成方自建 UI 时复用对话框组件与流式/重试/停止/重生成逻辑,而不必重新实现。
+
+## Requirement: UI 样式可配
+
+`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(主色 `--pa-primary`、背景、圆角等,提供默认值)与 props(头像显示 `showAvatar`、打字动画 `showTyping`);默认采用中性主题(去渐变、单色主色)。集成方可经 CSS 变量覆盖主题或经 props 关闭装饰,无需改组件代码。

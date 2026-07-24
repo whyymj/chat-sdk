@@ -40,3 +40,8 @@ export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, Sess
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, ToolStep } from './types'
 export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo, Toolset } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
+// UI 模块(组件 + composable,供 headless 自建 UI 复用)
+export { default as ChatDialog } from './components/ChatDialog.vue'
+export { default as MessageContent } from './components/MessageContent.vue'
+export { default as CodePreview } from './components/CodePreview.vue'
+export { useChat } from './composables/useChat'

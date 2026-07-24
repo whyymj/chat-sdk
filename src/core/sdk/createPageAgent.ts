@@ -194,6 +194,8 @@ interface AgentCore {
   refCount: number
   /** MCP client closers(unmount/release 时关闭) */
   mcpClosers: Array<() => Promise<void>>
+  /** 已连 MCP server 元信息(getInfo 展示;失败的 server 不进) */
+  mcpServers: { name: string; url: string; toolCount: number }[]
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -244,12 +246,17 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
         maxSnapshots: options.maxSnapshots,
       })
     : []
-  const allTools: StructuredToolInterface[] = [
-    ...selectBuiltinTools(caps, windowOps, fetchDocTools),
+  // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
+  const toolSources = new Map<string, string>()
+  const builtinTools = selectBuiltinTools(caps, windowOps, fetchDocTools)
+  builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
+  const userTools: StructuredToolInterface[] = [
     // 成套工具集展开合并(替代逐个 tools 点名)
     ...(options.toolsets || []).flatMap((ts) => ts.tools as StructuredToolInterface[]),
     ...(options.tools || []),
   ]
+  userTools.forEach((t) => toolSources.set(t.name, 'user'))
+  const allTools: StructuredToolInterface[] = [...builtinTools, ...userTools]
 
   const usePlanning = caps?.planning !== false
   const useSkills = caps?.skills !== false
@@ -284,13 +291,16 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           debug: options.debug,
         })
 
+  // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回 window 检查而非臆测;windowOps 关闭则不含 window 工具)
+  const READONLY_FOR_ADVERSARIAL = ['get_window_prop', 'get_window_paths', 'list_window_props', 'describe_window_prop', 'fetch_document']
+  const readonlyTools = allTools.filter((t) => READONLY_FOR_ADVERSARIAL.includes(t.name))
   // verify 中间件(check 省略时默认 createWriteBackCheck 写后读回验证)。maxAttempts 经 maxVerifyAttempts 透传 createAgent,非中间件字段
   const verifyMw = useVerify
     ? createVerifyMiddleware({
         check: options.verify!.check ?? createWriteBackCheck({
           schemas: Object.fromEntries((options.windowProps ?? []).map((p) => [p.path, p.schema])),
         }),
-        adversarial: options.verify?.adversarial ? { llm: options.llm } : undefined,
+        adversarial: options.verify?.adversarial ? { llm: options.llm, tools: readonlyTools } : undefined,
       })
     : undefined
 
@@ -324,6 +334,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     sessionId: '',
     refCount: 0,
     mcpClosers: [],
+    mcpServers: [],
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -400,7 +411,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       return {
         id: agentId,
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
-        tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema })),
+        tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description, whenToUse: s.whenToUse })),
         windowProps: (options.windowProps ?? []).map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
         memory: options.memory ?? '',
@@ -417,6 +428,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           maxAttempts: useVerify ? verifyMaxAttempts : 0,
           adversarial: useVerify && !!options.verify?.adversarial,
         },
+        mcp: { servers: core.mcpServers },
       }
     },
   }
@@ -500,13 +512,21 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     if (options.mcp?.length) {
       const results = await Promise.allSettled(options.mcp.map((c) => connectMcp(c)))
       core.mcpClosers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
-      const mcpTools = results.flatMap((r, i) => {
-        if (r.status === 'fulfilled') return r.value.tools
-        console.warn(`[page-agent][mcp] server ${options.mcp![i].name ?? options.mcp![i].url} 连接失败:`, r.reason)
-        return []
+      core.mcpServers = []
+      const mcpTools: StructuredToolInterface[] = []
+      results.forEach((r, i) => {
+        const cfg = options.mcp![i]
+        const label = cfg.name ?? cfg.url
+        if (r.status === 'fulfilled') {
+          core.mcpServers.push({ name: label, url: cfg.url, toolCount: r.value.tools.length })
+          r.value.tools.forEach((t) => toolSources.set(t.name, `mcp:${label}`))
+          mcpTools.push(...r.value.tools)
+        } else {
+          console.warn(`[page-agent][mcp] server ${label} 连接失败:`, r.reason)
+        }
       })
       allTools.push(...mcpTools)
-      if (options.debug) console.log(`[page-agent][mcp] 注入 ${mcpTools.length} 个工具`)
+      if (options.debug) console.log(`[page-agent][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
     }
     core.agent = createAgent({
       // provider 抽离:llm 为模型实例则注入,否则按配置构造 ChatOpenAI

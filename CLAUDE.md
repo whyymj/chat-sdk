@@ -67,11 +67,11 @@ src/
     ├── mcp/client.ts           # MCP client(连远程 server,动态注入 tools;动态 import SDK)
     ├── utils/                  # offload(大结果外存)/ rounds / pool(并发池)
     ├── composables/            # useChat / useContextManager / useMarkdown
-    ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI)
+    ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI,均从入口导出可复用)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
     ├── __tests__/selftest.ts   # 自测(157 项)
-    └── index.ts                # 库唯一入口(只导出通用核心)
+    └── index.ts                # 库唯一入口(导出核心 + UI 模块:ChatDialog/MessageContent/CodePreview/useChat)
 examples/
 ├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
 ├── page-demo/                  # 定制 demo(开发自举):App / main / PageRenderer / pageSchema / useAgentConfig
@@ -154,8 +154,9 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **内置 check**:`createWriteBackCheck()`(check 省略时默认)——扫描会话**所有**写操作(`set/edit/delete_window_prop`),读回 + schema 校验;**跳过被合法拒绝的写**(校验失败/范围拒绝);delete 读回空=成功。windowOps 写入(`setByPath`)同步,无需 await
 - **自定义 check**:`verify:{ check: async ({messages,state}) => ({ok, feedback?}) }`;好 check 返回**具体可操作**的 feedback(非「结果不对」)
 - **导出**:`createVerifyMiddleware` / `createWriteBackCheck` / `VerifyCheck` 类型。单独 `createVerifyMiddleware({check})` 作 middleware 用时,`maxVerifyAttempts` 需自行透传 `createAgent`(`VerifyMiddlewareOptions` 无 maxAttempts——预算是 createAgent 层配置)
-- **adversarial 对抗验证**:`verify.adversarial: true`(check 通过后 spawn 无工具"找茬"子 agent,refute 姿态,突破自审偏差;默认关,每次烧一个子 agent token)
-- **默认关**(烧 token):需 `capabilities.verify:true` 显式开启;误用 warn(传 check 忘 caps / adversarial 未实现);`inspect()` 的 `verify` 字段看装载状态
+- **adversarial 对抗验证**:`verify.adversarial: true`(check 通过后 spawn 配**只读工具**的"找茬"子 agent,refute 姿态,可实证读回 window 检查而非臆测,突破自审偏差;默认关,每次烧一个多轮子 agent token)
+- **window 场景默认策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)
+- **默认关**(烧 token):需 `capabilities.verify:true` 显式开启;误用 warn(传 check 忘 caps);`inspect()` 的 `verify` 字段看装载状态
 
 ## 关键约定与坑
 
@@ -201,6 +202,10 @@ createPageAgent({
 **内置工具集手动注入**(高级):`createWindowOps` / `fetchDocTools` 已从入口导出;另有 `fetchTools`(静态)/ `defineWindowToolset(props)`(工厂)toolset 预设。配合 `capabilities:{windowOps:false,fetch:false}` 关闭默认自动装配,改用 `toolsets:[defineWindowToolset(props), fetchTools]` 手动注入(主要业务工具集单独引入、按需注入)。
 
 框架无关集成见 `demo/plain.html`(importmap + esm.sh 提供 peer dep)。
+
+**UI 模块可复用**(headless 进阶):`ChatDialog` / `MessageContent` / `CodePreview` 组件 + `useChat` composable 均从入口导出。headless(`ui:false`)自建 UI 时可 `import { ChatDialog, useChat }` 复用对话框组件与流式/重试/停止/重生成逻辑。`inspect()` 的 `AgentInfo` 含 `mcp.servers`(已连 MCP 列表)与每个工具的 `source`(`builtin`/`mcp:<name>`/`user`),DebugDrawer「Agent 信息」展示。
+
+**主题定制**:ChatDialog/DebugDrawer 暴露 CSS 变量(`--pa-primary`/`--pa-bg`/`--pa-radius` 等,默认中性主题,去 AI 风格化渐变)+ props(`showAvatar`/`showTyping`)。集成方可覆盖变量换主题或经 props 关装饰,无需改组件代码。
 
 ## 编码规范
 - `<script setup lang="ts">`,Composition API;注释用中文,只解释非显而易见处

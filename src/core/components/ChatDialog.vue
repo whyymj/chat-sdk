@@ -21,12 +21,18 @@ const props = withDefaults(defineProps<{
   onClear?: () => void
   /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
   getInfo?: () => AgentInfo
+  /** 显示头像(默认 true;false → 隐藏 🤖/👤 emoji 头像,更克制) */
+  showAvatar?: boolean
+  /** 显示打字动画(默认 true;false → 用「思考中…」文字替代三点动画) */
+  showTyping?: boolean
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
+  showAvatar: true,
+  showTyping: true,
 })
 
-const { state, scrollContainer, sendMessage, clearMessages, stop, retry } = useChat({
+const { state, scrollContainer, sendMessage, clearMessages, stop, retry, regenerate } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
@@ -76,6 +82,15 @@ function formatTime(timestamp: number) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+/** 能力徽标摘要(MCP server 数 + 工具数,从 getInfo 拉) */
+const summary = computed(() => {
+  const info = props.getInfo?.()
+  return { mcp: info?.mcp?.servers?.length ?? 0, tools: info?.tools?.length ?? 0 }
+})
+function copyText(text: string) {
+  navigator.clipboard.writeText(text)
 }
 </script>
 
@@ -132,7 +147,7 @@ function formatTime(timestamp: number) {
         :class="msg.role"
         :data-msg-idx="idx"
       >
-        <div class="message-avatar">
+        <div v-if="showAvatar" class="message-avatar">
           {{ msg.role === 'user' ? '👤' : '🤖' }}
         </div>
         <div class="message-content">
@@ -174,7 +189,8 @@ function formatTime(timestamp: number) {
 
           <div class="message-bubble" :class="{ typing: isPendingAssistant(idx) }">
             <template v-if="isPendingAssistant(idx)">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <template v-if="showTyping"><span class="dot"></span><span class="dot"></span><span class="dot"></span></template>
+              <span v-else class="typing-text">思考中…</span>
             </template>
             <template v-else>
               <MessageContent v-if="msg.role === 'assistant'" :content="msg.content" />
@@ -186,17 +202,21 @@ function formatTime(timestamp: number) {
             class="stream-cursor"
           ></span>
           <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
+          <!-- 最后一条 assistant(非生成中)的操作:复制 / 重新生成 -->
+          <div v-if="msg.role === 'assistant' && msg.content && !state.loading && idx === state.messages.length - 1" class="msg-actions">
+            <button class="msg-action-btn" title="复制" @click="copyText(msg.content)">📋 复制</button>
+            <button class="msg-action-btn" title="重新生成" @click="regenerate">🔄 重新生成</button>
+          </div>
         </div>
       </div>
 
       <!-- 加载指示器:仅当最后一条不是 assistant 占位时(非流式等待)才单独显示,避免与流式占位消息叠加成两个 AI 头像 -->
       <div v-if="state.loading && state.messages[state.messages.length - 1]?.role !== 'assistant'" class="message-row assistant">
-        <div class="message-avatar">🤖</div>
+        <div v-if="showAvatar" class="message-avatar">🤖</div>
         <div class="message-content">
           <div class="message-bubble typing">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
+            <template v-if="showTyping"><span class="dot"></span><span class="dot"></span><span class="dot"></span></template>
+            <span v-else class="typing-text">思考中…</span>
           </div>
         </div>
       </div>
@@ -210,6 +230,9 @@ function formatTime(timestamp: number) {
 
     <!-- 输入区域 -->
     <div v-show="isExpanded" class="chat-footer">
+      <button v-if="props.getInfo" class="cap-badge" title="查看 Agent 信息(MCP / 工具)" @click="debugVisible = true">
+        🔌{{ summary.mcp }} · 🔧{{ summary.tools }}
+      </button>
       <textarea
         v-model="inputText"
         class="chat-input"
@@ -241,13 +264,19 @@ function formatTime(timestamp: number) {
 
 <style scoped>
 .chat-dialog {
+  /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变) */
+  --pa-primary: var(--pa-primary);
+  --pa-primary-rgb: 79, 70, 229;
+  --pa-bg: #ffffff;
+  --pa-bubble-ai: #f3f4f6;
+  --pa-radius: 12px;
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  border-radius: 12px;
+  border-radius: var(--pa-radius);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
-  background: #fff;
+  background: var(--pa-bg);
   overflow: hidden;
   transition: all 0.3s ease;
 }
@@ -256,7 +285,7 @@ function formatTime(timestamp: number) {
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--pa-primary);
   color: #fff; cursor: pointer; user-select: none;
 }
 .header-left { display: flex; align-items: center; gap: 8px; }
@@ -305,7 +334,7 @@ function formatTime(timestamp: number) {
   word-break: break-word; white-space: pre-wrap;
 }
 .message-row.assistant .message-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; }
-.message-row.user .message-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border-bottom-right-radius: 4px; }
+.message-row.user .message-bubble { background: var(--pa-primary); color: #fff; border-bottom-right-radius: 4px; }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 .message-time { font-size: 11px; color: #9ca3af; margin-top: 4px; padding: 0 4px; }
 
@@ -314,6 +343,7 @@ function formatTime(timestamp: number) {
 .typing .dot:nth-child(2) { animation-delay: 0.2s; }
 .typing .dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px); } }
+.typing-text { font-size: 13px; color: #9ca3af; }
 
 .reasoning-block { margin-bottom: 6px; border: 1px dashed #c7d2fe; border-radius: 8px; overflow: hidden; background: #f5f3ff; }
 .reasoning-header { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; user-select: none; font-size: 12px; color: #6d28d9; }
@@ -331,7 +361,7 @@ function formatTime(timestamp: number) {
 .step-children { padding-left: 12px; border-left: 2px solid #c7d2fe; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
 .step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 8px; background: #f8fafc; font-size: 10px; color: #64748b; }
 
-.stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: #667eea; animation: blink 1s steps(2) infinite; }
+.stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--pa-primary); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
 .error-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
@@ -345,11 +375,11 @@ function formatTime(timestamp: number) {
   padding: 10px 12px; font-size: 14px; font-family: inherit; line-height: 1.4;
   outline: none; transition: border-color 0.2s; max-height: 100px; overflow-y: auto;
 }
-.chat-input:focus { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1); }
+.chat-input:focus { border-color: var(--pa-primary); box-shadow: 0 0 0 2px rgba(var(--pa-primary-rgb), 0.1); }
 .send-btn {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; border: none; border-radius: 8px;
-  background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; cursor: pointer;
+  background: var(--pa-primary); color: #fff; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s; flex-shrink: 0;
 }
 .send-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.05); }
@@ -357,4 +387,14 @@ function formatTime(timestamp: number) {
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .send-btn.stop-btn { background: #9ca3af; }
 .send-btn.stop-btn:hover:not(:disabled) { background: #6b7280; transform: none; }
+
+/* 能力徽标(footer 左,MCP/工具数,点击开 Agent 信息) */
+.cap-badge { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.cap-badge:hover { border-color: var(--pa-primary); color: var(--pa-primary); }
+
+/* 最后一条 assistant 操作(复制/重新生成,hover 显示) */
+.msg-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }
+.message-row.assistant:hover .msg-actions { opacity: 1; }
+.msg-action-btn { padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+.msg-action-btn:hover { border-color: var(--pa-primary); color: var(--pa-primary); background: #f5f3ff; }
 </style>

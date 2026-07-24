@@ -60,7 +60,7 @@ export interface ChatDialogProps {
 }
 
 /** agent 检视信息（inspect() 返回，供 debug 窗口展示） */
-export interface ToolInfo { name: string; description: string; schema?: unknown }
+export interface ToolInfo { name: string; description: string; schema?: unknown; /** 来源:builtin / mcp:<name> / user */ source?: string }
 export interface SkillInfo { name: string; description: string; whenToUse?: string }
 export interface WindowPropInfo { path: string; description: string; schema?: unknown }
 
@@ -88,4 +88,6 @@ export interface AgentInfo {
   subagent: SubagentInfo
   /** verify 自检装载状态(默认未装载 → undefined) */
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean }
+  /** 已连 MCP server 列表(无 MCP → undefined) */
+  mcp?: { servers: { name: string; url: string; toolCount: number }[] }
 }

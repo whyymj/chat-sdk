@@ -8,6 +8,8 @@
  *  - messages:外部共享响应式数组,与父级共用同一引用(刷新恢复时灌入)
  *  - onPersist:一轮完成后回调(落盘)
  *  - onClear:清空时回调(新建会话)
+ *
+ * sendMessage / regenerate 共用 runAssistantStream:前者先 push user,后者移除旧 assistant 后以历史重发。
  */
 import { reactive, ref, nextTick } from 'vue'
 import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
@@ -40,7 +42,7 @@ export function useChat(
   /** 消息列表容器 DOM 引用,用于自动滚动 */
   const scrollContainer = ref<HTMLElement | null>(null)
 
-  /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage 新建,停止不影响后续发送) */
+  /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
 
   function scrollToBottom() {
@@ -57,22 +59,11 @@ export function useChat(
   }
 
   /**
-   * 发送消息:添加用户消息 → 调用 AI → 添加 AI 回复
-   * 优先使用流式(fetchStream),否则回退到非流式(fetchResponse / 模拟回复)
-   * 每次发送新建 AbortController;stop() 可中止,abort 不计入 error
+   * 跑一轮 assistant 生成(sendMessage / regenerate 共用)。
+   * 历史已含待回复的最后一条 user;占位 assistant push 到末尾,fetchStream 传 slice(0,-1) = 历史。
+   * 流式优先,否则非流式 fallback。abort 不计入 error;失败移除空占位。
    */
-  async function sendMessage(content: string) {
-    if (!content.trim() || state.loading) return
-
-    addMessage('user', content.trim())
-    state.loading = true
-    state.error = null
-
-    // 每轮新建 controller(支持停止;停止不影响后续发送)
-    currentController = new AbortController()
-    const signal = currentController.signal
-
-    // 流式模式:先创建占位的 assistant 消息,随事件增量更新
+  async function runAssistantStream(signal: AbortSignal) {
     if (fetchStream) {
       const assistantMsg = reactive({
         role: 'assistant' as const,
@@ -82,7 +73,6 @@ export function useChat(
         steps: [] as ToolStep[],
       })
       state.messages.push(assistantMsg)
-
       try {
         await fetchStream(state.messages.slice(0, -1), (event) => {
           switch (event.type) {
@@ -93,14 +83,9 @@ export function useChat(
               assistantMsg.content += event.delta
               break
             case 'tool_call':
-              assistantMsg.steps.push({
-                name: event.name,
-                args: event.args,
-                status: 'running',
-              })
+              assistantMsg.steps.push({ name: event.name, args: event.args, status: 'running' })
               break
             case 'tool_result': {
-              // 找到最后一个同名 running 步骤,写入结果
               for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
                 if (assistantMsg.steps[i].name === event.name && assistantMsg.steps[i].status === 'running') {
                   assistantMsg.steps[i].result = event.result
@@ -111,7 +96,6 @@ export function useChat(
               break
             }
             case 'subagent': {
-              // 子 agent 进度:挂到最后一个 spawn 步骤的 children 下(嵌套展示,不污染主步骤序列)
               const spawnStep = assistantMsg.steps[assistantMsg.steps.length - 1]
               if (!spawnStep) break
               if (!spawnStep.children) spawnStep.children = []
@@ -119,7 +103,6 @@ export function useChat(
               if (event.kind === 'tool_call') {
                 spawnStep.children.push({ name: fullName, args: event.args, status: 'running' })
               } else {
-                // tool_result:配对同名 running 子步骤,写入结果
                 for (let i = spawnStep.children.length - 1; i >= 0; i--) {
                   if (spawnStep.children[i].status === 'running' && spawnStep.children[i].name === fullName) {
                     spawnStep.children[i].result = event.result
@@ -134,17 +117,13 @@ export function useChat(
           scrollToBottom()
         }, signal)
       } catch (err: any) {
-        // abort(用户停止)不计入 error;其他错误才提示
-        if (!isAbort(err, signal)) {
-          state.error = err.message || '请求失败,请重试'
-        }
-        // 失败时移除空占位消息(abort 时若已生成内容则保留)
+        if (!isAbort(err, signal)) state.error = err.message || '请求失败,请重试'
+        // 失败/abort 时移除空占位(已生成内容则保留)
         if (!assistantMsg.content && !assistantMsg.reasoning) {
           const idx = state.messages.indexOf(assistantMsg)
           if (idx >= 0) state.messages.splice(idx, 1)
         }
       } finally {
-        // 先 await 持久化完成再关 loading:确保 indexed 等异步后端在用户刷新前已落盘
         await onPersist?.(state.messages)
         state.loading = false
         currentController = null
@@ -158,14 +137,43 @@ export function useChat(
       const response = await fetchFn(state.messages, signal)
       addMessage('assistant', response)
     } catch (err: any) {
-      if (!isAbort(err, signal)) {
-        state.error = err.message || '请求失败,请重试'
-      }
+      if (!isAbort(err, signal)) state.error = err.message || '请求失败,请重试'
     } finally {
       await onPersist?.(state.messages)
       state.loading = false
       currentController = null
     }
+  }
+
+  /**
+   * 发送消息:添加用户消息 → 跑 assistant 生成。
+   * 每次新建 AbortController;stop() 可中止,abort 不计入 error。
+   */
+  async function sendMessage(content: string) {
+    if (!content.trim() || state.loading) return
+    addMessage('user', content.trim())
+    state.loading = true
+    state.error = null
+    currentController = new AbortController()
+    await runAssistantStream(currentController.signal)
+  }
+
+  /** 重新生成最后一条 assistant 回复:移除它(及尾部)→ 以当前历史(含最后 user)重发 */
+  async function regenerate() {
+    if (state.loading) return
+    const msgs = state.messages
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        msgs.splice(i) // 移除该 assistant 及其后所有
+        break
+      }
+    }
+    // 需有 user 可重发
+    if (!msgs.some((m) => m.role === 'user')) return
+    state.loading = true
+    state.error = null
+    currentController = new AbortController()
+    await runAssistantStream(currentController.signal)
   }
 
   /** 内置模拟回复(开发调试用,未接入 API 时的 fallback) */
@@ -176,8 +184,7 @@ export function useChat(
   }
 
   function clearMessages() {
-    onClear?.() // 通知父级(如新建会话)
-    // 清空:splice 保持共享引用(若 state.messages 与父级共用同一数组)
+    onClear?.()
     state.messages.splice(0, state.messages.length)
     state.error = null
   }
@@ -202,8 +209,8 @@ export function useChat(
     const content = msgs[lastUserIdx].content
     msgs.splice(lastUserIdx) // 移除该 user 及其后所有消息(失败的 assistant 占位)
     state.error = null
-    await sendMessage(content) // sendMessage 会重新 push 该 user
+    await sendMessage(content)
   }
 
-  return { state, scrollContainer, sendMessage, clearMessages, stop, retry }
+  return { state, scrollContainer, sendMessage, clearMessages, stop, retry, regenerate }
 }
