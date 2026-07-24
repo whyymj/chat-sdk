@@ -151,9 +151,16 @@ export interface ChatSdkOptions {
     adversarial?: boolean
   }
   /**
+   * 主动征询(默认开启):装载 `request_human_confirmation` 工具 + 注入默认提示词,
+   * LLM 在不确定 / 多方案 / 高风险不可逆时主动调它征询用户(把选项做成可点选按钮),而非自行猜测。
+   * 默认 true(不传也开);传 false 关闭。被动确认(白名单)仍由 `approval.tools`/`approval.confirm` 声明(业务相关,无法自动推断)。
+   * 传了 `approval` 时,`approval.humanConfirmTool: false` 亦可关闭本能力(向后兼容)。
+   */
+  humanConfirm?: boolean
+  /**
    * 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装)。
    * tools 指定需确认的工具名(如 ['set_window_prop','edit_window_prop']);confirm 自定义判定;timeoutMs 超时自动拒绝。
-   * humanConfirmTool(默认 true,传 approval 即装):装载 request_human_confirmation 工具,LLM 可在不确定/多方案/高风险时主动征询用户。
+   * humanConfirmTool(传 approval 时默认 true;false 关闭):装载 request_human_confirmation 工具,LLM 可在不确定/多方案/高风险时主动征询用户。
    */
   approval?: {
     tools?: string[]
@@ -410,8 +417,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(options.tools || []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
-  // 人工确认(主动侧):传 approval 且 humanConfirmTool 未关 → 装 request_human_confirmation 工具(LLM 主动征询用户)
-  const useHumanConfirm = !!options.approval && options.approval.humanConfirmTool !== false
+  // 人工确认(主动侧):默认开启(不猜测,不确定/多方案/高风险时主动征询);顶层 humanConfirm:false 或 approval.humanConfirmTool:false 关闭
+  const useHumanConfirm =
+    options.humanConfirm !== false && (options.approval ? options.approval.humanConfirmTool !== false : true)
   const humanConfirmTool = useHumanConfirm ? createHumanConfirmTool() : null
   if (humanConfirmTool) toolSources.set(HUMAN_CONFIRM_TOOL_NAME, 'builtin')
   // 会话级 checkpoint 回滚工具(供 LLM 自纠:流程异常/走偏时回退到上次正常态)
@@ -501,7 +509,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 能力用法提示(最前,紧跟 base systemPrompt;按 caps 注入,全关则不注入)
   const usageHintsMw = createUsageHintsMiddleware(
-    { ...caps, humanConfirm: useHumanConfirm },
+    {
+      ...caps,
+      humanConfirm: useHumanConfirm,
+      // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
+      subagents: options.subagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
+    },
     useWindowOps && !!(options.windowProps?.length),
   )
   const middlewares = [
@@ -604,6 +617,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       vfsStore.clear?.()
       todosMw.reset([])
       if (!options.memory) memoryMw.reset('')
+      // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
+      core.agent!.debugLogs.value = []
       if (!snap) snap = await store.load(agentId, target)
       if (snap) core.applySnapshot(snap)
       if (options.memory) void store.save(agentId, core.sessionId, { memory: options.memory })
@@ -837,12 +852,14 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
               if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
             },
             onClear: () => {
-              // 新建会话:同步生成 id + 重置内存态(vfs/todos/memory),防旧会话数据残留或污染新会话
+              // 新建会话:同步生成 id + 重置内存态(vfs/todos/memory/debugLogs),防旧会话数据残留或污染新会话
               if (!core.store) return
               core.sessionId = makeId()
               core.vfsStore.clear?.()
               core.todosMw.reset([])
               if (!options.memory) core.memoryMw.reset('')
+              // 同步释放上一会话的调试日志(否则要等下次 send 才重置,清空后抽屉仍挂旧日志占内存)
+              core.agent!.debugLogs.value = []
               void core.store.createSession(core.agentId, options.session?.title, core.sessionId)
             },
           })

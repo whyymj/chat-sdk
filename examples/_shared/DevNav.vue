@@ -8,6 +8,8 @@ const LINKS = [
   { href: '/subagent.html', label: '子 Agent', match: (p: string) => p.startsWith('/subagent') },
   { href: '/toolsets.html', label: '工具分离', match: (p: string) => p.startsWith('/toolsets') },
   { href: '/nested.html', label: '嵌套树', match: (p: string) => p.startsWith('/nested') },
+  { href: '/human-confirm.html', label: '人工确认', match: (p: string) => p.startsWith('/human-confirm') },
+  { href: '/planner.html', label: '规划反思', match: (p: string) => p.startsWith('/planner') },
   { href: '/mcp.html', label: 'MCP', match: (p: string) => p.startsWith('/mcp') },
   { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
 ]

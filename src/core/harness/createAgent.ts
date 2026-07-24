@@ -79,6 +79,10 @@ export interface CreateAgentOptions {
 }
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10
+/** debugLogs 条目上限:超限丢最旧,防异常多轮/子 agent 大量转发日志撑爆内存(纯内存,每轮重置,此为单轮兜底) */
+const MAX_DEBUG_LOGS = 300
+/** 单条日志内 message content 截断阈值:llm_request 每轮记录完整 messages(O(N²) 增长),截断既保可读又控内存 */
+const MAX_LOG_CONTENT_CHARS = 6000
 
 /**
  * 逐轮上下文保底压缩(纯函数,可单测):循环内每轮 tool 结果累积,单条已由 offload 限制,多条累积仍可能超。
@@ -144,12 +148,18 @@ export function createAgent(options: CreateAgentOptions) {
     // 始终记录到 debugLogs(供日志抽屉查看请求上下文历史);debug 时额外输出到 console
     const entry: DebugLog = { timestamp: Date.now(), type, data }
     debugLogs.value.push(entry)
+    // 条目上限兜底:超限丢最旧(单轮内异常多 tool/子 agent 转发时防失控)
+    if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
     triggerRef(debugLogs)
     onLog?.(entry) // 日志下沉(子 agent 经 ctx.logSink → onLog 转发到主)
     if (debug) console.log(`%c[Agent] ${type}`, 'color:#667eea;font-weight:bold', data)
   }
   /** push 一条外部 debugLog 到主日志(供子 agent 经 ctx.logSink 转发) */
-  const pushLog = (entry: DebugLog) => { debugLogs.value.push(entry); triggerRef(debugLogs) }
+  const pushLog = (entry: DebugLog) => {
+    debugLogs.value.push(entry)
+    if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
+    triggerRef(debugLogs)
+  }
 
   // 合并工具:中间件贡献的工具 + 用户工具
   const allTools: StructuredToolInterface[] = [
@@ -292,8 +302,9 @@ export function createAgent(options: CreateAgentOptions) {
       const entry: Record<string, unknown> = {
         role: t === 'human' ? 'user' : t === 'ai' ? 'assistant' : t,
       }
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-      if (content) entry.content = content
+      const raw = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      // 截断超长 content:llm_request 每轮记录完整 messages(O(N²) 增长),大 JSON 场景单轮可数 MB;截断保可读控内存
+      if (raw) entry.content = raw.length > MAX_LOG_CONTENT_CHARS ? raw.slice(0, MAX_LOG_CONTENT_CHARS) + `…(截断 ${raw.length - MAX_LOG_CONTENT_CHARS} 字符)` : raw
       const toolCalls = (m as any).tool_calls
       if (Array.isArray(toolCalls) && toolCalls.length) {
         entry.tool_calls = toolCalls.map((tc: any) => ({

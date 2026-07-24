@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useChat } from '../composables/useChat'
 import MessageContent from './MessageContent.vue'
 import DebugDrawer from './DebugDrawer.vue'
@@ -64,6 +64,10 @@ const approvalOptions = computed<string[]>(() => {
   return Array.isArray(opts) ? opts.map(String) : []
 })
 
+/** 工具调用参数 JSON 默认收起,点击「查看参数」展开 */
+const approvalArgsExpanded = ref(false)
+watch(pendingApproval, () => { approvalArgsExpanded.value = false })
+
 /** 是否有可回退的 checkpoint(响应式:每次 error-bar 渲染时重读) */
 const canUndo = computed(() => (typeof props.canUndo === 'function' ? !!props.canUndo() : false))
 
@@ -90,6 +94,38 @@ function toggleReasoning(idx: number) {
 
 function stepStatusIcon(step: ToolStep) {
   return step.status === 'running' ? '⏳' : step.status === 'error' ? '❌' : '✅'
+}
+
+/** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组(顺次展示)。状态聚合(有 error→error,有 running→running,否则 done),children 合并 */
+function groupedSteps(steps: ToolStep[]) {
+  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[] }[] = []
+  for (const s of steps) {
+    const last = groups.length ? groups[groups.length - 1] : null
+    if (last && last.name === s.name) {
+      last.count++
+      if (s.status === 'running') last.hasRunning = true
+      if (s.status === 'error') last.hasError = true
+      if (s.children?.length) last.children.push(...s.children)
+    } else {
+      groups.push({
+        name: s.name,
+        count: 1,
+        hasRunning: s.status === 'running',
+        hasError: s.status === 'error',
+        children: s.children?.length ? [...s.children] : [],
+      })
+    }
+  }
+  return groups.map((e) => ({
+    name: e.name,
+    count: e.count,
+    status: e.hasError ? 'error' : e.hasRunning ? 'running' : 'done',
+    children: e.children,
+  }))
+}
+
+function groupStatusIcon(status: string) {
+  return status === 'running' ? '⏳' : status === 'error' ? '❌' : '✅'
 }
 
 /** 占位 assistant 消息:流式等待首个输出时(content/reasoning 均空)→ 在该消息内显示三点,避免再叠加一个底部 loading 头像 */
@@ -203,14 +239,16 @@ function copyText(text: string) {
             v-if="msg.role === 'assistant' && msg.steps && msg.steps.length"
             class="steps-block"
           >
-            <div v-for="(step, sIdx) in msg.steps" :key="sIdx" class="step-item">
+            <div v-for="(step, sIdx) in groupedSteps(msg.steps)" :key="sIdx" class="step-item">
               <div class="step-head">
-                <span class="step-icon">{{ stepStatusIcon(step) }}</span>
+                <span class="step-icon">{{ groupStatusIcon(step.status) }}</span>
                 <span class="step-name">{{ step.name }}</span>
+                <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
                 <span v-if="step.status === 'running'" class="step-status running">执行中…</span>
               </div>
-              <!-- 子 agent 工作进度(嵌套展示) -->
+              <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具青色区分) -->
               <div v-if="step.children && step.children.length" class="step-children">
+                <div class="step-children-label">🧬 子 agent 进度</div>
                 <div v-for="(c, cIdx) in step.children" :key="cIdx" class="step-child">
                   <span class="step-icon">{{ stepStatusIcon(c) }}</span>
                   <span class="step-name">{{ c.name }}</span>
@@ -286,8 +324,11 @@ function copyText(text: string) {
         <div class="approval-head">
           <span class="approval-icon">✋</span>
           <span class="approval-title">需确认工具调用:<code>{{ pendingApproval.toolName }}</code></span>
+          <button v-if="approvalArgsPreview" class="approval-toggle" @click="approvalArgsExpanded = !approvalArgsExpanded">
+            {{ approvalArgsExpanded ? '收起参数' : '查看参数' }}{{ approvalArgsExpanded ? ' ▴' : ' ▾' }}
+          </button>
         </div>
-        <pre v-if="approvalArgsPreview" class="approval-args">{{ approvalArgsPreview }}</pre>
+        <pre v-if="approvalArgsPreview && approvalArgsExpanded" class="approval-args">{{ approvalArgsPreview }}</pre>
         <div class="approval-actions">
           <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
           <button class="approval-allow" @click="resolveApproval(true)">允许</button>
@@ -419,20 +460,25 @@ function copyText(text: string) {
 .reasoning-toggle { margin-left: auto; }
 .reasoning-body { padding: 8px 10px; border-top: 1px dashed #b8d4c5; font-size: 12px; line-height: 1.6; color: #16402f; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
 
-.steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 3px; }
-.step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; }
+.steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
+.step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; max-width: 100%; }
 .step-head { display: inline-flex; align-items: center; gap: 5px; }
 .step-icon { font-size: 11px; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.step-count { font-size: 10px; color: #0891b2; font-weight: 600; }
 .step-status.running { color: #0891b2; }
-.step-children { padding-left: 12px; border-left: 2px solid #b8d4c5; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-.step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 8px; background: #f8fafc; font-size: 10px; color: #64748b; }
+.step-children { padding: 4px 8px 4px 10px; border-left: 2px solid #c4b5fd; border-radius: 0 8px 8px 0; background: #faf5ff; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.step-children-label { font-size: 10px; font-weight: 600; color: #7c3aed; letter-spacing: 0.3px; }
+.step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 8px; background: #ede9fe; border: 1px solid #ddd6fe; font-size: 10px; color: #6d28d9; }
+.step-child .step-name { color: #6d28d9; }
+.step-child .step-status.running { color: #8b5cf6; }
 
 .stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--cs-primary); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
-.error-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
-.error-text { flex: 1; }
+.error-bar { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
+.error-text { flex: 1; min-width: 0; word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5; max-height: 120px; overflow-y: auto; }
+.error-bar .retry-btn, .error-bar .undo-btn { flex-shrink: 0; margin-top: 1px; }
 .retry-btn { flex-shrink: 0; padding: 3px 12px; border: none; border-radius: 6px; background: #dc2626; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
 .retry-btn:hover { background: #b91c1c; }
 
@@ -475,6 +521,8 @@ function copyText(text: string) {
 .approval-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #92400e; }
 .approval-icon { font-size: 15px; }
 .approval-title code { padding: 1px 6px; border-radius: 4px; background: #fef3c7; color: #78350f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.approval-toggle { margin-left: auto; padding: 2px 8px; border: none; background: transparent; color: #92400e; font-size: 12px; cursor: pointer; border-radius: 4px; }
+.approval-toggle:hover { background: #fef3c7; }
 .approval-args { margin: 8px 0; padding: 8px; max-height: 140px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; }
 .approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .approval-actions button { padding: 5px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }

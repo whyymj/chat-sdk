@@ -1,6 +1,8 @@
 # chat-sdk
 
-> 框架无关的**页面内 Agent JS SDK** —— 一行代码把一个会调工具的 AI 助手对话框挂到任意网页，让 AI 直接读写宿主页面的 `window` 属性、抓取文档，实现「AI 改页面」。
+> 给网页一个**会改页面的 AI 助手**。一行代码挂载对话框，AI 通过工具按 schema 安全读写页面数据，实现「对话式」搭建/编辑/运维。
+
+> **AI agent 接入**：直接看下方「[Agent 接入速查](#agent-接入速查给-ai-agent-读)」（导出 / 选项表 / 扩展点 / 内置工具 / 文件结构），架构与约定坑见 [`CLAUDE.md`](./CLAUDE.md)。
 
 [![npm](https://img.shields.io/npm/v/chat-sdk.svg)](https://www.npmjs.com/package/chat-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
@@ -8,96 +10,180 @@
 
 ---
 
-## 这是什么
+## 适合谁
 
-`chat-sdk` 是一个**框架无关**的 JS SDK：以对话框形态挂载到任意网页，内置一个基于 **ReAct 模式**的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性（基于**属性注册表 + schema 校验**）、GET 抓取文档，并具备 **planning / skills / 虚拟工作区 / 快照回退 / 人工确认 / 会话级 checkpoint / context 管理**能力。
+**低代码 / 可视化搭建平台、表单与页面设计器、CMS、智能运维台**——凡是「页面有可结构化描述的数据，希望用自然语言驱动它变化」的场景。
 
-- **Vue 打包进库**（非 peer），使用者无需安装 Vue；同时支持 `ui:false` headless 模式，集成方用响应式 `messages` + `send`/`stream` 自建 UI（框架无关更彻底）
-- **provider 抽离**：`llm` 可传任意 LangChain `BaseChatModel` 实例，或 `LLMConfig` 配置对象（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
-- **自研 Deep Agents 风格 harness**：不引入 LangGraph / langchain 整包，规避浏览器打包阻塞，中间件可插拔
+核心思路一句话：**把页面数据结构（schema）声明给 Agent，它用工具按 schema 安全读写**——「改页面」从拖拽/手填变成一句话。
 
-## 特性
+## 使用场景
 
-- 🛠 **window 操作工具集**：属性注册表 + zod schema 校验 + 增量 patch 编辑（`edit_window_prop` 按 jsonPath 只发改动）+ 快照回退 + JSONPath 查询 + 模糊搜索 + 沙箱脚本
-- 🧠 **ReAct Agent harness**：可插拔中间件（before/after/wrap 三类钩子，正序/逆序/洋葱执行），8 个扩展点
-- 📋 **planning / skills / memory**：`write_todos` 任务规划、`define_skill` 渐进式披露、AGENTS.md 风格持久指令
-- 🗄 **虚拟工作区 vfs**：内存文件系统（read/write/edit/ls/glob/grep），大结果外存转 vfs 只留预览
-- ↩️ **回退体系**：windowOps per-path 快照栈（精细修小错）+ 会话级 checkpoint（整体回大错，一键回到上次正常时）
-- ✋ **人工确认**：被动白名单（写操作前弹框）+ 主动征询（`request_human_confirmation`，AI 不确定/多方案/高风险时主动问你）
-- ✅ **verify 自检**：agent 返回前跑 check 自纠（默认 `createWriteBackCheck` 写后读回 + schema 校验），可选对抗式验证
-- 🤖 **子 agent 编排**：`spawn_agent`/`spawn_agents` 委派独立子任务（过程不占主上下文），支持预声明命名角色
-- 🔌 **MCP 接入**：连远程 MCP server 动态注入工具（http/sse/websocket）
-- 📦 **上下文管理**：4 层自适应压缩（offload 外存 / 逐轮截断 / 输入摘要 / 内存上限），预设档位 + LLM 摘要 + 关键词召回
-- 💾 **持久化**：IndexedDB（降级内存）+ 三层命名空间隔离 + 全局配额/LRU 淘汰 + 多会话切换
-- 🎨 **可定制 UI**：CSS 变量换主题，去 AI 风格化渐变
+| 场景 | 用户说 | AI 做 |
+|---|---|---|
+| 🏗 **低代码搭建** | 「顶部 Banner 改深色、主标题加粗、加一张新品卡」 | 按 jsonPath 增量 patch 组件树，画布实时刷新 |
+| 📝 **表单设计器** | 「手机号加格式校验、地址改三级联动」 | 增量改字段定义，schema 校验防错 |
+| 📰 **CMS 运营** | 「这批商品标题加『限时』前缀、低于 100 元的标红」 | JSONPath 筛选 + 沙箱脚本批量改 |
+| 🖥 **运维配置台** | 「A 实验阈值调到 30%、关掉 B 开关」 | 白名单 + 人工确认改配置，写后读回校验 |
+| 🤖 **AI 原生助手** | 「把这张看板的图例改成柱状」 | 对话操作产品自有数据，免做 UI |
 
-## 快速开始
+> 仓库 `examples/nested-demo` 即低代码场景完整示例：嵌套区块树 + 人工确认 + 一键回退。
 
-### 安装
+## 30 秒上手
 
 ```bash
-npm install chat-sdk
-# 同时装 peer 依赖
-npm install zod @langchain/openai @langchain/core
+npm install chat-sdk zod @langchain/openai @langchain/core
 ```
-
-### 最小示例
 
 ```ts
 import { createChatSdk } from 'chat-sdk'
 import { z } from 'zod'
 
-const sdk = createChatSdk({
+window.page = { title: '新品专区', theme: 'light' }
+
+createChatSdk({
   container: '#chat',
   llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  systemPrompt: '你是页面操作助手。通过工具读写宿主页面的 window 属性。',
+  systemPrompt: '你是页面搭建助手，通过工具读写 window.page。',
   windowProps: [
-    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
-    { path: 'app.count', description: '计数', schema: z.number().int() },
+    { path: 'page.title', description: '页面标题', schema: z.string() },
+    { path: 'page.theme', description: '主题', schema: z.enum(['light', 'dark']) },
   ],
+  approval: { tools: ['set_window_prop', 'edit_window_prop'] }, // 写操作弹确认
+  checkpoint: true, // 误改一键回退
 }).mount()
 ```
 
-用户对对话框说「把主题改成 dark」→ AI 调 `set_window_prop({ path: 'app.theme', value: 'dark' })` → 经 schema 校验写入 → 页面响应式更新。
+用户说「标题改成『夏日新品』、主题切深色」→ AI 调 `edit_window_prop` 增量改 → schema 校验 → 写前确认 → 响应式刷新。说错了?点「↩ 回退」。
 
-### CDN（零配置）
-
-```html
-<script src="https://unpkg.com/chat-sdk"></script>
-<script>
-  ChatSdk.createChatSdk({
-    container: '#chat',
-    llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-    windowProps: [{ path: 'app.theme', description: '主题', schema: { type: 'string', enum: ['light','dark'] } }],
-  }).mount()
-</script>
-```
-
-ESM（esm.sh，peer 自动解析）：
-
-```ts
-import { createChatSdk, z } from 'https://esm.sh/chat-sdk'
-```
+CDN 零配置：`<script src="https://unpkg.com/chat-sdk"></script>` → `ChatSdk.createChatSdk({...})`。
 
 ## 它能做什么
 
 | 能力 | 说明 | 选项 |
 |---|---|---|
-| **window 操作** | 读写宿主页面 `window` 注册属性，schema 校验 + 增量编辑 + 快照回退 | `windowProps` / `capabilities.windowOps` |
-| **文档抓取** | `fetch_document` GET 抓取网页/文档（带注入防御） | `capabilities.fetch` |
-| **任务规划** | `write_todos` 整表替换任务清单，逐步推进 | `capabilities.planning` |
-| **技能披露** | `define_skill`/`load_skill` 渐进式披露长指令 | `capabilities.skills` |
-| **虚拟工作区** | vfs 文件系统，大结果外存 | `capabilities.vfs` |
-| **上下文压缩** | 4 层自适应压缩，预设档位 | `contextPreset` / `contextOptions` |
-| **持久指令** | AGENTS.md 风格 memory 注入 system prompt | `memory` / `capabilities.memory` |
-| **人工确认** | 写操作前确认 + AI 主动征询 | `approval` |
-| **会话回退** | 每轮 checkpoint，一键回到上次正常时 | `checkpoint` |
-| **自检自纠** | 返回前 check，不通过 feedback 回灌重试 | `capabilities.verify` |
-| **子 agent** | 委派独立子任务，过程不占主上下文 | `subagent` / `subagents` |
-| **MCP** | 连远程 MCP server 动态注入工具 | `mcp` |
-| **持久化** | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
+| 🛠 window 操作 | 读写注册属性，schema 校验 + 增量 patch + 快照回退 | `windowProps` |
+| 🧠 ReAct harness | 可插拔中间件（8 钩子），自研不引 LangGraph | `middleware` |
+| 📋 规划/技能/记忆 | `write_todos` / `define_skill` / AGENTS.md 指令 | `capabilities.*` |
+| 🗄 虚拟工作区 | 内存文件系统，大结果外存不撑爆上下文 | `capabilities.vfs` |
+| ↩️ 回退 | per-path 快照（修小错）+ 会话 checkpoint（回大错） | `checkpoint` |
+| ✋ 人工确认 | 写前弹框 + AI 主动征询（不确定/多方案/高风险） | `approval` |
+| ✅ 自检自纠 | 返回前 check，不通过 feedback 回灌重试 | `capabilities.verify` |
+| 🤖 子 agent | 委派子任务，过程不占主上下文 | `subagent` |
+| 🔌 MCP | 连远程 MCP server 动态注入工具 | `mcp` |
+| 📦 上下文压缩 | 4 层自适应压缩，预设档位 + LLM 摘要 | `contextPreset` |
+| 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 
-所有能力默认开（`verify`/`approval`/`checkpoint` 默认关），可经 `capabilities` 关掉无用能力省 token/体积。
+能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
+
+## Agent 接入速查（给 AI agent 读）
+
+> 本节是给 AI agent 的密集接入参考：导出清单 / 选项表 / 扩展点 / 内置工具 / 文件结构。深挖见 `doc/` 与 `CLAUDE.md`。
+
+### 导出（`import { ... } from 'chat-sdk'`）
+
+```ts
+// 入口与工具构造
+createChatSdk, defineTool, defineSkill, presets, z
+// harness 与中间件(自定义编排)
+createAgent, createSubagentMiddleware, createSubagentsMiddleware,
+createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
+createHumanConfirmMiddleware, createHumanConfirmTool, createCheckpointMiddleware, createCheckpointManager,
+createUsageHintsMiddleware, createWindowOps, createVfs, connectMcp
+// 上下文/模型
+resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
+// 存储
+createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
+// UI(headless 自建 UI 复用)
+ChatDialog, MessageContent, CodePreview, useChat
+// 类型(略):ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, WindowPropSpec, AgentMessage, StreamEvent …
+```
+
+### `createChatSdk` 选项速查
+
+| 分类 | 选项 | 类型 / 默认 | 说明 |
+|---|---|---|---|
+| **基础** | `container` | `string \| HTMLElement` | 挂载点（`ui:true` 必传） |
+| | `ui` | `boolean \| 'default'` · 默认 `true` | `false` = headless（用 `agent.messages` 自建 UI） |
+| | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
+| | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
+| | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入） |
+| **页面数据** | `windowProps` | `{path,description,schema}[]` | 注册可被工具读写的 window 属性 + zod schema 校验 |
+| | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
+| **能力开关** | `capabilities` | `{planning?,windowOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
+| | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
+| | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
+| | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
+| | `checkpoint` | `boolean \| {maxCheckpoints?,auto?}` · 默认关 | 会话级回滚（`auto` 默认 `true` 每轮存档） |
+| | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck` |
+| **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
+| | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
+| **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · 默认 `auto` | 压缩预设档位 |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩） |
+| | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
+| | `maxMemoryRounds` | `number` · 默认 `50` | 对话历史内存上限轮次（`0` 关裁剪） |
+| | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
+| **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置 \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离 |
+| | `session` | `{id?,autoResume?,title?}` | 会话控制 |
+| | `shareContext` | `boolean` · 默认 `false` | 同 `id` 多实例共享同一 agent |
+| **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | 模型重试 / 同轮工具并发 / 最大轮次 |
+| | `mcp` | `McpServerConfig[]` | 远程 MCP server（http/sse/websocket） |
+| | `middleware` | `Middleware[]` | 自定义中间件（拼到内置栈末尾） |
+| | `streaming` / `title` / `placeholder` / `debug` | — | UI/调试 |
+
+### 扩展点
+
+```ts
+// ① 自定义工具
+const myTool = defineTool({ name: 'do_x', description: '...', schema: z.object({...}), handler: (args) => 'result' })
+createChatSdk({ tools: [myTool], /*...*/ })
+
+// ② 自定义技能(渐进披露:用到才 load_skill 加载详情)
+const mySkill = defineSkill({ name: 'style_guide', description: '品牌色规范', body: '主色 #1f4d3a…' })
+createChatSdk({ skills: [mySkill], /*...*/ })
+
+// ③ 自定义中间件(8 钩子:beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
+const mw: Middleware = { name: 'telemetry', afterModel: async (ctx, next) => { await next(ctx); console.log('round done') } }
+createChatSdk({ middleware: [mw], /*...*/ })
+
+// ④ 预声明子 agent(规划-反思-执行等固定角色)
+createChatSdk({ subagents: [
+  { id: 'planner', description: '创意规划', temperature: 0.9, systemPrompt: '…' },
+  { id: 'reflector', description: '反思审查', temperature: 0.3, systemPrompt: '…' },
+], /*...*/ })
+```
+
+### 内置工具（Agent 可调用）
+
+- **window 操作**（`windowProps` 注册后）：`list_window_props` / `describe_window_prop` / `get_window_prop` / `get_window_paths` / `set_window_prop` / `edit_window_prop`（jsonPath 增量 patch）/ `delete_window_prop` / `snapshot_window_prop` / `list_window_snapshots` / `restore_window_snapshot`
+- **window 查询**：`query_window_prop`（JSONPath）/ `search_window_prop`（模糊搜索）/ `eval_window_script`（沙箱脚本）
+- **抓取**：`fetch_document`
+- **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
+- **规划/技能**：`write_todos` / `define_skill` / `load_skill`
+- **人工确认**：`request_human_confirmation`（主动征询，默认开）
+- **子 agent**：`spawn_agent` / `spawn_agents` / `use_<id>`（预声明）
+- **checkpoint**：`restore_last_checkpoint` / `list_checkpoints`
+
+### 文件结构
+
+```
+src/core/
+├── sdk/createChatSdk.ts        # 命令式入口(组装 harness+工具+中间件)
+│   sdk/defineTool.ts  presets.ts  contextPreset.ts
+├── harness/                    # 自研 ReAct harness(中间件驱动)
+│   createAgent.ts  middleware.ts  state.ts
+│   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
+│   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
+│   permissions.ts  usageHints.ts
+├── tools/                      # windowOps(注册表+增量编辑+快照)/ windowQuery / fetchDoc
+├── backends/                   # vfs(内存) / storage(IndexedDB+多后端+配额淘汰)
+├── mcp/client.ts              # MCP 远程工具接入
+├── composables/               # useChat / useContextManager / useMarkdown
+├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
+└── types/index.ts  index.ts    # 类型 / 库唯一入口
+examples/                       # page-demo / nested-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo
+doc/                            # usage-guide / architecture / context-management / architecture-files
+CLAUDE.md                       # 架构要点 + 约定坑 + 编码规范（agent 必读）
+```
 
 ## 架构
 
@@ -113,46 +199,37 @@ flowchart TD
     SDK --> UI[ChatDialog UI<br/>Vue 打包进库 / 或 headless]
 ```
 
-- **harness**（`core/harness/`）：`createAgent` ReAct 循环 + 中间件执行器 + 各内置中间件
-- **sdk**（`core/sdk/`）：`createChatSdk` 命令式入口 + `defineTool`
-- **tools**（`core/tools/`）：`windowOps`（属性注册表+增量编辑+快照）/ `fetchDoc`
-- **backends**：`vfs`（内存工作区）/ `storage`（IndexedDB 持久化）
-- **composables**：`useChat` / `useContextManager` / `useMarkdown`
-- **components**：`ChatDialog` / `MessageContent` / `CodePreview` / `DebugDrawer`
+- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI
+- **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
+- **自研 harness**：不引 LangGraph/langchain 整包，规避浏览器打包阻塞
 
 ## 配置
 
-### 环境变量（`.env`，前缀 `VITE_`）
-
 ```bash
+# .env（前缀 VITE_）
 VITE_AI_API_KEY=sk-...
 VITE_AI_BASE_URL=https://api.deepseek.com
 VITE_AI_MODEL=deepseek-chat
-VITE_AI_TEMPERATURE=0.3        # JSON/结构化操作建议低温
-# VITE_AI_MAX_TOKENS=16384      # 不配则按模型自动取值(deepseek-v4→384K)
-VITE_AI_SYSTEM_PROMPT=你是通用页面操作助手。   # 必须单行
+VITE_AI_TEMPERATURE=0.3        # 结构化操作建议低温
+# VITE_AI_MAX_TOKENS=           # 不配则按模型自动取值
 ```
-
-### 核心 options
 
 ```ts
 createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
-  id: 'my-agent',              // 稳定 id(多 agent 隔离 + 持久化恢复);不传随机生成
+  id: 'my-agent',              // 稳定 id（多 agent 隔离 + 持久化恢复）
   systemPrompt: '...',
   windowProps: [{ path, description, schema }],
-  tools: [], skills: [], memory: '',
-  storage: 'indexed',          // 持久化('indexed'/'session'/'local'/'memory';默认关)
-  streaming: true,             // 流式逐字(默认 true)
-  ui: 'default',               // 'default' | false(headless)
-  capabilities: { verify: true, windowOps: true, ... },  // 能力开关
-  approval: { tools: ['set_window_prop','edit_window_prop'] },  // 人工确认
-  checkpoint: true,            // 会话级回滚
-  contextPreset: 'auto',       // 上下文压缩档位 auto/conservative/aggressive
-  summaryLlm: { ... },         // 摘要专用 LLM(不配用主 llm)
-  maxRetries: 2,               // 模型调用重试(网络/429/5xx)
-  maxParallelTools: 1,         // 同轮工具并发
+  storage: 'indexed',          // 持久化（默认关）
+  streaming: true, ui: 'default',
+  capabilities: { verify: true },        // 能力开关
+  humanConfirm: true,           // 主动征询（默认开；AI 不确定/多方案主动问你）
+  approval: { tools: ['set_window_prop','edit_window_prop'] }, // 被动确认白名单（默认关）
+  checkpoint: true,
+  contextPreset: 'auto',       // auto/conservative/aggressive
+  summaryLlm: { ... },         // 摘要专用 LLM（不配用主 llm）
+  maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* 自定义中间件 */],
 }).mount()
@@ -160,68 +237,48 @@ createChatSdk({
 
 ## 示例
 
-仓库 `examples/` 提供多个可运行 demo（`npm run dev` 后访问对应 html）：
+`npm run dev` 后访问对应页面：
 
 | 示例 | 入口 | 演示 |
 |---|---|---|
-| page-demo | `/` | 自举开发 demo：左 JSON 响应式页面 + 右对话框 |
-| nested-demo | `/nested.html` | 嵌套区块树编辑（`window.Editor.PageInfo`）+ 人工确认 + checkpoint 回退 |
+| page-demo | `/` | 自举 demo：左 JSON 响应式页面 + 右对话框 |
+| nested-demo | `/nested.html` | 嵌套区块树 + 人工确认 + checkpoint |
+| human-confirm-demo | `/human-confirm.html` | AI 主动征询（多方案点选）+ 写前确认 |
+| planner-demo | `/planner.html` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
 | subagent-demo | `/subagent.html` | 子 agent 并行编排 |
-| mcp-demo | `/mcp.html` | MCP 远程工具接入（需 `npm run mcp:mock`） |
-| toolsets-demo | `/toolsets.html` | 内置工具集手动注入 |
+| mcp-demo | `/mcp.html` | MCP 远程工具（需 `npm run mcp:mock`） |
 
-框架无关集成示例：`demo/plain.html`（importmap + esm.sh）。
-
-## 自测
-
-```bash
-npm test   # tsx 跑 src/core/__tests__/selftest.ts,341 项断言,不依赖 LLM
-```
-
-覆盖核心逻辑：windowOps / vfs / 中间件执行器 / 存储配额淘汰 / retry / pool / subagent / mcp extractText / verify / toolsets / usageHints / 模型能力自适应 / 结构化报错 / ReAct 健壮性 / 安全（原型污染防御）/ 上下文压缩预设 / approval / humanConfirm / checkpoint / trimMemoryMessages 旧摘要合并。
+框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [使用手册](./doc/usage-guide.md) | 安装 / 快速开始 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
-| [功能架构](./doc/architecture.md) | 分层结构 / 运行控制流 / window 操作安全流（mermaid 图） |
-| [上下文组成与压缩策略](./doc/context-management.md) | 上下文 3 部分组成 / 4 层压缩策略 / 流程图 |
-| [文件全览](./doc/architecture-files.md) | 逐文件职责 / 模块依赖 / 数据流 |
-| [项目指引 CLAUDE.md](./CLAUDE.md) | 架构要点 / 约定与坑 / 编码规范 |
-| [规范真相源](./openspec/specs/page-agent-core.md) | 需求规范 |
+| [文档索引](./doc/README.md) | 各文档导航 + 其他信息源（规范/变更/自测） |
+| [使用手册](./doc/usage-guide.md) | 安装 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
+| [功能架构](./doc/architecture.md) | 分层 / 控制流 / window 操作安全流 |
+| [上下文与压缩](./doc/context-management.md) | 上下文组成 / 4 层压缩 / 流程图 |
+| [文件全览](./doc/architecture-files.md) | 逐文件职责 / 依赖 / 数据流 |
+| [CLAUDE.md](./CLAUDE.md) | **agent 必读** · 架构要点 / 约定坑 / 编码规范 |
 
-## 与 Deep Agents 的关系
+## 自测
 
-`chat-sdk` 借鉴 [Deep Agents](https://github.com/langchain-ai/deepagents) 的 harness 思路（ReAct + 中间件 + planning + skills + memory + context 管理），但**自研实现**：
-
-- 不引入 LangGraph / langchain 整包（规避浏览器打包阻塞）
-- 面向**浏览器端 / 宿主页面内**场景（持久化用 IndexedDB，而非服务端 DB）
-- 上下文：输入压缩 + 内存裁剪（旧摘要合并防逐级丢失）+ 大结果 offload 到 vfs，而非 LangGraph checkpointer 每步存档
-- 未实现 Deep Agents 的跨会话语义 store 与持久化时间旅行（checkpoint 仅内存）
-
-详见 [上下文组成与压缩策略 - 与 Deep Agents 的差异](./doc/context-management.md#七与-deep-agents-的差异)。
+```bash
+npm test   # 341 项断言，不依赖 LLM
+```
 
 ## 开发
 
 ```bash
 npm install
-npm run dev      # 开发(端口 3000,被占则 3001)
-npm run build    # 库模式构建到 dist/(ESM + UMD + IIFE + CSS)
-npm run preview  # 预览构建产物
-npm test         # 自测
+npm run dev      # 端口 3000（被占则 3001）
+npm run build    # ESM + UMD + IIFE + CSS
+npm test
 ```
 
-构建产物：
-- `dist/chat-sdk.js`（ESM，peer 外置）
-- `dist/chat-sdk.umd.cjs`（UMD）
-- `dist/chat-sdk.iife.js`（IIFE 全量，CDN 单文件直引，~1.6MB）
-- `dist/chat-sdk.css`
-- `types/index.d.ts`（手动维护）
+## 与 Deep Agents 的关系
 
-## 贡献
-
-欢迎 Issue / PR。提 PR 前请确保 `npm run build` + `npm test` 通过，`types/index.d.ts` 与 `src/core/index.ts` 导出一致。详见 [CLAUDE.md](./CLAUDE.md) 的编码规范。
+借鉴 [Deep Agents](https://github.com/langchain-ai/deepagents) 的 harness 思路（ReAct + 中间件 + planning + skills + memory + context 管理），但自研实现：不引 LangGraph/langchain 整包；面向浏览器端（持久化用 IndexedDB 而非服务端 DB）；上下文用输入压缩 + 内存裁剪 + 大结果 offload，而非每步 checkpointer 存档。详见 [上下文与压缩 - 与 Deep Agents 的差异](./doc/context-management.md#七与-deep-agents-的差异)。
 
 ## License
 

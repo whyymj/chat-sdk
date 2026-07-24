@@ -434,6 +434,27 @@ createChatSdk({
 // 子 agent 配置缺省继承主(不传 llm/systemPrompt 则同主);与 spawn_agent 共存
 ```
 
+**规划-反思-执行模式**(创作/设计场景):预声明高温 `planner`(创意规划,只读)+ 低温 `reflector`(反思审查,只读),主 agent 低温度落地。`usageHints` 中间件按 `subagents` 的 temperature/description **自动注入路由提示**(高温≥0.7 或描述含"规划/创意/设计"→ planner;低温且描述含"反思/审查/挑刺"→ reflector),无需手写 prompt:
+
+```ts
+createChatSdk({
+  llm: { ...mainLlm, temperature: 0.3 },          // 主 agent 低温度:执行落地要稳
+  subagents: [
+    { id: 'planner', description: '创意设计规划师,擅长页面主题/风格方案设计(只出方案,不落地)',
+      temperature: 0.9,                            // 高温度 → 创造力
+      systemPrompt: '你是创意设计规划师。只读 window 数据,给出 2-3 套方案(JSON 草稿),不要调写工具。' },
+    { id: 'reflector', description: '设计反思审查员,挑方案的不一致/不可行/体验问题',
+      temperature: 0.3,
+      systemPrompt: '你是设计反思审查员。对方案挑刺并给修订建议,不要重写整个方案。' },
+  ],
+  approval: { tools: ['set_window_prop', 'edit_window_prop'] }, // 落地写前确认
+})
+// 流程:用户"设计夏日主题" → 主 agent 识别创作类 → use_planner 出方案
+//      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → edit_window_prop 落地
+```
+
+> 路由由主 agent 自判(usageHints 提示词引导);若误判率高,可升级为路由中间件(`beforeModel` 跑轻量 router 判模式,`augmentPrompt` 注入模式指令)。`planner-demo`(`/planner.html`)演示完整闭环。
+
 > 子 agent 边界:默认**只读**(不改页面)、**过程隔离**(只回结论)、**递归物理切断**(maxDepth)、**signal 继承**(主停则子停)。
 
 **示例**:`npm run dev` 后访问
@@ -481,19 +502,20 @@ verify: {
 
 ### 6.11 Approval 人工确认(工具调用前 human-in-the-loop)
 
-人工确认分**被动**与**主动**两侧,传 `approval` 选项即同时启用(默认关闭,不传 = 不装):
+人工确认分**主动**与**被动**两侧,默认行为不同:
 
-- **被动侧(白名单)**:`tools`/`confirm` 指定的工具调用前自动弹确认框,用户「允许/拒绝」后才执行——防 AI 误改页面/误删数据。
-- **主动侧(humanConfirmTool,默认 true)**:装载 `request_human_confirmation` 工具,LLM 在**不确定 / 多方案 / 高风险不可逆**时主动调用征询用户;usageHints 自动注入默认提示词引导何时调用(无需你写 prompt)。
+- **主动侧(默认开启)**:装载 `request_human_confirmation` 工具,LLM 在**不确定 / 多方案 / 高风险不可逆**时主动调用征询用户(把选项做成可点选按钮,而非自行猜测);usageHints 自动注入默认提示词引导何时调用(无需你写 prompt)。`humanConfirm: false` 关闭。
+- **被动侧(白名单,默认关闭)**:`approval.tools`/`approval.confirm` 指定的工具调用前自动弹确认框,用户「允许/拒绝」后才执行——防 AI 误改页面/误删数据。需传 `approval` 选项声明(业务相关,无法自动推断)。
 
 ```ts
 createChatSdk({
   // ... 其他配置
+  // humanConfirm: true,  // 主动征询(默认开启,不传也开;false 关闭)
   approval: {
     tools: ['set_window_prop', 'edit_window_prop', 'delete_window_prop'], // 被动:需确认的工具名
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
     // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
-    // humanConfirmTool: true,  // 主动侧(传 approval 默认 true;false 关闭 request_human_confirmation 工具)
+    // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
   },
 })
 ```
@@ -510,7 +532,15 @@ createChatSdk({
 
 **headless 自建 UI**(`ui:false`):自监听 `approval_request` 事件,事件对象含 `{ toolName, args, resolve }`,自建确认框后调 `resolve(true/false/方案)` 收口。
 
-> **与 verify 区别**:approval = 执行**前**人工把关(防误改);verify = 返回**后**自动自纠(防错答)。二者可叠加。`nested-demo` 已演示对写操作的人工确认 + 主动征询。
+> **开启条件速查**(「主动征询如何开启」):
+> - **主动征询默认开启**(不猜测):不传任何选项也装载 `request_human_confirmation` 工具 + 注入默认提示词,LLM 遇不确定/多方案/高风险时主动征询。
+> - 关闭主动征询:`humanConfirm: false`(顶层),或传 `approval` 时用 `approval.humanConfirmTool: false`。
+> - **被动确认仍需声明**(业务相关,无法自动推断):`approval: { tools: [...] }` 指定写操作白名单;不传则无被动拦截。
+> - 主动征询的「何时该调」由 `usageHints` 中间件自动注入默认提示词,无需自己写 prompt。
+
+> **与 verify 区别**:approval = 执行**前**人工把关(防误改);verify = 返回**后**自动自纠(防错答)。二者可叠加。
+> - `nested-demo`(`/nested.html`):综合演示嵌套树编辑 + 写操作被动确认 + checkpoint。
+> - `human-confirm-demo`(`/human-confirm.html`):聚焦 AI 主动征询——开放性需求 → 弹可点选方案按钮 → 用户选定 → 落地写操作再弹一次被动确认,两层 human-in-the-loop 一次看清。
 
 ### 6.12 Checkpoint 会话级回滚(回到上次正常时)
 
