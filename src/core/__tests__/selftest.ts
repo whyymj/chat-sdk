@@ -35,6 +35,7 @@ import {
 } from '../backends/storage'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
 import { useContextManager } from '../composables/useContextManager'
+import { resolveContextOptions } from '../sdk/contextPreset'
 import { jpEval, searchJson } from '../tools/windowQuery'
 import { createAgent, trimContextIfNeededImpl } from '../harness/createAgent'
 import type { Middleware } from '../harness/middleware'
@@ -1143,8 +1144,22 @@ console.log('\n[模型能力自适应]')
   assert(ds.contextWindow === 131072 && ds.maxOutputTokens === 8192, 'resolveModelCaps: deepseek-chat 表匹配 128K/8K')
   const dsr = resolveModelCaps({ model: 'deepseek-reasoner' })
   assert(dsr.contextWindow === 65536, 'resolveModelCaps: deepseek-reasoner 64K')
+  const dsv4 = resolveModelCaps({ model: 'deepseek-v4-flash' })
+  assert(dsv4.contextWindow === 1048576 && dsv4.maxOutputTokens === 393216, 'resolveModelCaps: deepseek-v4 表匹配 1M/384K(flash 命中 v4 条目)')
   const gpt = resolveModelCaps({ model: 'gpt-4o' })
   assert(gpt.contextWindow === 131072 && gpt.maxOutputTokens === 16384, 'resolveModelCaps: gpt-4o 128K/16K')
+
+  // 修正后的 2026 实测档(GLM/Kimi/Qwen 旧档曾失真)
+  const glm52 = resolveModelCaps({ model: 'glm-5.2' })
+  assert(glm52.contextWindow === 1048576 && glm52.maxOutputTokens === 65536, 'resolveModelCaps: glm-5.2 1M/64K')
+  const glm45 = resolveModelCaps({ model: 'glm-4.5' })
+  assert(glm45.contextWindow === 131072 && glm45.maxOutputTokens === 98304, 'resolveModelCaps: glm-4.5 128K/96K(输出非 8K)')
+  const glm4 = resolveModelCaps({ model: 'glm-4' })
+  assert(glm4.maxOutputTokens === 4096, 'resolveModelCaps: glm-4 4K 输出(与 4.5 区分)')
+  const kimi = resolveModelCaps({ model: 'kimi-k2.6' })
+  assert(kimi.contextWindow === 262144 && kimi.maxOutputTokens === 32768, 'resolveModelCaps: kimi-k2 256K/32K(非 128K/8K)')
+  const qmax = resolveModelCaps({ model: 'qwen-max' })
+  assert(qmax.contextWindow === 32768 && qmax.maxOutputTokens === 8192, 'resolveModelCaps: qwen-max 默认 32K/8K(128K 需申请,取保守)')
 
   // 缺省(未知模型 / 无 model)
   const unk = resolveModelCaps({ model: 'unknown-xyz' })
@@ -1204,6 +1219,49 @@ console.log('\n[token 驱动压缩]')
   const cmZero = useContextManager({ contextWindow: 0, summaryThresholdRounds: 2, windowRounds: 1 })
   const rZero = await cmZero.compress(mkMsgs(4))
   assert(rZero.stats.triggered === true && !/token/.test(rZero.stats.strategy), 'contextWindow:0 → 回退轮数模式')
+}
+
+// ============ 压缩预设档位 resolveContextOptions ============
+console.log('\n[context preset]')
+{
+  // auto 默认:LLM 摘要开、召回 3、阈值 0.5、窗口 0.4
+  const auto = resolveContextOptions({}, 1_048_576)
+  assert(auto.enableLLMSummary === true, 'preset auto: enableLLMSummary 默认 true')
+  assert(auto.recallTopK === 3, 'preset auto: recallTopK=3')
+  assert(auto.summaryThresholdRatio === 0.5, 'preset auto: threshold=0.5')
+  assert(auto.windowRatio === 0.4, 'preset auto: window=0.4')
+  assert(auto.contextWindow === 1_048_576, 'preset auto: contextWindow 回退模型表值')
+
+  // conservative:更晚触发、保留更多、召回 2、关 LLM 摘要(省成本)
+  const cons = resolveContextOptions({ contextPreset: 'conservative' }, 131072)
+  assert(cons.enableLLMSummary === false, 'preset conservative: enableLLMSummary=false(零成本索引摘要)')
+  assert(cons.summaryThresholdRatio === 0.7, 'preset conservative: threshold=0.7')
+  assert(cons.windowRatio === 0.5, 'preset conservative: window=0.5')
+  assert(cons.recallTopK === 2, 'preset conservative: recallTopK=2')
+
+  // aggressive:更早触发、保留少、召回 5、LLM 摘要开
+  const agg = resolveContextOptions({ contextPreset: 'aggressive' }, 32768)
+  assert(agg.summaryThresholdRatio === 0.3, 'preset aggressive: threshold=0.3')
+  assert(agg.windowRatio === 0.3, 'preset aggressive: window=0.3')
+  assert(agg.recallTopK === 5, 'preset aggressive: recallTopK=5')
+  assert(agg.enableLLMSummary === true, 'preset aggressive: enableLLMSummary=true')
+
+  // 细参覆盖 preset:aggressive 但单独把召回调到 8
+  const override = resolveContextOptions({ contextPreset: 'aggressive', contextOptions: { recallTopK: 8 } }, 32768)
+  assert(override.recallTopK === 8, 'preset 覆盖:contextOptions.recallTopK 覆盖 preset')
+  assert(override.summaryThresholdRatio === 0.3, 'preset 覆盖:未覆盖字段仍用 preset(aggressive 0.3)')
+
+  // 细参覆盖 enableLLMSummary:conservative 关 LLM,但用户强制开
+  const forceLlm = resolveContextOptions({ contextPreset: 'conservative', contextOptions: { enableLLMSummary: true } }, 131072)
+  assert(forceLlm.enableLLMSummary === true, 'preset 覆盖:contextOptions.enableLLMSummary 强制覆盖 preset(false)')
+
+  // contextWindow 显式 0:关闭 token 模式回退轮数(保留用户显式值)
+  const zeroWin = resolveContextOptions({ contextOptions: { contextWindow: 0 } }, 1_048_576)
+  assert(zeroWin.contextWindow === 0, 'preset:contextOptions.contextWindow=0 保留(回退轮数模式)')
+
+  // contextOptions:false 视为空,用 preset 默认
+  const falseOpts = resolveContextOptions({ contextOptions: false }, 131072)
+  assert(falseOpts.enableLLMSummary === true && falseOpts.recallTopK === 3, 'contextOptions:false → 用 auto preset 默认')
 }
 
 // ============ 大 JSON 查询/搜索(query_window_prop / search_window_prop)============
@@ -1401,6 +1459,17 @@ console.log('\n[harness loop: 收口综合 + afterAgent 兜底 + 逐轮 trim]')
   assert(threwB, '异常路径:模型抛错时 stream 仍 reject(错误不被吞)')
   assert(afterAgentRan, '异常路径:afterAgent 经 finally 兜底仍执行(中间件清理不跳过)')
 
+  // ②+ 压缩统计捕获:createAgent 在 compressInput 后把 stats 写入 state.lastCompression
+  let capturedStats: any = undefined
+  const compressMw: Middleware = {
+    name: 'fake-compress',
+    compressInput: async (msgs) => ({ messages: msgs, stats: { triggered: true, roundsTotal: 4, roundsSummarized: 2, roundsRecalled: 1, originalMessages: 8, compressedMessages: 5, strategy: 'token-window+llm_summary' } }),
+    afterAgent: (st) => { capturedStats = st.lastCompression },
+  }
+  const agentC = createAgent({ llm: new MockLLM([{ content: 'ok' }]) as any, middleware: [compressMw], maxToolRounds: 2, maxRetries: 0 })
+  await agentC.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
+  assert(capturedStats && capturedStats.triggered === true && capturedStats.strategy === 'token-window+llm_summary', '压缩统计:compressInput stats 写入 state.lastCompression(afterAgent 可观测)')
+
   // ③ 逐轮 trim 纯函数:tool 结果累积超放行上限 → 最早 ToolMessage 压缩为占位摘要(保留 tool_call_id)
   const big = 'x'.repeat(1000)
   const msgs = [new SystemMessage('sys'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: big }), new ToolMessage({ tool_call_id: '2', content: big })]
@@ -1413,6 +1482,13 @@ console.log('\n[harness loop: 收口综合 + afterAgent 兜底 + 逐轮 trim]')
   assert((out[2] as any).tool_call_id === '1', 'trim: 保留 tool_call_id(结构完整,模型仍能对应)')
   const out2 = trimContextIfNeededImpl(msgs, 5000)
   assert(out2 === msgs, 'trim: 未超阈值原样返回同引用')
+
+  // keep 自适应:小阈值保留首 100,大阈值保留首 400(clamp)
+  const smallKeep = trimContextIfNeededImpl(msgs, 1500)
+  assert(/保留首 100/.test(smallKeep[2].content as string), 'trim: keep 自适应(小阈值→100)')
+  const bigMsgs = [new SystemMessage('s'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: 'x'.repeat(300000) })]
+  const bigKeep = trimContextIfNeededImpl(bigMsgs, 200000)
+  assert(/保留首 400/.test(bigKeep[2].content as string), 'trim: keep 自适应(大阈值→400)')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

@@ -93,6 +93,12 @@ export interface AgentInfo {
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
+  /** 最近一次跨轮压缩统计(未触发过 → undefined) */
+  lastCompression?: {
+    triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number;
+    originalMessages: number; compressedMessages: number; strategy: string;
+  };
+}
 }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
@@ -281,7 +287,18 @@ export interface ChatSdkOptions {
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
   mcp?: McpServerConfig[];
+  /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
   contextOptions?: any;
+  /** 上下文压缩预设档位(默认 'auto'):auto / conservative / aggressive;提供合理默认,contextOptions 细参可覆盖 */
+  contextPreset?: 'auto' | 'conservative' | 'aggressive';
+  /** 摘要压缩专用 LLM(BaseChatModel 实例或 LLMConfig);不传则默认用主 agent 模型(llm) */
+  summaryLlm?: any;
+  /** 摘要 LLM 温度(默认 0.3) */
+  summaryTemperature?: number;
+  /** 摘要 LLM 输出上限(默认 1024) */
+  summaryMaxTokens?: number;
+  /** 摘要 LLM 超时毫秒(默认 15000;超时回退索引摘要) */
+  summaryTimeoutMs?: number;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;
   title?: string;

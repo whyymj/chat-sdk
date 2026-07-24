@@ -394,6 +394,17 @@ function flowNodeDetail(lg: DebugLog): string {
                   <div class="info-title">📝 持久指令 (memory)</div>
                   <pre class="info-pre">{{ agentInfo.memory }}</pre>
                 </div>
+
+                <div v-if="agentInfo.lastCompression" class="info-section">
+                  <div class="info-title">🗜️ 上轮压缩</div>
+                  <div class="info-kv">
+                    <div class="kv"><span class="k">触发</span><span class="v">{{ agentInfo.lastCompression.triggered ? '✓' : '✗(未达阈值)' }}</span></div>
+                    <div class="kv"><span class="k">摘要轮次</span><span class="v">{{ agentInfo.lastCompression.roundsSummarized }} / {{ agentInfo.lastCompression.roundsTotal }}</span></div>
+                    <div class="kv"><span class="k">召回</span><span class="v">{{ agentInfo.lastCompression.roundsRecalled }} 条</span></div>
+                    <div class="kv"><span class="k">消息数</span><span class="v">{{ agentInfo.lastCompression.originalMessages }} → {{ agentInfo.lastCompression.compressedMessages }}</span></div>
+                    <div class="kv"><span class="k">策略</span><span class="v" style="font-size: 11px">{{ agentInfo.lastCompression.strategy }}</span></div>
+                  </div>
+                </div>
               </template>
             </div>
           </div>

@@ -18,6 +18,8 @@
 import { createApp, h, defineComponent, reactive, type App as VueApp } from 'vue'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
+import { ChatOpenAI } from '@langchain/openai'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
 import { createTodosMiddleware } from '../harness/todos'
@@ -30,6 +32,7 @@ import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import type { ContextManagerOptions } from '../composables/useContextManager'
+import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
 import { createWindowOps, type WindowPropSpec } from '../tools/windowOps'
@@ -141,8 +144,24 @@ export interface ChatSdkOptions {
   }
   /** MCP server 列表(连远程 server,动态把其 tools 注入 agent;浏览器仅 http/sse/websocket transport) */
   mcp?: McpServerConfig[]
-  /** 上下文压缩配置(false 关闭;默认索引摘要零成本) */
+  /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
   contextOptions?: Partial<ContextManagerOptions> | false
+  /**
+   * 上下文压缩预设档位(默认 'auto'):auto / conservative / aggressive。
+   * 提供一组合理默认,降低配置学习难度;contextOptions 细参可在其基础上覆盖个别字段。
+   */
+  contextPreset?: ContextPreset
+  /**
+   * 摘要压缩专用 LLM:可传 BaseChatModel 实例或 LLMConfig(如更便宜的小模型)。
+   * 不传则默认用主 agent 的模型(options.llm)。
+   */
+  summaryLlm?: BaseChatModel | LLMConfig
+  /** 摘要 LLM 温度(默认 0.3,稳定输出) */
+  summaryTemperature?: number
+  /** 摘要 LLM 输出上限(默认 1024;摘要无需大输出,省成本) */
+  summaryMaxTokens?: number
+  /** 摘要 LLM 超时毫秒(默认 15000;超时回退零成本索引摘要,不阻塞用户) */
+  summaryTimeoutMs?: number
   /** 流式输出(默认 true 逐字流式);false 时等整段回复再显示(底层仍 stream 聚合) */
   streaming?: boolean
   /** 对话框 UI 文案 */
@@ -169,6 +188,7 @@ export interface ChatSdk {
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 50
+
 
 /** 解析 storage 选项 → SessionStore | null(undefined/false/未传 关闭;字符串/对象 开启) */
 function resolveStorage(storage: StorageBackendType | StorageConfig | false | undefined): SessionStore | null {
@@ -219,6 +239,69 @@ interface AgentCore {
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
 const sharedCores = new Map<string, AgentCore>()
 
+/** 从 LLM 响应消息提取文本内容(content 可能是 string 或 content parts 数组) */
+function extractText(msg: BaseMessage): string {
+  const c = msg.content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) {
+    return c
+      .map((p: any) => (typeof p === 'string' ? p : p?.text ?? ''))
+      .join('')
+  }
+  return String(c ?? '')
+}
+
+/**
+ * 构建摘要用 LLM invoke 函数(供 summarization 中间件 llmInvoke)。
+ * 优先用 options.summaryLlm(专用压缩模型,如更便宜的小模型);未配则回退主 agent 模型(options.llm)。
+ * 复用实例或按 LLMConfig 另构造 ChatOpenAI(低温 + 限输出,压缩成连贯段落)。
+ * 温度/输出/超时可配(summaryTemperature/summaryMaxTokens/summaryTimeoutMs);超时回退索引摘要(不阻塞用户)。
+ */
+function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Promise<string>) | undefined {
+  const llmOpt = options.summaryLlm ?? options.llm
+  if (!llmOpt) return undefined
+  const temperature = options.summaryTemperature ?? 0.3
+  const maxTokens = options.summaryMaxTokens ?? 1024
+  const timeoutMs = options.summaryTimeoutMs ?? 15000
+  let llm: BaseChatModel
+  if (isChatModel(llmOpt)) {
+    llm = llmOpt
+  } else {
+    const cfg = llmOpt as LLMConfig
+    if (!cfg.apiKey) {
+      // 显式配了 summaryLlm 却无效(apiKey 缺失):非 debug 也 warn,避免"以为用了专用模型实际回退了主模型/索引摘要"
+      if (options.summaryLlm) {
+        console.warn('[chat-sdk][summarization] summaryLlm 已配置但缺 apiKey,摘要回退主 agent 模型或零成本索引摘要')
+      }
+      return undefined
+    }
+    llm = new ChatOpenAI({
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+      temperature,
+      maxTokens,
+      configuration: cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined,
+    })
+  }
+  return async (prompt: string) => {
+    // 超时保护:摘要 LLM 卡住时 reject → useContextManager 的 try/catch 回退索引摘要,不阻塞用户首次响应
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), timeoutMs)
+    try {
+      const res = await llm.invoke(
+        [
+          new SystemMessage('你是对话历史压缩助手。把下面按轮次索引的对话要点,改写成一段连贯、紧凑的中文摘要,保留关键事实、用户意图与已用工具,不要编造。直接输出摘要正文。'),
+          new HumanMessage(prompt),
+        ],
+        { signal: ac.signal } as any,
+      )
+      return extractText(res).trim()
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // ===== 持久化(默认关闭;赋值后端字符串或配置对象开启)=====
@@ -235,6 +318,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
   })
   if (options.debug) console.log('[chat-sdk][modelCaps]', modelCaps)
+
+  // 摘要用 LLM invoke(默认 LLM 摘要压缩);apiKey 缺失时为 undefined → 自动回退零成本索引摘要
+  const summaryLlmInvoke = buildSummaryLlmInvoke(options)
+  if (options.debug && !summaryLlmInvoke) console.warn('[chat-sdk][summarization] 未构造 llmInvoke(apiKey 缺失?),摘要回退零成本索引摘要')
 
   // ===== 共享 messages(send/mount 唯一来源)=====
   const messages = reactive<AgentMessage[]>([])
@@ -345,10 +432,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(useSummarization
       ? [
           createSummarizationMiddleware({
-            ...(options.contextOptions === false ? {} : options.contextOptions ?? {}),
-            // token 驱动压缩(大模型自适应):未显式声明时用 caps.contextWindow;显式 0 关闭回退轮数模式
-            contextWindow:
-              (options.contextOptions === false ? undefined : options.contextOptions?.contextWindow) ?? modelCaps.contextWindow,
+            // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底
+            ...resolveContextOptions(options, modelCaps.contextWindow),
+            llmInvoke: summaryLlmInvoke,
           }),
         ]
       : []),
@@ -469,6 +555,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           adversarial: useVerify && !!options.verify?.adversarial,
         },
         mcp: { servers: core.mcpServers },
+        lastCompression: core.agent?.getState?.()?.lastCompression as AgentInfo['lastCompression'],
       }
     },
   }

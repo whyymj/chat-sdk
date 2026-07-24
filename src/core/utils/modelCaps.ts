@@ -20,6 +20,7 @@ export interface ModelCaps {
  * 数字随厂商升级会变,仅作兜底;集成方显式声明优先覆盖。
  */
 const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
+  { pattern: /deepseek-v4/i, caps: { contextWindow: 1048576, maxOutputTokens: 393216 } }, // v4:1M 上下文 / 384K 输出
   { pattern: /deepseek-reasoner|deepseek-r1/i, caps: { contextWindow: 65536, maxOutputTokens: 8192 } },
   { pattern: /deepseek/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
   { pattern: /gpt-4\.1/i, caps: { contextWindow: 1047576, maxOutputTokens: 32768 } },
@@ -31,9 +32,16 @@ const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
   { pattern: /claude-3-5-sonnet/i, caps: { contextWindow: 200000, maxOutputTokens: 8192 } },
   { pattern: /claude-3-opus/i, caps: { contextWindow: 200000, maxOutputTokens: 4096 } },
   { pattern: /claude-3-haiku/i, caps: { contextWindow: 200000, maxOutputTokens: 4096 } },
-  { pattern: /qwen-max|qwen2\.5|qwen-plus/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
-  { pattern: /glm-4|glm4|glm-4\.5/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
-  { pattern: /moonshot|kimi/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
+  { pattern: /qwen-max|qwen-plus/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen-Max/Plus:默认 32K(128K 需申请)/ 8K 输出
+  { pattern: /qwen2\.5-1m|qwen-1m/i, caps: { contextWindow: 1048576, maxOutputTokens: 8192 } }, // Qwen2.5-1M:1M / 8K
+  { pattern: /qwen2\.5/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen2.5:默认 32K / 8K
+  { pattern: /glm-5\.2/i, caps: { contextWindow: 1048576, maxOutputTokens: 65536 } }, // GLM-5.2:1M / 64K
+  { pattern: /glm-5/i, caps: { contextWindow: 200000, maxOutputTokens: 65536 } }, // GLM-5/5.1:200K / 64K
+  { pattern: /glm-4\.[6-9]/i, caps: { contextWindow: 131072, maxOutputTokens: 131072 } }, // GLM-4.6/4.7:128K / 128K 输出
+  { pattern: /glm-4\.5/i, caps: { contextWindow: 131072, maxOutputTokens: 98304 } }, // GLM-4.5:128K / 96K 输出
+  { pattern: /glm-4|glm4/i, caps: { contextWindow: 131072, maxOutputTokens: 4096 } }, // GLM-4:128K / 4K
+  { pattern: /kimi-k3/i, caps: { contextWindow: 1048576, maxOutputTokens: 65536 } }, // Kimi K3:1M / 64K
+  { pattern: /kimi-k2|kimi|moonshot/i, caps: { contextWindow: 262144, maxOutputTokens: 32768 } }, // Kimi K2/Moonshot:256K / 32K
   { pattern: /yi-34b|yi-large/i, caps: { contextWindow: 32768, maxOutputTokens: 4096 } },
 ]
 

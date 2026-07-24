@@ -158,7 +158,12 @@ createChatSdk({
 
   /* ===== UI 与其他 ===== */
   streaming: true,              // 流式逐字输出(默认 true)
-  contextOptions: {...},        // 上下文压缩配置(false 关闭)
+  contextPreset: 'auto',        // 压缩预设:auto(默认)/conservative(省成本)/aggressive(省上下文)
+  contextOptions: {...},        // 压缩细参,覆盖 preset 个别字段(false 关闭压缩)
+  summaryLlm: { apiKey, baseUrl, model },  // 摘要专用模型(不配用主 llm)
+  summaryTemperature: 0.3,      // 摘要 LLM 温度(默认 0.3)
+  summaryMaxTokens: 1024,        // 摘要 LLM 输出上限(默认 1024)
+  summaryTimeoutMs: 15000,       // 摘要 LLM 超时(默认 15s,超时回退索引摘要)
   title: 'AI 助手',             // 对话框标题
   placeholder: '输入消息...',   // 输入框占位
   debug: false,                 // 调试日志
@@ -369,11 +374,18 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 
 长会话不会撑爆内存:
 
-- **上下文压缩**:`summarization` 中间件自动滑动窗口 + 摘要 + 关键词召回(默认开启)。
+- **上下文压缩**:`summarization` 中间件自动滑动窗口 + 摘要 + 关键词召回(默认开启)。摘要默认用 LLM(低温 0.3、限输出 1024)把旧轮次改写为连贯段落,失败/超时自动回退零成本索引摘要。
+- **压缩预设**(`contextPreset`,默认 `auto`):普通场景选档即可,特殊情况用 `contextOptions` 细参覆盖个别字段。
+  - `auto`:自适应,LLM 摘要 + 召回 Top-3,触发阈值 0.5、窗口 0.4
+  - `conservative`:大模型/省成本,阈值 0.7、窗口 0.5,召回 Top-2,关 LLM 摘要用索引摘要
+  - `aggressive`:小模型/省上下文,阈值 0.3、窗口 0.3,召回 Top-5
+- **摘要专用模型**:`summaryLlm` 可指定更便宜的小模型做摘要(不配用主 `llm`);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM。
 - **对话历史上限**:`maxMemoryRounds`(默认 50)超限把最旧轮次压缩为一条摘要 system 消息。
 - **vfs 工作区上限**:`vfs.maxBytes`(默认 4MB)超限按 LRU 淘汰最旧文件。
 
 这些在 `storage: false`(纯内存)下也生效,防 OOM。
+
+压缩统计可在 DebugDrawer「🧬 Agent 信息」tab 的「🗜️ 上轮压缩」段查看(触发与否、摘要轮次、召回条数、策略名),排查"上下文为何变了"。
 
 ### 6.9 子 agent(委派与并行)
 
@@ -628,12 +640,10 @@ createChatSdk({ ...presets.minimal, container, llm, windowProps })              
 | `VITE_AI_BASE_URL` | OpenAI 兼容端点 |
 | `VITE_AI_MODEL` | 模型名 |
 | `VITE_AI_TEMPERATURE` | 温度(操作大 JSON 建议 0.3) |
-| `VITE_AI_MAX_TOKENS` | 输出上限(默认 16384,大 JSON 可调大) |
-| `VITE_AI_SYSTEM_PROMPT` | 系统提示词(**必须单行**) |
-| `VITE_DEBUG` | 调试日志(生产 false) |
-| `VITE_CONTEXT_*` | 上下文压缩配置 |
+| `VITE_AI_MAX_TOKENS` | 输出上限(不配则按模型自动取值,如 deepseek-v4→384K) |
+| `VITE_AI_SYSTEM_PROMPT` | 系统提示词(**必须单行**;page-demo 会用自有 systemPrompt 覆盖) |
 
-> 生产环境(库模式)由集成方在 `createChatSdk({ llm })` 显式传入,不依赖 `.env`。
+> 生产环境(库模式)由集成方在 `createChatSdk({ llm, contextOptions, summaryLlm, maxMemoryRounds })` 显式传入,不依赖 `.env`。上下文压缩策略经 `contextOptions`/`summaryLlm` 配置,无 `.env` 项。
 
 ## 11. 常见问题与坑
 

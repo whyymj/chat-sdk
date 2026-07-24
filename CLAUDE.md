@@ -32,12 +32,12 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,263 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,290 项断言)
 ```
 
 ## 环境配置
 
-AI 配置通过 `.env`(前缀 `VITE_`,生产模板见 `.env.example`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS`(缺省 16384,大 JSON 场景;代码默认 16384,`.env`/`llm.maxTokens` 可覆盖)/ `VITE_AI_SYSTEM_PROMPT`(单行)/ `VITE_DEBUG`(生产 false)。上下文压缩相关 `VITE_CONTEXT_*`(见 `useContextManager`)。
+AI 配置通过 `.env`(前缀 `VITE_`,生产模板见 `.env.example`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS`(不配则按模型自动取值,如 deepseek-v4→384K;`.env`/`llm.maxTokens` 可覆盖)/ `VITE_AI_SYSTEM_PROMPT`(单行)。上下文压缩策略不经 `.env`,由 `createChatSdk({ contextOptions, summaryLlm, maxMemoryRounds })` 显式配置(见 `useContextManager`)。
 
 ⚠️ `VITE_AI_SYSTEM_PROMPT` 必须单行(`.env` 不支持多行值)。dev demo(`App.vue`)会覆盖 systemPrompt 为通用页面操作助手。
 
@@ -70,7 +70,7 @@ src/
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI,均从入口导出可复用)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
-    ├── __tests__/selftest.ts   # 自测(263 项)
+    ├── __tests__/selftest.ts   # 自测(290 项)
     └── index.ts                # 库唯一入口(导出核心 + UI 模块:ChatDialog/MessageContent/CodePreview/useChat)
 examples/
 ├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
@@ -115,7 +115,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 `window.page` 用 Vue `reactive()`;Agent `set` 子属性(**不替换引用**)→ `PageRenderer` 响应式更新。
 
 ### 记忆管理(含纯内存上限,防 OOM)
-- 上下文压缩(纯内存、会话级,非持久化):`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)
+- 上下文压缩(纯内存、会话级,非持久化):`summarization` 中间件经 `compressInput` 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回)。**默认 LLM 摘要**:触发压缩时调主 LLM(低温 0.3、限输出 1024)把旧轮次索引要点改写为连贯段落;LLM 不可用/失败自动回退零成本索引摘要。**预设档位**(`contextPreset`,默认 `auto`):`auto`(自适应,LLM 摘要+召回 Top-3,阈值 0.5/窗口 0.4)/ `conservative`(大模型省成本,阈值 0.7/窗口 0.5,召回 Top-2,关 LLM 用索引摘要)/ `aggressive`(小模型省上下文,阈值 0.3/窗口 0.3,召回 Top-5);`contextOptions` 细参可在 preset 基础上覆盖个别字段(`summaryThresholdRatio`/`windowRatio`/`enableRecall`/`recallTopK`/`enableLLMSummary`/`contextWindow`)。`summaryLlm` 指定摘要专用模型(不配用主 llm);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM(默认 0.3/1024/15s,超时回退索引摘要)。压缩统计写入 `state.lastCompression`,DebugDrawer「Agent 信息」tab「🗜️ 上轮压缩」段展示(触发/摘要轮次/召回/策略)。解析逻辑见 `sdk/contextPreset.ts` 的 `resolveContextOptions`(纯函数,已单测)
 - **纯内存上限**(storage:false 也生效,防长会话/大结果外存撑爆内存):
   - vfs 工作区:`maxBytes`(默认 4MB,`createVfs` opts / `options.vfs.maxBytes`)→ 超限按 `updatedAt` 最旧 **LRU 淘汰文件**
   - 对话历史:`maxMemoryRounds`(默认 50,`options.maxMemoryRounds`)→ 超限把最旧轮次**压缩为一条摘要 system 消息**(`trimMemoryMessages`,经 `afterRound` 在每轮后收口;0 关闭)
@@ -188,7 +188,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,263 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,290 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints/context preset/压缩统计捕获/trim keep 自适应),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts
@@ -200,6 +200,9 @@ createChatSdk({
   maxRetries: 2,                  // 模型调用失败自动重试(网络/429/5xx,默认 2)
   maxParallelTools: 1,            // 同轮工具并发(默认 1 串行)
   subagent: { allowedTools: [...] }, // 子 agent 委派(默认开启;spawn_agent/spawn_agents)
+  contextPreset: 'auto',           // 压缩预设:auto(默认)/conservative(省成本)/aggressive(省上下文)
+  contextOptions: { recallTopK: 5 }, // 细参覆盖 preset 个别字段(特殊情况灵活调)
+  summaryLlm: { apiKey, baseUrl, model: 'deepseek-chat' }, // 摘要专用模型(不配用主 llm)
   capabilities: { verify: true },   // 开启自检(默认关);agent 返回前跑 check 自纠
   verify: { maxAttempts: 2 },        // check 省略 → 默认 createWriteBackCheck 写后读回验证
   middleware: [/* 自定义中间件:埋点/拦截/prompt 增强,见「对话鲁棒性」小节 */],

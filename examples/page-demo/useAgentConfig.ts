@@ -9,7 +9,7 @@ export interface DemoAgentConfig {
   baseUrl?: string
   model: string
   temperature: number
-  maxTokens: number
+  maxTokens?: number
   systemPrompt?: string
 }
 
@@ -19,7 +19,7 @@ export function useAgentConfig(): DemoAgentConfig {
     baseUrl: import.meta.env.VITE_AI_BASE_URL || undefined,
     model: import.meta.env.VITE_AI_MODEL || 'gpt-3.5-turbo',
     temperature: Number(import.meta.env.VITE_AI_TEMPERATURE) || 0.7,
-    maxTokens: Number(import.meta.env.VITE_AI_MAX_TOKENS) || 8192,
+    maxTokens: import.meta.env.VITE_AI_MAX_TOKENS ? Number(import.meta.env.VITE_AI_MAX_TOKENS) : undefined,
     systemPrompt: import.meta.env.VITE_AI_SYSTEM_PROMPT || undefined,
   }
 }

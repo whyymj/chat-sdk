@@ -39,7 +39,7 @@ window 工具直接作用于宿主页面主 `window`(无需 postMessage);`get_wi
 系统提供基于内存的 `vfs_read/write/edit/ls/glob/grep`,作为 agent 工作记忆;会话级、刷新即失。
 
 ## Requirement: Context 管理
-context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useContextManager);通过 `compressInput` 中间件钩子在构建上下文前压缩跨轮历史(滑动窗口 + 摘要 + 关键词召回)。
+context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useContextManager);通过 `compressInput` 中间件钩子在构建上下文前压缩跨轮历史(滑动窗口 + 摘要 + 关键词召回)。摘要默认用 LLM(低温 0.3、限输出 1024)把旧轮次索引要点改写为连贯段落;LLM 不可用或调用失败自动回退零成本索引摘要;`contextOptions.enableLLMSummary:false` 可关闭回退索引摘要。提供预设档位 `contextPreset`(默认 `auto`):`auto`(自适应)/`conservative`(大模型省成本,关 LLM 摘要)/`aggressive`(小模型省上下文);`contextOptions` 细参可在 preset 基础上覆盖个别字段;`summaryLlm` 可指定摘要专用模型(不配用主 llm)。解析逻辑为纯函数 `resolveContextOptions`(`sdk/contextPreset.ts`),已单测。
 
 ## Requirement: Memory 注入
 `createChatSdk` 的 `memory` 参数作为持久指令注入 system prompt 前段。
@@ -60,7 +60,7 @@ context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useConte
 `WindowOpsOptions.whitelist`(默认 `true`):仅允许读「注册 path 自身 / 其后代」,禁止读未注册的祖先,防止 LLM 经 `get_window_prop('page')` 把整个大 JSON 拉进上下文。集成方注册「可操作子路径」(如 `page.theme.color` / `page.components`)而非顶层,数组元素用 zod `.passthrough()` 只声明必要 key、其余放行(无需声明完整元素 schema)。`whitelist:false` 回退原行为(允许祖先整体读)。
 
 ## Requirement: 自测覆盖核心逻辑
-`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/字段白名单读/后代读/批量读/增量编辑/快照回退/JSONPath 查询/模糊搜索/沙箱脚本)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean)、toolsets(selectBuiltinTools 筛选 + fetchTools/defineWindowToolset 返工具数组)、usageHints(能力用法提示注入)、模型能力自适应(token 估算/阈值/压缩)、工具结构化报错(ERROR:{json} + 错误码 + hint + details;zod issues 提取;vfs 正则/glob 兜底)、ReAct 循环健壮性(收口综合轮 / afterAgent finally 兜底 / 逐轮 trim 纯函数,经 mock LLM 驱动验证)、安全(merge 原型污染 safeMerge 过滤 + jsonPath PATH_UNSAFE + 越界索引 schema 拦截,经自测验证),263 项断言全过。
+`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/字段白名单读/后代读/批量读/增量编辑/快照回退/JSONPath 查询/模糊搜索/沙箱脚本)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean)、toolsets(selectBuiltinTools 筛选 + fetchTools/defineWindowToolset 返工具数组)、usageHints(能力用法提示注入)、模型能力自适应(token 估算/阈值/压缩)、工具结构化报错(ERROR:{json} + 错误码 + hint + details;zod issues 提取;vfs 正则/glob 兜底)、ReAct 循环健壮性(收口综合轮 / afterAgent finally 兜底 / 逐轮 trim 纯函数,经 mock LLM 驱动验证)、安全(merge 原型污染 safeMerge 过滤 + jsonPath PATH_UNSAFE + 越界索引 schema 拦截,经自测验证)、压缩预设档位(resolveContextOptions:auto/conservative/aggressive + 细参覆盖,纯函数验证),290 项断言全过。
 
 ## Requirement: 循环 beforeReturn 钩子(可拦截 return 并回灌自纠)
 

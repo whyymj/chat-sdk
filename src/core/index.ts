@@ -9,6 +9,7 @@ export { z } from 'zod'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig } from './sdk/createChatSdk'
+export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
 export { presets } from './presets'
 export { connectMcp, extractText } from './mcp/client'

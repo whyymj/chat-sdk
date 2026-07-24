@@ -85,4 +85,14 @@ export interface AgentInfo {
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean }
   /** 已连 MCP server 列表(无 MCP → undefined) */
   mcp?: { servers: { name: string; url: string; toolCount: number }[] }
+  /** 最近一次跨轮压缩统计(未触发过 → undefined;供 DebugDrawer 可观测) */
+  lastCompression?: {
+    triggered: boolean
+    roundsTotal: number
+    roundsSummarized: number
+    roundsRecalled: number
+    originalMessages: number
+    compressedMessages: number
+    strategy: string
+  }
 }

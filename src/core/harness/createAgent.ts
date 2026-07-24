@@ -93,12 +93,13 @@ export function trimContextIfNeededImpl(messages: BaseMessage[], maxChars: numbe
   if (total <= maxChars) return messages
   let trimmed = 0
   const need = total - maxChars
+  // 保留首段长度按放行上限自适应:大模型(20万)→400,小模型(6400)→100;clamp [100,400]
+  const keep = Math.max(100, Math.min(400, Math.round(maxChars / 500)))
   return messages.map((m) => {
     if (trimmed >= need) return m
     if (!(m instanceof ToolMessage)) return m
     const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
     if (c.length <= 400) return m // 太短不值得压
-    const keep = 200
     const summary = `…[已自动压缩 ${c.length} 字符,保留首 ${keep}]\n` + c.slice(0, keep)
     trimmed += c.length - summary.length
     return new ToolMessage({ tool_call_id: (m as any).tool_call_id, content: summary })
@@ -325,6 +326,10 @@ export function createAgent(options: CreateAgentOptions) {
       if (m.compressInput) {
         const r = await m.compressInput(input)
         input = Array.isArray(r) ? r : r.messages
+        // 捕获最近一次压缩统计写入 state,供 DebugDrawer 可观测
+        if (r && !Array.isArray(r) && r.stats) {
+          state = { ...state, lastCompression: r.stats as any }
+        }
       }
     }
 

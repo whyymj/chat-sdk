@@ -5,6 +5,7 @@
  * 本期不做子 agent,故用 last-writer 赋值即可。
  */
 import type { AgentMessage } from '../types'
+import type { CompressionStats } from '../composables/useContextManager'
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 
@@ -49,6 +50,8 @@ export interface HarnessState {
   memory: string
   /** 上下文压缩事件(summarization 中间件维护) */
   summarization?: SummarizationEvent
+  /** 最近一次跨轮压缩统计(createAgent 在 compressInput 后写入,供 DebugDrawer 可观测) */
+  lastCompression?: CompressionStats
   /** beforeReturn 自纠计数(createAgent 维护);达 maxVerifyAttempts 强制 return,防死循环 */
   verifyAttempts: number
 }
