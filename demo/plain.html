@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>chat-sdk · CDN 引入示例(IIFE 一行 script)</title>
-  <!-- 本地预览用构建产物;发布后换成 https://unpkg.com/chat-sdk/dist/chat-sdk.css -->
+  <!-- 本地预览用构建产物;发布后换成 https://unpkg.com/@whyymj/chat-sdk/dist/chat-sdk.css -->
   <link rel="stylesheet" href="../dist/chat-sdk.css" />
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f5f7fa; }
@@ -34,7 +34,7 @@
 
   <!-- IIFE 全量:vue / zod / @langchain 全打包进,暴露 window.ChatSdk -->
   <script src="../dist/chat-sdk.iife.js"></script>
-  <!-- 发布后 CDN:<script src="https://unpkg.com/chat-sdk"></script> -->
+  <!-- 发布后 CDN:<script src="https://unpkg.com/@whyymj/chat-sdk"></script> -->
 
   <script>
     const { createChatSdk, z } = window.ChatSdk

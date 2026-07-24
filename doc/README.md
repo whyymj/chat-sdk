@@ -26,7 +26,7 @@ npm test       # 核心逻辑自测
 ```
 
 ```ts
-import { createChatSdk } from 'chat-sdk'
+import { createChatSdk } from '@whyymj/chat-sdk'
 import { z } from 'zod'
 
 createChatSdk({

@@ -31,11 +31,11 @@
 ## 30 秒上手
 
 ```bash
-npm install chat-sdk zod @langchain/openai @langchain/core
+npm install @whyymj/chat-sdk zod @langchain/openai @langchain/core
 ```
 
 ```ts
-import { createChatSdk } from 'chat-sdk'
+import { createChatSdk } from '@whyymj/chat-sdk'
 import { z } from 'zod'
 
 window.page = { title: '新品专区', theme: 'light' }
@@ -55,7 +55,7 @@ createChatSdk({
 
 用户说「标题改成『夏日新品』、主题切深色」→ AI 调 `edit_window_prop` 增量改 → schema 校验 → 写前确认 → 响应式刷新。说错了?点「↩ 回退」。
 
-CDN 零配置：`<script src="https://unpkg.com/chat-sdk"></script>` → `ChatSdk.createChatSdk({...})`。
+CDN 零配置：`<script src="https://unpkg.com/@whyymj/chat-sdk"></script>` → `ChatSdk.createChatSdk({...})`。
 
 ## 它能做什么
 
@@ -79,7 +79,7 @@ CDN 零配置：`<script src="https://unpkg.com/chat-sdk"></script>` → `ChatSd
 
 > 本节是给 AI agent 的密集接入参考：导出清单 / 选项表 / 扩展点 / 内置工具 / 文件结构。深挖见 `doc/` 与 `CLAUDE.md`。
 
-### 导出（`import { ... } from 'chat-sdk'`）
+### 导出（`import { ... } from '@whyymj/chat-sdk'`）
 
 ```ts
 // 入口与工具构造
