@@ -259,3 +259,18 @@ createChatSdk({
 - **CDN · IIFE 全量**:`<script src="https://unpkg.com/chat-sdk"></script>` → 全局 `window.ChatSdk`(`ChatSdk.createChatSdk` / `ChatSdk.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
 
 构建:`npm run build` = `build:lib`(ESM + UMD,peer 外置)+ `build:iife`(IIFE 全量,配置 `vite.iife.config.ts`)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。
+
+## 双远程仓库与发布约定(重要)
+
+本地有两个远程,**职责不同,切勿混推**:
+
+| remote | URL | 定位 |
+|---|---|---|
+| `origin` | gitee.com/whyymj/**chat-agent**.git | 📦 日常存储(保留全部细粒度 commit) |
+| `github` | github.com/whyymj/**chat-sdk**.git | ✅ 正式开源(只接收整理过的提交) |
+
+- **日常开发**:提交后只推 Gitee —— `git push origin master`。本地 `master` 跟踪 `origin/master`。
+- **发布到 GitHub**:推之前**必须整理 commit**(squash 合并零碎提交、写规范 message),并剔除个人笔记 `doc/待确认问题.md`。**不要直接 `git push github master`**(会非 fast-forward 被拒,且会把零碎提交和笔记推到公开库)。
+- **一键发布脚本**:`./scripts/publish-github.sh "feat: 整理后的总结"` —— 自动完成 `fetch → 检查待整理提交 → public 分支基于 github/master 重置 → squash merge master → 剔除笔记 → 提交 → push github → 回 master`。不传参数则打开编辑器编辑 commit message。
+- **个人笔记** `doc/待确认问题.md` 已在 `.gitignore` 且仅存在于 Gitee,不进 GitHub。
+- **历史中的 `.env`**:旧提交含真实 key,两个远程历史都含;如需彻底清除须 `git filter-repo` 重写(改写所有哈希 + 两远程 force-push),按需再做。
