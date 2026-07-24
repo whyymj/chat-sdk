@@ -28,6 +28,20 @@ export interface ModelResponse {
   aborted?: boolean
 }
 
+/** beforeReturn 钩子上下文:agent 即将返回最终结果前(无 tool_calls 收口处) */
+export interface BeforeReturnContext {
+  messages: BaseMessage[]
+  state: HarnessState
+  response: ModelResponse
+}
+
+/**
+ * beforeReturn 钩子:agent 即将返回最终结果前(正序)执行。
+ * - 返回 feedback 字符串 → 回灌为 user 消息,继续循环(自纠)
+ * - 返回 null/undefined → 放行 return
+ */
+export type BeforeReturnHook = (ctx: BeforeReturnContext) => Promise<string | null> | string | null
+
 /** 中间件返回的 state 更新(last-writer 合并) */
 export type StateUpdate = Partial<HarnessState>
 
@@ -73,6 +87,8 @@ export interface Middleware {
   wrapToolCall?: (ctx: ToolCallContext, next: (ctx: ToolCallContext) => Promise<ToolExecResult>) => Promise<ToolExecResult>
   /** agent 结束时(逆序) */
   afterAgent?: (state: HarnessState) => StateUpdate | void | Promise<StateUpdate | void>
+  /** agent 即将返回最终结果前(正序):返回 feedback 触发自纠(回灌 user 消息继续循环);null 放行 return。受 createAgent 的 maxVerifyAttempts 约束 */
+  beforeReturn?: BeforeReturnHook
 }
 
 /** 合并 state 更新 */
@@ -117,6 +133,17 @@ export async function runAfterAgent(middlewares: Middleware[], state: HarnessSta
     if (m.afterAgent) s = applyUpdate(s, await m.afterAgent(s))
   }
   return s
+}
+
+/** beforeReturn:正序执行,拼接所有非 null feedback(任一中间件给 feedback 即触发自纠);全 null 返回 null(放行 return) */
+export async function runBeforeReturn(middlewares: Middleware[], ctx: BeforeReturnContext): Promise<string | null> {
+  const feedbacks: string[] = []
+  for (const m of middlewares) {
+    if (!m.beforeReturn) continue
+    const fb = await m.beforeReturn(ctx)
+    if (fb) feedbacks.push(fb)
+  }
+  return feedbacks.length ? feedbacks.join('\n\n') : null
 }
 
 /** wrapModelCall 洋葱包裹(reduceRight,最内层是 core) */

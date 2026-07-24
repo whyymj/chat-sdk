@@ -77,6 +77,7 @@ export interface AgentInfo {
   middleware: string[];
   todos: { content: string; status: string }[];
   subagent: SubagentInfo;
+  verify?: { enabled: boolean; maxAttempts: number };
 }
 export interface Toolset { name: string; tools: unknown[]; }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
@@ -117,6 +118,32 @@ export interface SkillSpec {
   description: string;
   whenToUse?: string;
   getContent: () => string | Promise<string>;
+}
+
+// ===== Verify 自检中间件 =====
+/** verify check 上下文:与 beforeReturn 底层一致(messages 含 system 头 + agent 最新回复 + 历史 tool_result) */
+export interface VerifyCheckContext {
+  messages: any[];
+  state: any;
+}
+export interface VerifyCheckResult {
+  ok: boolean;
+  /** ok=false 时的修正指引(回灌给 agent 触发自纠) */
+  feedback?: string;
+}
+/** 领域校验函数:ok=true 放行,ok=false 用 feedback 回灌自纠 */
+export type VerifyCheck = (ctx: VerifyCheckContext) => Promise<VerifyCheckResult> | VerifyCheckResult;
+export interface VerifyMiddlewareOptions {
+  check: VerifyCheck;
+  /** 对抗式验证:check 通过后 spawn 找茬子 agent 审查;verdict 无问题放行,否则回灌 */
+  adversarial?: { llm: any };
+}
+/** createWriteBackCheck 选项 */
+export interface WriteBackCheckOptions {
+  /** path → zod schema(由 createPageAgent 从 windowProps 构造注入);省略则只校验「读回非空」 */
+  schemas?: Record<string, any>;
+  /** 读 window 的根对象(默认 globalThis.window) */
+  window?: unknown;
 }
 
 // ===== 持久化存储 =====
@@ -207,8 +234,10 @@ export interface PageAgentOptions {
   /** 同轮工具并发上限(默认 1 串行) */
   maxParallelTools?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean };
+  capabilities?: { planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number };
+  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
+  verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
   mcp?: McpServerConfig[];
   contextOptions?: any;
@@ -241,6 +270,8 @@ export declare function defineToolset(name: string, tools: any[]): Toolset;
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
 export declare function createSubagentMiddleware(opts: any): any;
+export declare function createVerifyMiddleware(opts: VerifyMiddlewareOptions): any;
+export declare function createWriteBackCheck(opts?: WriteBackCheckOptions): VerifyCheck;
 export declare const presets: Record<string, any>;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;

@@ -208,7 +208,7 @@ Claude Code 的 Task 系统:任务有 `id/subject/status/blocks/blockedBy/owner`
 
 ---
 
-## 5. Verify 自检中间件(P2)
+## 5. Verify 自检中间件(P2)✅ 已实现(`beforeReturn` 钩子点 = #2 Plan/问答 pause/resume 的轻量前身;循环已具备「停下→注入→继续」骨架)
 
 ### 现状
 Agent 执行完直接返回,无内置「自检」机制。结果对不对全靠 LLM 自觉 + 用户肉眼看。

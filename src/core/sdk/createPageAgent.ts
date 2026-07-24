@@ -26,6 +26,7 @@ import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import type { Middleware } from '../harness/middleware'
 import { createSubagentMiddleware } from '../harness/subagent'
+import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import type { ContextManagerOptions } from '../composables/useContextManager'
@@ -110,9 +111,21 @@ export interface PageAgentOptions {
     summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
     memory?: boolean         // AGENTS.md 持久指令
     subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
+    verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number }
+  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。需 capabilities.verify:true 开启;check 必填(期三起可省略,默认用 createWriteBackCheck) */
+  verify?: {
+    /** 显式关闭(优先级最高;即使 capabilities.verify:true) */
+    enabled?: boolean
+    /** 领域校验函数(ok=false 时 feedback 回灌自纠) */
+    check?: VerifyCheck
+    /** 自纠上限(默认 2) */
+    maxAttempts?: number
+    /** 对抗式验证(期四实现:spawn 找茬子 agent) */
+    adversarial?: boolean
+  }
   /** MCP server 列表(连远程 server,动态把其 tools 注入 agent;浏览器仅 http/sse/websocket transport) */
   mcp?: McpServerConfig[]
   /** 上下文压缩配置(false 关闭;默认索引摘要零成本) */
@@ -236,6 +249,13 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   const useSummarization = caps?.summarization !== false
   const useMemory = caps?.memory !== false
   const useSubagent = caps?.subagent !== false
+  // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
+  const verifyMaxAttempts = options.verify?.maxAttempts ?? 2
+  const useVerify = caps?.verify === true && options.verify?.enabled !== false && verifyMaxAttempts > 0
+  // 诊断:常见误用 warn(与 options.id/mcp 的 warn 惯例一致),避免"以为开了实际没开"
+  if (options.verify?.check && caps?.verify !== true) {
+    console.warn('[page-agent][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
+  }
 
   // 子 agent 中间件(capabilities.subagent 或 subagent.enabled 为 false 则关闭)
   const subOpts = options.subagent
@@ -256,14 +276,25 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           debug: options.debug,
         })
 
+  // verify 中间件(check 省略时默认 createWriteBackCheck 写后读回验证)。maxAttempts 经 maxVerifyAttempts 透传 createAgent,非中间件字段
+  const verifyMw = useVerify
+    ? createVerifyMiddleware({
+        check: options.verify!.check ?? createWriteBackCheck({
+          schemas: Object.fromEntries((options.windowProps ?? []).map((p) => [p.path, p.schema])),
+        }),
+        adversarial: options.verify?.adversarial ? { llm: options.llm } : undefined,
+      })
+    : undefined
+
   const middlewares = [
-    // 按 capabilities 条件装载内置中间件(默认全开)
+    // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills ? [createSkillsMiddleware(options.skills || [])] : []),
     ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
     ...(useSummarization ? [createSummarizationMiddleware(options.contextOptions === false ? undefined : options.contextOptions)] : []),
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
+    ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(options.middleware || []),
   ]
@@ -369,6 +400,10 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           maxDepth: options.subagent?.maxDepth ?? 1,
           maxParallel: options.subagent?.maxParallel ?? 4,
           allowedTools: options.subagent?.allowedTools ?? [],
+        },
+        verify: {
+          enabled: !!verifyMw,
+          maxAttempts: useVerify ? verifyMaxAttempts : 0,
         },
       }
     },
@@ -478,6 +513,8 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       maxToolRounds: options.maxToolRounds,
       maxRetries: options.maxRetries,
       maxParallelTools: options.maxParallelTools,
+      // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
+      maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       debug: options.debug,
     })
   })()

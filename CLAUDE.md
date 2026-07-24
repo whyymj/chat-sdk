@@ -56,7 +56,8 @@ src/
     │   ├── permissions.ts      # scope 白名单(first-match-wins,默认不启用)
     │   ├── summarization.ts    # context 压缩(compressInput,复用 useContextManager)
     │   ├── retry.ts            # 模型调用重试 + abort 判定(isAbort/isRetryable/withRetry)
-    │   └── subagent.ts         # 子 agent 中间件(spawn_agent/spawn_agents,过程隔离 + 进度转发)
+    │   ├── subagent.ts         # 子 agent 中间件(spawn_agent/spawn_agents,过程隔离 + 进度转发)
+    │   └── verify.ts           # 自检中间件(createVerifyMiddleware + createWriteBackCheck + 对抗验证)
     ├── sdk/                    # createPageAgent(命令式入口)/ defineTool
     ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
@@ -85,8 +86,8 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 
 ### 自研 harness(`createAgent` + 中间件)
 - `createAgent(options)`:ReAct 循环 + 可插拔中间件,不绑定具体工具/能力
-- **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**
-- 内置中间件顺序:`todos → skills → vfs → summarization → memory → permissions(可选)`
+- **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent`/`beforeReturn` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**;`beforeReturn`(before 类正序)在 agent 返回最终结果前触发,可回灌 feedback 驱动自纠(verify 中间件用)
+- 内置中间件顺序:`todos → skills → vfs → summarization → memory → permissions(可选) → verify(可选)`
 - `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc`/`vfs`)+ 用户 `tools`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
 
 ### window 操作(属性注册表 + schema 校验 + 增量编辑 + 快照回退 + 大结果外存)
@@ -145,6 +146,15 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **构建**:ESM/UMD external(peerDep);IIFE 打进(单文件 ~1.59MB)
 - **dev 预构建坑**:`vite.config.ts` 的 `optimizeDeps.include` 已预声明 SDK 4 个子路径(`/client` + `streamableHttp.js`/`sse.js`/`websocket.js`)。否则 dev **冷启动首次**访问 MCP 页时,动态 import 的深子路径未被预声明 → 首次注入失败(「注入 0 个工具」,reload 后才正常)。排查:`npm run mcp:probe`(node 侧验证 `connectMcp` 连通性)
 
+### Verify 自检中间件(agent 返回前自纠)
+- `createPageAgent({ capabilities:{verify:true}, verify:{ check?, maxAttempts? } })`:agent 给最终答前跑 `check`,不通过则 feedback 回灌 user 消息驱动自纠(限 `maxAttempts`,默认 2,防死循环)
+- **机制**:`beforeReturn` 钩子点(`createAgent` 主循环「无 tool_calls 即将 return」收口处,**纯增量插入不重构循环**);预算检查前置(`verifyAttempts < maxVerifyAttempts`),耗尽则根本不跑钩子;自纠耗尽 rounds 预算时返回缓存的有效最终答(非误导性「请简化问题」)
+- **内置 check**:`createWriteBackCheck()`(check 省略时默认)——扫描会话**所有**写操作(`set/edit/delete_window_prop`),读回 + schema 校验;**跳过被合法拒绝的写**(校验失败/范围拒绝);delete 读回空=成功。windowOps 写入(`setByPath`)同步,无需 await
+- **自定义 check**:`verify:{ check: async ({messages,state}) => ({ok, feedback?}) }`;好 check 返回**具体可操作**的 feedback(非「结果不对」)
+- **导出**:`createVerifyMiddleware` / `createWriteBackCheck` / `VerifyCheck` 类型。单独 `createVerifyMiddleware({check})` 作 middleware 用时,`maxVerifyAttempts` 需自行透传 `createAgent`(`VerifyMiddlewareOptions` 无 maxAttempts——预算是 createAgent 层配置)
+- **adversarial 对抗验证**:`verify.adversarial: true`(check 通过后 spawn 无工具"找茬"子 agent,refute 姿态,突破自审偏差;默认关,每次烧一个子 agent token)
+- **默认关**(烧 token):需 `capabilities.verify:true` 显式开启;误用 warn(传 check 忘 caps / adversarial 未实现);`inspect()` 的 `verify` 字段看装载状态
+
 ## 关键约定与坑
 
 ### LangChain 消息字段名
@@ -163,7 +173,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,121 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText),不依赖 LLM;子 agent / MCP 运行时(依赖 LLM/server)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,141 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts
@@ -175,12 +185,14 @@ createPageAgent({
   maxRetries: 2,                  // 模型调用失败自动重试(网络/429/5xx,默认 2)
   maxParallelTools: 1,            // 同轮工具并发(默认 1 串行)
   subagent: { allowedTools: [...] }, // 子 agent 委派(默认开启;spawn_agent/spawn_agents)
+  capabilities: { verify: true },   // 开启自检(默认关);agent 返回前跑 check 自纠
+  verify: { maxAttempts: 2 },        // check 省略 → 默认 createWriteBackCheck 写后读回验证
   middleware: [/* 自定义中间件:埋点/拦截/prompt 增强,见「对话鲁棒性」小节 */],
 }).mount()
 ```
 **headless**(`ui: false`):不渲染内置对话框,集成方用 `agent.messages`(响应式数组)+ `send`/`stream` 自建 UI —— 框架无关更彻底(不强制 Vue)。
 
-**能力开关**(`capabilities`):关掉无用内置能力(`{ planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+**能力开关**(`capabilities`):关掉无用内置能力(`{ planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。`verify` 反向(默认关,需 `capabilities.verify:true` 显式开,见「Verify 自检中间件」)。
 
 **预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createPageAgent`。
 

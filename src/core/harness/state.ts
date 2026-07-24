@@ -49,6 +49,8 @@ export interface HarnessState {
   memory: string
   /** 上下文压缩事件(summarization 中间件维护) */
   summarization?: SummarizationEvent
+  /** beforeReturn 自纠计数(createAgent 维护);达 maxVerifyAttempts 强制 return,防死循环 */
+  verifyAttempts: number
 }
 
 export function createInitialState(): HarnessState {
@@ -59,5 +61,6 @@ export function createInitialState(): HarnessState {
     skillsMetadata: [],
     skillsLoaded: [],
     memory: '',
+    verifyAttempts: 0,
   }
 }

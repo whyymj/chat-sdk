@@ -108,7 +108,7 @@ createPageAgent({
 | **Agent** | ReAct 循环:思考 → 调工具 → 观察 → 再思考,直到给出最终回复 |
 | **windowProps** | 你声明「Agent 可以读写 window 上哪些属性 + 值的 schema」。Agent 只能动这些(范围控制) |
 | **工具(tool)** | Agent 的手脚。内置 window/vfs/文档抓取工具 + 你用 `defineTool` 加的 |
-| **中间件(middleware)** | 插入 Agent 生命周期的钩子。内置 todos/skills/vfs/summarization/memory/permissions,也可自定义 |
+| **中间件(middleware)** | 插入 Agent 生命周期的钩子。内置 todos/skills/vfs/summarization/memory/permissions/verify,也可自定义 |
 | **持久化(storage)** | 对话/工作区/todos/memory 落盘(IndexedDB 等),刷新可恢复 |
 
 **心智模型**:你只负责 ① 声明 `windowProps`(Agent 能碰什么)② 写 `systemPrompt`(Agent 该干嘛)③ 可选加 `tools`/`skills`/`middleware`。其余交给 Agent。
@@ -152,7 +152,8 @@ createPageAgent({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { planning: true, vfs: true },  // 内置能力开关(默认全开;关掉省 token/体积)
+  capabilities: { planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。verify 反向:默认关,需显式 verify:true)
+  verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
   streaming: true,              // 流式逐字输出(默认 true)
@@ -368,6 +369,43 @@ createPageAgent({
 **示例**:`npm run dev` 后访问
 - `/subagent.html` —— 方案并行调研(spawn_agents 基础)
 - `/custom.html` —— 多角色自定义评审(role + allowedTools,安全/性能/UX 三视角)
+
+### 6.10 Verify 自检(Agent 返回前验证 + 自纠)
+
+Agent 给出最终答**之前**,自动跑一次 `check` 验证结果;不通过则把 feedback 回灌给 Agent,驱动它修正后再答(限 `maxAttempts` 次,防死循环)。**默认关闭**(烧 token),需显式开启。
+
+```ts
+createPageAgent({
+  capabilities: { verify: true },      // 开启(默认关)
+  verify: {
+    maxAttempts: 2,                     // 自纠上限(默认 2)
+    // check: async ({ messages, state }) => ({ ok: true }),  // 自定义;省略 → 默认写后读回验证
+  },
+})
+```
+
+**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`set/edit/delete_window_prop`)后,读回值确认写入生效 + 符合 schema:
+- **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈
+- **delete 语义**:delete 后读回空 = 删除成功(放行);仍有值 → 「未删干净」
+- **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝)时**不误报**(读回无值是预期)
+- windowOps 写入同步,check 读回无需 `await`
+
+**自定义 check**:写领域相关的验证(业务规则、不变量)。好 check 返回**具体可操作**的 feedback:
+```ts
+verify: {
+  check: async ({ messages, state }) => {
+    const last = messages[messages.length - 1]
+    // ✗ 不要「结果不对」这种模糊话;✓ 给具体可修的指引
+    return { ok: false, feedback: '回复缺少价格字段,请补充' }
+  },
+}
+```
+
+**何时用**:Agent 改页面(window 写)后想确保写入生效 / 符合预期。**何时不用**:纯问答(无写操作,check 自动放行)、对延迟敏感(自纠多跑 LLM 轮次)。
+
+**查看状态**:`agent.inspect().verify` → `{ enabled, maxAttempts }`。
+
+> **对抗验证**(`verify.adversarial: true`):check 通过后 spawn 一个"找茬"子 agent(refute 姿态,目标是证明回复有问题,突破自审偏差)再审一遍。默认关(每次烧一个子 agent token)。
 
 ### 6.10 MCP(外部工具接入)
 

@@ -19,6 +19,8 @@ export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware } from './harness/subagent'
 export type { SubagentOptions, SubagentLlmConfig } from './harness/subagent'
+export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
+export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // window 操作类型(属性注册表 + 增量编辑 + 快照)

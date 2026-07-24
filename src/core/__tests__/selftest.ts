@@ -14,10 +14,11 @@ import { createTodosMiddleware } from '../harness/todos'
 import { createSkillsMiddleware, defineSkill } from '../harness/skills'
 import { createPermissionsMiddleware } from '../harness/permissions'
 import { createMemoryMiddleware } from '../harness/memory'
-import { applyUpdate, runBeforeAgent, runAfterModel } from '../harness/middleware'
+import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../harness/middleware'
 import { isAbort, isRetryable, withRetry } from '../harness/retry'
 import { runPool } from '../utils/pool'
 import { createSubagentMiddleware } from '../harness/subagent'
+import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../harness/verify'
 import { extractText } from '../mcp/client'
 import { createInitialState as createState } from '../harness/state'
 import {
@@ -704,6 +705,163 @@ console.log('\n[mcp]')
   const err = extractText({ content: [{ type: 'text', text: '失败原因' }], isError: true })
   assert(/工具错误/.test(err) && /失败原因/.test(err), 'extractText: isError 标注"工具错误"')
   assert(extractText({ content: [{ type: 'resource', resource: { text: 'res' } }] }) === 'res', 'extractText: resource.text 提取')
+}
+
+// ============ beforeReturn 自纠钩子(runBeforeReturn 执行器:agent 返回前拦截自纠) ============
+console.log('\n[beforeReturn 自纠钩子]')
+{
+  // stream 自纠循环本身依赖 LLM,按惯例手动验证(同 subagent/mcp);此处覆盖纯函数 runBeforeReturn 的拼接逻辑(= 自纠触发条件)
+  const state = createState()
+  assert(state.verifyAttempts === 0, 'createInitialState 初始化 verifyAttempts=0(自纠计数起点)')
+
+  const ctx = { messages: [], state, response: { message: {}, toolCalls: [], content: 'r' } } as any
+
+  let fb = await runBeforeReturn(
+    [
+      { name: 'a', beforeReturn: () => null },
+      { name: 'b', beforeReturn: () => null },
+    ],
+    ctx,
+  )
+  assert(fb === null, '所有钩子返回 null → 放行 return(不自纠)')
+
+  fb = await runBeforeReturn(
+    [
+      { name: 'a', beforeReturn: () => '问题1' },
+      { name: 'b', beforeReturn: () => '问题2' },
+    ],
+    ctx,
+  )
+  assert(fb === '问题1\n\n问题2', '多个 feedback 正序拼接(任一非 null 即触发自纠)')
+
+  fb = await runBeforeReturn(
+    [
+      { name: 'a', beforeReturn: () => null },
+      { name: 'b', beforeReturn: () => '问题2' },
+    ],
+    ctx,
+  )
+  assert(fb === '问题2', '跳过 null 钩子,只拼接非 null feedback')
+
+  fb = await runBeforeReturn([{ name: 'a' }, { name: 'b' }], ctx)
+  assert(fb === null, '中间件无 beforeReturn 钩子 → 放行 return')
+
+  fb = await runBeforeReturn([{ name: 'a', beforeReturn: async () => '异步问题' }], ctx)
+  assert(fb === '异步问题', '支持异步 beforeReturn 钩子')
+}
+
+// ============ verify 中间件(createVerifyMiddleware:check → beforeReturn 包装) ============
+console.log('\n[verify 中间件]')
+{
+  const ctx = { messages: [], state: createState(), response: { message: {}, toolCalls: [], content: 'r' } } as any
+
+  const mwOk = createVerifyMiddleware({ check: () => ({ ok: true }) })
+  assert((await mwOk.beforeReturn!(ctx)) === null, 'check ok=true → beforeReturn 放行(返回 null)')
+
+  const mwFail = createVerifyMiddleware({ check: () => ({ ok: false, feedback: '内容太少' }) })
+  assert((await mwFail.beforeReturn!(ctx)) === '内容太少', 'check ok=false + feedback → 回灌 feedback')
+
+  const mwNoFb = createVerifyMiddleware({ check: () => ({ ok: false }) })
+  const noFbResult = await mwNoFb.beforeReturn!(ctx)
+  assert(noFbResult !== null && /未通过验证/.test(noFbResult), 'check ok=false 无 feedback → 默认文案')
+
+  const mwAsync = createVerifyMiddleware({ check: async () => ({ ok: false, feedback: '异步问题' }) })
+  assert((await mwAsync.beforeReturn!(ctx)) === '异步问题', '支持异步 check')
+
+  assert(mwOk.name === 'verify', '中间件 name=verify')
+}
+
+// ============ createWriteBackCheck(写后读回验证) ============
+console.log('\n[createWriteBackCheck]')
+{
+  const schemas = { 'app.theme': z.enum(['light', 'dark']), 'app.count': z.number().int() }
+  const mkAi = (toolCalls: any[]) => ({ tool_calls: toolCalls, content: '' }) as any
+
+  // 1. 无写操作 → ok
+  let win: any = { app: { theme: 'dark', count: 0 } }
+  let check = createWriteBackCheck({ window: win, schemas })
+  let r = await check({ messages: [mkAi([])], state: createState() })
+  assert(r.ok === true, '本轮无写操作 → ok 放行')
+
+  // 2. set 后读回符合 schema → ok
+  win = { app: { theme: 'dark', count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+  assert(r.ok === true, 'set 后读回符合 schema → ok')
+
+  // 3. set 后读回为空 → feedback(未生效)
+  win = { app: { theme: undefined, count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+  const fb3 = r.feedback
+  assert(r.ok === false && !!fb3 && /读回为空/.test(fb3), 'set 后读回为空 → feedback(未生效)')
+
+  // 4. set 后读回不符合 schema → feedback
+  win = { app: { theme: 'red', count: 0 } } // 'red' 不在 enum
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+  const fb4 = r.feedback
+  assert(r.ok === false && !!fb4 && /不符合 schema/.test(fb4), 'set 后读回不符合 schema → feedback')
+
+  // 5. delete 后读回 undefined → ok(删除成功)
+  win = { app: { theme: undefined, count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'delete_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+  assert(r.ok === true, 'delete 后读回空 → ok(删除成功)')
+
+  // 6. delete 后读回仍有值 → feedback(未删干净)
+  win = { app: { theme: 'dark', count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'delete_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+  const fb6 = r.feedback
+  assert(r.ok === false && !!fb6 && /删除后读回仍有值/.test(fb6), 'delete 后读回仍有值 → feedback(未删干净)')
+
+  // 7. edit_window_prop 后读回符合 schema → ok
+  win = { app: { theme: 'dark', count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({ messages: [mkAi([{ name: 'edit_window_prop', args: { path: 'app.theme', jsonPath: '', op: 'set' } }])], state: createState() })
+  assert(r.ok === true, 'edit 后读回符合 schema → ok')
+
+  // 8. 写被合法拒绝(ToolMessage "校验失败")→ 不误报(ok)
+  const mkTool = (callId: string, content: string) => ({ tool_call_id: callId, content }) as any
+  win = { app: { theme: undefined, count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({
+    messages: [
+      mkAi([{ id: 'c1', name: 'set_window_prop', args: { path: 'app.theme' } }]),
+      mkTool('c1', '校验失败:值不符合 enum'),
+      mkAi([]),
+    ],
+    state: createState(),
+  })
+  assert(r.ok === true, '写被合法拒绝(校验失败)→ 不误报"未生效"')
+
+  // 9. set 在更早轮、最近一轮是 get → 仍验证该 set(扫描所有写,非仅最近一轮)
+  win = { app: { theme: undefined, count: 0 } }
+  check = createWriteBackCheck({ window: win, schemas })
+  r = await check({
+    messages: [
+      mkAi([{ id: 'c1', name: 'set_window_prop', args: { path: 'app.theme' } }]),
+      mkTool('c1', '已设置 app.theme = "dark"'),
+      mkAi([{ id: 'c2', name: 'get_window_prop', args: { path: 'app.count' } }]),
+      mkTool('c2', '0'),
+      mkAi([]),
+    ],
+    state: createState(),
+  })
+  const fb9 = r.feedback
+  assert(r.ok === false && !!fb9 && /读回为空/.test(fb9), 'set 在更早轮、最近是 get → 仍验证该 set')
+}
+
+// ============ 对抗式验证(isAdversarialClean verdict 判定) ============
+console.log('\n[adversarial verdict 判定]')
+{
+  // runAdversarial 整体依赖 LLM(createAgent + invoke),按惯例手动验证;此处测 verdict 判定纯函数
+  assert(isAdversarialClean('无问题') === true, 'verdict "无问题" → 放行(返回 true)')
+  assert(isAdversarialClean('经过审查,没有问题。') === true, 'verdict "没有问题" → 放行')
+  assert(isAdversarialClean('未发现问题') === true, 'verdict "未发现问题" → 放行')
+  assert(isAdversarialClean('回复缺少价格字段,请补充') === false, 'verdict 含具体问题 → 触发自纠(返回 false)')
+  assert(isAdversarialClean('逻辑矛盾:前后说法不一致') === false, 'verdict 含问题 → 触发自纠')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

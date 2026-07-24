@@ -33,6 +33,7 @@ import {
   runBeforeModel,
   runAfterModel,
   runAfterAgent,
+  runBeforeReturn,
   composeModelCall,
   composeToolCall,
 } from './middleware'
@@ -65,6 +66,8 @@ export interface CreateAgentOptions {
   retryDelayMs?: number
   /** 同轮多个工具调用的并发上限(默认 1 = 串行,保持现有工具语义);>1 时并发执行 */
   maxParallelTools?: number
+  /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子,有 feedback 则回灌 user 消息继续循环,达上限强制 return 防死循环 */
+  maxVerifyAttempts?: number
   /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
   onLog?: (entry: DebugLog) => void
   debug?: boolean
@@ -86,6 +89,7 @@ export function createAgent(options: CreateAgentOptions) {
     maxRetries = 2,
     retryDelayMs = 500,
     maxParallelTools = 1,
+    maxVerifyAttempts = 0,
     onLog,
     debug = false,
   } = options
@@ -277,6 +281,7 @@ export function createAgent(options: CreateAgentOptions) {
     const toolHandler = composeToolCall(middlewares, coreExecTool)
 
     let rounds = 0
+    let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
     while (rounds < maxToolRounds) {
       // 每轮开始检查 abort(用户停止)
       if (signal?.aborted) break
@@ -308,6 +313,19 @@ export function createAgent(options: CreateAgentOptions) {
       }
 
       if (!response.toolCalls.length) {
+        // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
+        // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
+        if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
+          const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response })
+          if (feedback) {
+            lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
+            state.verifyAttempts += 1
+            currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
+            log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
+            rounds += 1
+            continue // 回灌反馈,继续循环让模型修正(不 return)
+          }
+        }
         onEvent({ type: 'done', content: response.content })
         await runAfterAgent(middlewares, state)
         return response.content
@@ -350,7 +368,8 @@ export function createAgent(options: CreateAgentOptions) {
       await runAfterAgent(middlewares, state)
       return ''
     }
-    const fallback = '已达到最大工具调用轮次，请简化你的问题。'
+    // 自纠耗尽 rounds 预算 → 优先返回最近一次缓存的有效最终答(而非误导性"请简化问题");纯工具循环耗尽(无缓存)才用兜底文案
+    const fallback = lastFinalContent ?? '已达到最大工具调用轮次，请简化你的问题。'
     onEvent({ type: 'done', content: fallback })
     await runAfterAgent(middlewares, state)
     return fallback

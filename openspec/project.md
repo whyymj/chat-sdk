@@ -23,7 +23,9 @@
 3. **归档**:实现完成后将 `specs/` 增量合入 `openspec/specs/`(系统真相源),change 移入 `openspec/changes/archive/`。
 
 ## 进行中的 change
-- `changes/generalize-page-agent/`:通用化抽离。**Phase 1/2/3/4/6 已实现**(provider / headless / capabilities / MCP / presets);Phase 5 DataSource 暂缓。待浏览器实测 MCP 后可归档。详见 `tasks.md`。
+(无 —— 工作区干净,所有 change 已归档)
 
 ## 最近完成的 change(已归档)
-- `changes/archive/refactor-to-page-agent-sdk/`:重构为框架无关页面内 Agent SDK(实现完成,自测 33/33,规范已合入 `openspec/specs/page-agent-core.md`)。
+- `archive/2026-07-24-add-verify-middleware/`:Verify 自检中间件(`beforeReturn` 钩子点 + `createVerifyMiddleware` + `createWriteBackCheck` 写后读回 + 对抗验证)。对应 `doc/evolution-roadmap.md` #5。自测 146/146,规范已合入 `openspec/specs/page-agent-core.md`。
+- `archive/2026-07-23-generalize-page-agent/`:通用化(provider 抽离 / headless / capabilities / MCP / presets)。
+- `archive/refactor-to-page-agent-sdk/`:重构为框架无关页面内 Agent SDK(规范已合入 `openspec/specs/page-agent-core.md`)。

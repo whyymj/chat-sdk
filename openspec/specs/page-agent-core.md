@@ -54,4 +54,24 @@ context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useConte
 `get_window_prop` 可读取注册属性的后代子路径(精确读局部,如 `page.components.0.text`);`get_window_paths` 批量按多个路径读取,逐行返回 `path = value`,未注册路径标记拒绝。
 
 ## Requirement: 自测覆盖核心逻辑
-`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序),51 项断言全过。
+`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean),146 项断言全过。
+
+## Requirement: 循环 beforeReturn 钩子(可拦截 return 并回灌自纠)
+
+agent 主循环在「模型本轮无工具调用、即将返回最终结果」的收口点执行已注册中间件的 `beforeReturn` 钩子(正序)。钩子返回 `null`/放行则正常 return;返回反馈字符串时,系统将该反馈作为新 user 消息注入对话历史并**继续循环**(非 return),驱动 agent 基于反馈自纠。该机制为**纯增量插入**,不改变 `while` 循环骨架、不破坏 abort 语义与 `maxToolRounds` 上限。
+
+## Requirement: 自纠次数兜底
+
+系统为 beforeReturn 自纠维护计数(`verifyAttempts`),受 `maxVerifyAttempts` 配置约束。预算检查**前置**(`verifyAttempts < maxVerifyAttempts` 在调用钩子前判定):耗尽则根本不跑钩子(避免无谓工作,尤其对抗验证烧 token);计数达上限(或配置为 0)时即使钩子仍有反馈也强制 return。`maxVerifyAttempts` 默认 0(关闭 = 纯放行 = 现状),启用时默认上限 2;自纠耗尽 rounds 预算时返回缓存的有效最终答(非误导性兜底)。
+
+## Requirement: Verify 自检中间件
+
+系统提供 `createVerifyMiddleware({ check, adversarial? })` 中间件模板,把领域校验函数(`check: ({ messages, state }) => { ok, feedback? }`)包装为 `beforeReturn` 钩子:`ok=true` 放行,`ok=false` 将 `feedback` 回灌驱动自纠。自纠上限 `maxAttempts` 经 `createPageAgent` 透传 `createAgent` 的 `maxVerifyAttempts`(非中间件字段,中间件不自己计数)。`createPageAgent({ capabilities:{verify:true}, verify:{ check?, maxAttempts?, adversarial? } })` 控制;verify **默认关**(烧 token),误用 warn(传 check 忘 caps.verify 等),`check` 省略时默认 `createWriteBackCheck`。
+
+## Requirement: 写后读回验证(domain 辅助)
+
+系统提供可选 `createWriteBackCheck()`:扫描会话**所有**写操作(`set/edit/delete_window_prop`,按 path 去重保留最后操作,覆盖「写→读→答」序列),读回被改属性校验写入生效 + 符合 schema。`delete` 读回空 = 删除成功(放行);写被 windowOps 合法拒绝(校验失败/范围拒绝,ToolMessage 命中)则**跳过不误报**。windowOps 写入(`setByPath`)同步,读回无需等待响应式 flush。集成方可完全自定义 `check` 覆盖。
+
+## Requirement: 对抗式验证(可选)
+
+`verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**无工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复;verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个子 agent token),`createPageAgent` 透传主 `llm` 构造子 agent。
