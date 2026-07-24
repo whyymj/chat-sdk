@@ -274,3 +274,26 @@ createChatSdk({
 - **一键发布脚本**:`./scripts/publish-github.sh "feat: 整理后的总结"` —— 自动完成 `fetch → 检查待整理提交 → public 分支基于 github/master 重置 → squash merge master → 剔除笔记 → 提交 → push github → 回 master`。不传参数则打开编辑器编辑 commit message。
 - **个人笔记** `doc/待确认问题.md` 已在 `.gitignore` 且仅存在于 Gitee,不进 GitHub。
 - **历史中的 `.env`**:旧提交含真实 key,两个远程历史都含;如需彻底清除须 `git filter-repo` 重写(改写所有哈希 + 两远程 force-push),按需再做。
+
+## npm 发布约定(包名 `chat-sdk`)
+
+- **账号**:`whyymj`(已开 2FA,**禁止在文档/仓库/聊天记录中留存密码或 token 明文**)。凭据只存本机 user 级 `~/.npmrc`,**不进项目目录、不进 git**。
+- **registry 陷阱**:本机 `npm config get registry` 默认是公司私有源 `https://npm-team.smzdm.com/`。`package.json` 的 `publishConfig.registry` 已锁定 `https://registry.npmjs.org/`,`npm publish` 会发到官方 npm,**不受私有源影响**;但 `npm login`/`npm whoami` 走的是默认 registry,需显式 `--registry=https://registry.npmjs.org/`。
+- **2FA 登录方式**:账号开了双因素,账号密码登录需邮箱 OTP,自动化不便。改用 **Automation Access Token**(npmjs.com → Access Tokens → Classic Token → Automation,绕过 OTP),写入 `~/.npmrc`:
+  ```bash
+  npm config set //registry.npmjs.org/:_authToken <token> --location=user
+  ```
+  Token 权限仅限发布、可随时吊销,比密码安全。用完即吊销。
+- **发布前检查清单**(顺序执行):
+  1. `npm run build` —— 重建 `dist/`(ESM + UMD + IIFE + CSS),确保产物含最新代码
+  2. `npm test` —— 341 项自测全过
+  3. 版本号:`npm version` 查看;首次发布用 `1.0.0`;后续按 semver 递增(`npm version patch|minor|major`),**不得重复发布已存在的版本**(npm 不允许覆盖同版本号)
+  4. `npm pack --dry-run` —— 核对打包内容仅 `dist/` + `types/` + `README` + `LICENSE` + `package.json`,**不含 `.env`/`src`/`examples`/`doc/待确认问题.md`**(`files` 字段已限定)
+  5. `npm publish` —— 发到官方 npm(publishConfig 锁定)
+- **发布后测试**(验证可装):
+  ```bash
+  npm view chat-sdk version          # 确认 latest 已更新
+  # 临时目录验证安装
+  cd $(mktemp -d) && npm init -y && npm i chat-sdk && node -e "import('chat-sdk').then(m=>console.log(Object.keys(m).slice(0,5)))"
+  ```
+- **版本号策略**:GitHub 整理发布与 npm 发布解耦——npm 版本号独立维护,每次发 npm 前确认 `package.json` version 已 bump 且未与已发布版本重复。
