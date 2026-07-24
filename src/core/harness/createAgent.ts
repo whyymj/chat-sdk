@@ -81,7 +81,7 @@ export function createAgent(options: CreateAgentOptions) {
     baseUrl,
     model = 'gpt-3.5-turbo',
     temperature = 0.7,
-    maxTokens = 8192,
+    maxTokens = 16384, // 大 JSON 写入场景默认提高;.env VITE_AI_MAX_TOKENS / llm.maxTokens 仍可覆盖
     systemPrompt,
     tools: extraTools = [],
     middleware: middlewares = [],

@@ -124,7 +124,7 @@ createPageAgent({
     baseUrl: 'https://...',     // OpenAI 兼容端点(可选)
     model: 'deepseek-chat',     // 模型名(可选)
     temperature: 0.7,           // 温度(可选;操作大 JSON 建议 0.3)
-    maxTokens: 8192,            // 输出上限(可选;大 JSON 需调大)
+    maxTokens: 16384,           // 输出上限(默认 16384;大 JSON 场景可调大)
   },
   // provider 抽离:llm 也可传任意 LangChain 模型实例(接 Anthropic/Google/Ollama 等,装对应 peerDep)
   // llm: new ChatAnthropic({ model: 'claude-sonnet-4-...' }),
@@ -152,7 +152,7 @@ createPageAgent({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。verify 反向:默认关,需显式 verify:true)
+  capabilities: { windowOps: true, fetch: true, planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。windowOps/fetch 控制内置工具装载;verify 反向:默认关,需显式 verify:true)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -561,7 +561,7 @@ createPageAgent({ ...presets.minimal, container, llm, windowProps })            
 | `VITE_AI_BASE_URL` | OpenAI 兼容端点 |
 | `VITE_AI_MODEL` | 模型名 |
 | `VITE_AI_TEMPERATURE` | 温度(操作大 JSON 建议 0.3) |
-| `VITE_AI_MAX_TOKENS` | 输出上限(默认 8192,大 JSON 需调大) |
+| `VITE_AI_MAX_TOKENS` | 输出上限(默认 16384,大 JSON 可调大) |
 | `VITE_AI_SYSTEM_PROMPT` | 系统提示词(**必须单行**) |
 | `VITE_DEBUG` | 调试日志(生产 false) |
 | `VITE_CONTEXT_*` | 上下文压缩配置 |
@@ -583,7 +583,7 @@ A: 该属性没在 `windowProps` 里声明(范围控制),或值不符合 `schema
 A: ① 用 `edit_window_prop` 增量 patch 而非 `set` 重传整体;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
 
 **Q: 怎么关闭某项内置能力?**
-A: 用 `capabilities: { planning: false, skills: false, vfs: false, ... }` 关掉对应内置中间件(默认全开)。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+A: 用 `capabilities: { windowOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`windowOps:false` → 不装 10 个 window 工具(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。

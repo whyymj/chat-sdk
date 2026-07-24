@@ -54,7 +54,7 @@ context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useConte
 `get_window_prop` 可读取注册属性的后代子路径(精确读局部,如 `page.components.0.text`);`get_window_paths` 批量按多个路径读取,逐行返回 `path = value`,未注册路径标记拒绝。
 
 ## Requirement: 自测覆盖核心逻辑
-`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean),146 项断言全过。
+`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean)、toolsets(selectBuiltinTools 筛选 + fetchTools/defineWindowToolset 结构)、usageHints(能力用法提示注入),157 项断言全过。
 
 ## Requirement: 循环 beforeReturn 钩子(可拦截 return 并回灌自纠)
 
@@ -75,3 +75,15 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 ## Requirement: 对抗式验证(可选)
 
 `verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**无工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复;verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个子 agent token),`createPageAgent` 透传主 `llm` 构造子 agent。
+
+## Requirement: 内置工具按需装载
+
+`createPageAgent` 默认装配 window 操作工具集(`windowOps`)与文档抓取工具(`fetchDoc`)。两者可分别经 `capabilities.windowOps` / `capabilities.fetch` 关闭(默认均 `true`,保持零配置体验)。关闭后对应工具不进入主 agent 工具池,从而省 token 与上下文噪音(如纯调研场景)。子 agent 的只读工具白名单从主工具池筛选,故关闭某类工具时子 agent 同步不具备该类工具(符合「本 agent 不做此类操作」的语义)。子 agent 的隔离与递归切断机制本身不受影响。
+
+## Requirement: 内置工具集可独立导出与注入
+
+`createWindowOps` 与 `fetchDocTools` 从 SDK 入口导出;另提供 `fetchTools` 静态 toolset 预设(`defineToolset('fetch', fetchDocTools)`)与 `defineWindowToolset(props)` 工厂。集成方可 `import { createWindowOps, fetchDocTools }` 手动构造工具集,经 `tools` 或 `toolsets` 注入(替代默认自动装配),支持「主要业务工具集单独引入、按需注入」的高级用法。window 工具集依赖集成方声明的 `windowProps`,故不预构造为静态预设,由集成方手动 `createWindowOps(props)` 构造。
+
+## Requirement: 能力用法默认提示(克制注入)
+
+各内置能力(planning / window 快照回退 / subagent)在**该能力开启**时,由 `createPageAgent` 统一经 `usageHints` 中间件向 system prompt 注入一行简短用法提示(如「多步任务先 `write_todos` 拆解」「误改可用 `restore_window_snapshot` 回退」「独立子任务可 `spawn_agent` 委派」)。提示仅在该能力开启时注入,全部关闭时不注入(返回 `undefined`,不增加上下文);绝不覆盖集成方自定义 `systemPrompt`(拼接在其后)。子 agent 的默认 systemPrompt 明示其只具备只读工具、应给出简洁结论。

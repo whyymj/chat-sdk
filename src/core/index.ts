@@ -24,7 +24,12 @@ export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewa
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // window 操作类型(属性注册表 + 增量编辑 + 快照)
-export type { WindowPropSpec, WindowAuditEntry, WindowSnapshotEntry } from './tools/windowOps'
+export type { WindowPropSpec, WindowOpsOptions, WindowAuditEntry, WindowSnapshotEntry } from './tools/windowOps'
+// 内置工具集(可独立导出 + 手动注入,配合 capabilities.windowOps/fetch 关闭默认自动装配)
+export { createWindowOps } from './tools/windowOps'
+export { fetchDocTools } from './tools/fetchDoc'
+export { fetchTools, defineWindowToolset, selectBuiltinTools } from './toolsets'
+export { createUsageHintsMiddleware } from './harness/usageHints'
 export type { PermissionRule, PermissionOp } from './harness/permissions'
 // 虚拟工作区
 export { createVfs } from './backends/vfs'

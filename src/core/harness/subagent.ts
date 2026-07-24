@@ -99,7 +99,7 @@ async function runSubagent(
           temperature: opts.llm.temperature,
           maxTokens: opts.llm.maxTokens,
         }),
-    systemPrompt: task.role?.trim() || '你是一个专注的子任务执行者。用可用工具完成给定任务,给出简洁结论。',
+    systemPrompt: task.role?.trim() || '你是一个专注的子任务执行者。你只有只读工具(读 window / 抓文档),用它们完成给定任务,给出简洁结论,不要展开多余解释。',
     tools: childTools,
     middleware: childMiddleware,
     maxToolRounds: opts.maxToolRounds ?? DEFAULT_CHILD_ROUNDS,

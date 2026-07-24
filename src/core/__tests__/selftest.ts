@@ -8,6 +8,9 @@
  */
 import { z } from 'zod'
 import { createWindowOps } from '../tools/windowOps'
+import { fetchDocTools } from '../tools/fetchDoc'
+import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../toolsets'
+import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { offloadLargeResult } from '../utils/offload'
 import { createVfs, createVfsTools } from '../backends/vfs'
 import { createTodosMiddleware } from '../harness/todos'
@@ -862,6 +865,60 @@ console.log('\n[adversarial verdict 判定]')
   assert(isAdversarialClean('未发现问题') === true, 'verdict "未发现问题" → 放行')
   assert(isAdversarialClean('回复缺少价格字段,请补充') === false, 'verdict 含具体问题 → 触发自纠(返回 false)')
   assert(isAdversarialClean('逻辑矛盾:前后说法不一致') === false, 'verdict 含问题 → 触发自纠')
+}
+
+// ============ toolsets + selectBuiltinTools(内置工具集导出 + caps 筛选)============
+console.log('\n[toolsets + selectBuiltinTools]')
+{
+  // fetchTools 静态预设
+  assert(fetchTools.name === 'fetch' && fetchTools.tools.length === fetchDocTools.length, 'fetchTools 静态预设含 fetch_document')
+
+  // defineWindowToolset 工厂(依赖 windowProps,故为工厂)
+  const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
+  const wt = defineWindowToolset(props)
+  assert(wt.name === 'window' && wt.tools.length === 10, 'defineWindowToolset 工厂产出 10 个 window 工具')
+
+  // selectBuiltinTools:默认全装(windowOps + fetch)
+  const winOps = createWindowOps(props)
+  const all = selectBuiltinTools(undefined, winOps, fetchDocTools)
+  assert(all.length === winOps.length + fetchDocTools.length, 'selectBuiltinTools 默认全装(windowOps + fetch)')
+
+  // windowOps:false → 不含 window 工具,fetch 仍在
+  const noWin = selectBuiltinTools({ windowOps: false }, winOps, fetchDocTools)
+  assert(noWin.length === fetchDocTools.length && noWin.every((t) => t.name === 'fetch_document'), 'windowOps:false → 只剩 fetch_document')
+
+  // fetch:false → 不含 fetch,window 仍在
+  const noFetch = selectBuiltinTools({ fetch: false }, winOps, fetchDocTools)
+  assert(noFetch.length === winOps.length && noFetch.every((t) => t.name !== 'fetch_document'), 'fetch:false → 只剩 window 工具')
+
+  // 两者都关 → 空
+  const none = selectBuiltinTools({ windowOps: false, fetch: false }, winOps, fetchDocTools)
+  assert(none.length === 0, 'windowOps + fetch 都关 → 工具池空')
+}
+
+// ============ usageHints 中间件(能力用法默认提示,克制注入)============
+console.log('\n[usageHints middleware]')
+{
+  // 全开 → 含 planning/snapshot/spawn 三条提示
+  const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
+  const segFull = mwFull.augmentPrompt?.(createState()) || ''
+  assert(/write_todos/.test(segFull) && /restore_window_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
+
+  // planning 关 → 无 write_todos 提示
+  const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
+  const segNoPlan = mwNoPlan.augmentPrompt?.(createState()) || ''
+  assert(!/write_todos/.test(segNoPlan), 'planning 关 → 不注入 write_todos 提示')
+
+  // hasWindowOps=false → 无 snapshot 提示
+  const mwNoWin = createUsageHintsMiddleware({ planning: true, subagent: true }, false)
+  const segNoWin = mwNoWin.augmentPrompt?.(createState()) || ''
+  assert(!/restore_window_snapshot/.test(segNoWin), '无 window 工具 → 不注入 snapshot 提示')
+
+  // 全关(planning/subagent 关 + 无 window)→ undefined(不增上下文)
+  const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false }, false)
+  assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
+
+  assert(mwFull.name === 'usageHints', '中间件 name=usageHints')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

@@ -32,12 +32,12 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,121 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,157 项断言)
 ```
 
 ## 环境配置
 
-AI 配置通过 `.env`(前缀 `VITE_`,生产模板见 `.env.example`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS`(缺省 8192,大 JSON 需大输出窗口)/ `VITE_AI_SYSTEM_PROMPT`(单行)/ `VITE_DEBUG`(生产 false)。上下文压缩相关 `VITE_CONTEXT_*`(见 `useContextManager`)。
+AI 配置通过 `.env`(前缀 `VITE_`,生产模板见 `.env.example`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS`(缺省 16384,大 JSON 场景;代码默认 16384,`.env`/`llm.maxTokens` 可覆盖)/ `VITE_AI_SYSTEM_PROMPT`(单行)/ `VITE_DEBUG`(生产 false)。上下文压缩相关 `VITE_CONTEXT_*`(见 `useContextManager`)。
 
 ⚠️ `VITE_AI_SYSTEM_PROMPT` 必须单行(`.env` 不支持多行值)。dev demo(`App.vue`)会覆盖 systemPrompt 为通用页面操作助手。
 
@@ -57,9 +57,11 @@ src/
     │   ├── summarization.ts    # context 压缩(compressInput,复用 useContextManager)
     │   ├── retry.ts            # 模型调用重试 + abort 判定(isAbort/isRetryable/withRetry)
     │   ├── subagent.ts         # 子 agent 中间件(spawn_agent/spawn_agents,过程隔离 + 进度转发)
-    │   └── verify.ts           # 自检中间件(createVerifyMiddleware + createWriteBackCheck + 对抗验证)
+    │   ├── verify.ts           # 自检中间件(createVerifyMiddleware + createWriteBackCheck + 对抗验证)
+    │   └── usageHints.ts       # 能力用法默认提示中间件(按 caps 注入 write_todos/restore/spawn 用法)
     ├── sdk/                    # createPageAgent(命令式入口)/ defineTool
-    ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc
+    ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc(可经 capabilities.windowOps/fetch 关闭)
+    ├── toolsets.ts             # 内置工具集预设(fetchTools 静态 / defineWindowToolset 工厂 / selectBuiltinTools 筛选)
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
     ├── backends/storage.ts     # IndexedDB 持久化(降级内存)+ 多 agent 隔离 + 配额/LRU 淘汰
     ├── mcp/client.ts           # MCP client(连远程 server,动态注入 tools;动态 import SDK)
@@ -68,7 +70,7 @@ src/
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
-    ├── __tests__/selftest.ts   # 自测(121 项)
+    ├── __tests__/selftest.ts   # 自测(157 项)
     └── index.ts                # 库唯一入口(只导出通用核心)
 examples/
 ├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
@@ -87,8 +89,8 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 ### 自研 harness(`createAgent` + 中间件)
 - `createAgent(options)`:ReAct 循环 + 可插拔中间件,不绑定具体工具/能力
 - **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent`/`beforeReturn` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**;`beforeReturn`(before 类正序)在 agent 返回最终结果前触发,可回灌 feedback 驱动自纠(verify 中间件用)
-- 内置中间件顺序:`todos → skills → vfs → summarization → memory → permissions(可选) → verify(可选)`
-- `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc`/`vfs`)+ 用户 `tools`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
+- 内置中间件顺序(装载序):`usageHints(最前,能力用法提示) → todos → skills → vfs → summarization → memory → permissions(可选) → verify(可选) → subagent(可选) → 用户自定义(末尾)`
+- `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc` 默认装,可经 `capabilities.windowOps`/`capabilities.fetch` 关闭;`vfs` 工具随 vfs 中间件)+ 用户 `tools`/`toolsets`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
 
 ### window 操作(属性注册表 + schema 校验 + 增量编辑 + 快照回退 + 大结果外存)
 - 集成方声明 `windowProps: [{ path, description, schema }]`
@@ -173,7 +175,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,141 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,157 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts
@@ -192,9 +194,11 @@ createPageAgent({
 ```
 **headless**(`ui: false`):不渲染内置对话框,集成方用 `agent.messages`(响应式数组)+ `send`/`stream` 自建 UI —— 框架无关更彻底(不强制 Vue)。
 
-**能力开关**(`capabilities`):关掉无用内置能力(`{ planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。`verify` 反向(默认关,需 `capabilities.verify:true` 显式开,见「Verify 自检中间件」)。
+**能力开关**(`capabilities`):关掉无用内置能力(`{ windowOps/fetch/planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。`windowOps:false` → 不装 10 个 window 工具(纯调研场景);`fetch:false` → 不装 `fetch_document`(⚠️ 关 windowOps 后子 agent 的只读 window 白名单同步筛除,子 agent 也无 window 工具——符合「本 agent 不做 window 操作」语义)。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。`verify` 反向(默认关,需 `capabilities.verify:true` 显式开,见「Verify 自检中间件」)。
 
 **预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createPageAgent`。
+
+**内置工具集手动注入**(高级):`createWindowOps` / `fetchDocTools` 已从入口导出;另有 `fetchTools`(静态)/ `defineWindowToolset(props)`(工厂)toolset 预设。配合 `capabilities:{windowOps:false,fetch:false}` 关闭默认自动装配,改用 `toolsets:[defineWindowToolset(props), fetchTools]` 手动注入(主要业务工具集单独引入、按需注入)。
 
 框架无关集成见 `demo/plain.html`(importmap + esm.sh 提供 peer dep)。
 

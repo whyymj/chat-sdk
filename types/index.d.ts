@@ -106,6 +106,17 @@ export interface WindowPropSpec {
   /** 值的 zod schema(写入时校验) */
   schema: any;
 }
+/** createWindowOps 选项(审计回调 / 只读探测 / 快照上限) */
+export interface WindowOpsOptions {
+  onAudit?: (entry: { op: string; path: string; value?: any; detail?: string; timestamp: number }) => void;
+  allowRawRead?: boolean;
+  maxSnapshots?: number;
+}
+/** 内置工具集(可手动注入 toolsets,替代默认自动装配) */
+export interface BuiltinToolset {
+  name: string;
+  tools: any[];
+}
 
 export interface PermissionRule {
   operations: ('read' | 'write')[];
@@ -234,7 +245,7 @@ export interface PageAgentOptions {
   /** 同轮工具并发上限(默认 1 串行) */
   maxParallelTools?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
+  capabilities?: { windowOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number };
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
@@ -267,6 +278,12 @@ export declare function defineTool(opts: {
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
 export declare function defineToolset(name: string, tools: any[]): Toolset;
+export declare function createWindowOps(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
+export declare function selectBuiltinTools(caps: { windowOps?: boolean; fetch?: boolean } | undefined, windowOps: any[], fetchDocs: any[]): any[];
+export declare function createUsageHintsMiddleware(caps: { planning?: boolean; windowOps?: boolean; subagent?: boolean } | undefined, hasWindowOps: boolean): any;
+export declare const fetchDocTools: any[];
+export declare const fetchTools: BuiltinToolset;
+export declare function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions): BuiltinToolset;
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
 export declare function createSubagentMiddleware(opts: any): any;

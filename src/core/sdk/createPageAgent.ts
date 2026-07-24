@@ -34,6 +34,8 @@ import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
 import { createWindowOps, type WindowPropSpec } from '../tools/windowOps'
 import { fetchDocTools } from '../tools/fetchDoc'
+import { selectBuiltinTools } from '../toolsets'
+import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { makeId } from '../utils/id'
 import { groupRounds, plainSummary } from '../utils/rounds'
@@ -105,6 +107,8 @@ export interface PageAgentOptions {
   maxParallelTools?: number
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
+    windowOps?: boolean      // window 操作工具集(默认 true;关 → 不装 10 个 window 工具,省 token/上下文)
+    fetch?: boolean          // 文档抓取工具 fetch_document(默认 true;关 → 不装)
     planning?: boolean       // todos 任务规划
     skills?: boolean         // 渐进式披露技能
     vfs?: boolean            // 虚拟工作区(关 → 大结果外存退化为截断)
@@ -228,21 +232,25 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   const todosMw = createTodosMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
 
+  // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
+  const caps = options.capabilities
+  const useWindowOps = caps?.windowOps !== false
+
   // 工具:window 操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
-  const windowOps = createWindowOps(options.windowProps || [], {
-    onAudit: options.debug ? (e) => console.log('[page-agent][window audit]', e) : undefined,
-    maxSnapshots: options.maxSnapshots,
-  })
+  // windowOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
+  const windowOps = useWindowOps
+    ? createWindowOps(options.windowProps || [], {
+        onAudit: options.debug ? (e) => console.log('[page-agent][window audit]', e) : undefined,
+        maxSnapshots: options.maxSnapshots,
+      })
+    : []
   const allTools: StructuredToolInterface[] = [
-    ...windowOps,
-    ...fetchDocTools,
+    ...selectBuiltinTools(caps, windowOps, fetchDocTools),
     // 成套工具集展开合并(替代逐个 tools 点名)
     ...(options.toolsets || []).flatMap((ts) => ts.tools as StructuredToolInterface[]),
     ...(options.tools || []),
   ]
 
-  // 内置能力开关(默认全开;false 则对应中间件不装载)
-  const caps = options.capabilities
   const usePlanning = caps?.planning !== false
   const useSkills = caps?.skills !== false
   const useVfs = caps?.vfs !== false
@@ -286,7 +294,10 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       })
     : undefined
 
+  // 能力用法提示(最前,紧跟 base systemPrompt;按 caps 注入,全关则不注入)
+  const usageHintsMw = createUsageHintsMiddleware(caps, useWindowOps && !!(options.windowProps?.length))
   const middlewares = [
+    usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills ? [createSkillsMiddleware(options.skills || [])] : []),
