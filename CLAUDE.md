@@ -32,7 +32,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,290 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,330 项断言)
 ```
 
 ## 环境配置
@@ -70,7 +70,7 @@ src/
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI,均从入口导出可复用)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
-    ├── __tests__/selftest.ts   # 自测(290 项)
+    ├── __tests__/selftest.ts   # 自测(330 项)
     └── index.ts                # 库唯一入口(导出核心 + UI 模块:ChatDialog/MessageContent/CodePreview/useChat)
 examples/
 ├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
@@ -170,6 +170,27 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **window 场景默认策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)
 - **默认关**(烧 token):需 `capabilities.verify:true` 显式开启;误用 warn(传 check 忘 caps);`inspect()` 的 `verify` 字段看装载状态
 
+### Approval 人工确认中间件(工具调用前 human-in-the-loop)
+- `createChatSdk({ approval:{ tools?, confirm?, timeoutMs?, humanConfirmTool? } })`:默认关闭,不传 = 不装。传 `approval` 即同时启用**被动**与**主动**两侧人工确认:
+  - **被动侧(白名单)**:`tools`/`confirm` 指定的工具调用前自动弹确认框(如 `set/edit/delete_window_prop`),用户「允许/拒绝」后才执行。`tools: []` 空数组 = 不确认任何;不传 tools/confirm = 确认所有
+  - **主动侧(humanConfirmTool,默认 true)**:装载 `request_human_confirmation` 工具,LLM 在不确定/多方案/高风险时**主动调用**征询用户(传 question/options/recommendation);usageHints 自动注入默认提示词引导何时调用
+- **机制**:`wrapToolCall` 拦截 → 发 `approval_request` 流式事件(带 `resolve` 回调,`resolve(boolean | string)`)→ `useChat` 挂起 `pendingApproval` → `ChatDialog` 渲染确认条(主动征询展示问题/方案/推荐 + 选项按钮;被动确认展示工具名 + 参数预览 + 允许/拒绝)→ 用户点击 `resolveApproval(true/false/方案)` → 中间件 Promise 收口:允许则执行,拒绝则返回结构化 error(LLM 据此改方案)
+- **abort 联动**:进入时 signal 已 abort 或用户「停止生成」→ 自动拒绝(防永久挂起);`timeoutMs` 超时也自动拒绝
+- **装载顺序**:humanConfirm 在 approval 白名单之前(更外层,先收口,避免 request_human_confirmation 被双重确认);二者均在 permissions 之后(白名单先自动拒,幸存的写操作再人工确认)
+- **导出**:`createApprovalMiddleware` / `ApprovalOptions` / `createHumanConfirmTool` / `createHumanConfirmMiddleware` / `HUMAN_CONFIRM_TOOL_NAME`;headless(`ui:false`)集成方自监听 `approval_request` 事件自建确认框(事件 `resolve` 回调收口)
+- **与 verify 区别**:approval = 执行**前**人工把关(防误改);verify = 返回**后**自动自纠(防错答)。二者可叠加
+
+### Checkpoint 会话级回滚(回到上次正常时)
+- `createChatSdk({ checkpoint: true | { maxCheckpoints?, auto? } })`:默认关闭,传 `true` 用默认。`auto`(默认 true):每轮 agent 行动前(beforeModel 首次)自动存一个 checkpoint = 上一正常态 + 本轮 user 消息;回滚后保留 user 消息、撤销 agent 本轮改动,可重试
+- **快照内容**(整体,区别于 windowOps 的 per-path 精细快照):对话历史 + 全部注册 window 属性 + vfs + todos;仅存内存(会话级,非持久化,刷新后宿主值已变无意义);FIFO 限长(默认 5)
+- **回滚入口**:
+  - SDK API:`restoreLastCheckpoint()` / `listCheckpoints()` / `restoreCheckpoint(id)`
+  - LLM 工具:`restore_last_checkpoint`(流程异常/改坏页面时自纠)、`list_checkpoints`
+  - UI:ChatDialog error-bar「↩ 回退」按钮 + footer 常驻回退按钮(`canUndo` 时显示);点击 `onUndo` → `mgr.restore()` + 清 error
+- **就地还原**:window 注册属性用就地清空+重填(保留 Vue reactive 容器引用);messages 用 splice 替换内容(保留同一响应式数组引用,UI 自动更新);vfs 清空重填;todos reset
+- **与 windowOps 快照区别**:per-path 快照精细(单属性回退,自动随 set/edit/delete 入栈);checkpoint 整体(回滚到某轮起点,跨多属性 + 对话 + vfs + todos)。二者叠加:per-path 精细修小错,checkpoint 整体回大错
+- **导出**:`createCheckpointManager` / `createCheckpointMiddleware` / `CheckpointManager` / `CheckpointMeta` / `CheckpointDeps`;`inspect()` 的 `checkpoints` 字段看装载与列表
+
 ## 关键约定与坑
 
 ### LangChain 消息字段名
@@ -188,7 +209,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,290 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints/context preset/压缩统计捕获/trim keep 自适应),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,330 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints/context preset/压缩统计捕获/trim keep 自适应/approval+humanConfirm 中间件/checkpoint 会话级回滚),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts
@@ -205,6 +226,8 @@ createChatSdk({
   summaryLlm: { apiKey, baseUrl, model: 'deepseek-chat' }, // 摘要专用模型(不配用主 llm)
   capabilities: { verify: true },   // 开启自检(默认关);agent 返回前跑 check 自纠
   verify: { maxAttempts: 2 },        // check 省略 → 默认 createWriteBackCheck 写后读回验证
+  approval: { tools: ['set_window_prop', 'edit_window_prop'] }, // 写操作前人工确认 + LLM 主动征询工具(传 approval 默认装;humanConfirmTool:false 关)
+  checkpoint: true,                    // 会话级回滚:每轮自动存档,异常/改坏时一键回退到上次正常态(默认关)
   middleware: [/* 自定义中间件:埋点/拦截/prompt 增强,见「对话鲁棒性」小节 */],
 }).mount()
 ```

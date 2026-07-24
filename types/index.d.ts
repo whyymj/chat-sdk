@@ -98,6 +98,8 @@ export interface AgentInfo {
     triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number;
     originalMessages: number; compressedMessages: number; strategy: string;
   };
+  /** 会话级 checkpoint 装载状态(未开启 → undefined) */
+  checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
 }
 }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
@@ -187,6 +189,37 @@ export interface WriteBackCheckOptions {
   /** 读 window 的根对象(默认 globalThis.window) */
   window?: unknown;
 }
+
+// ===== 人工确认(approval)=====
+/** 人工确认中间件选项:工具调用前需用户「允许/拒绝」 */
+export interface ApprovalOptions {
+  /** 需确认的工具名列表;不传 confirm 且不传 tools → 所有工具都确认 */
+  tools?: string[];
+  /** 自定义判定(优先于 tools);返回 true 需确认 */
+  confirm?: (name: string, args: any) => boolean;
+  /** 超时毫秒(用户未响应自动拒绝);0 = 不超时(默认) */
+  timeoutMs?: number;
+  /** 是否装载 request_human_confirmation 主动确认工具(传 approval 时默认 true;false 关闭) */
+  humanConfirmTool?: boolean;
+}
+export declare function createApprovalMiddleware(opts?: ApprovalOptions): any;
+export declare function createHumanConfirmTool(): any;
+export declare function createHumanConfirmMiddleware(): any;
+export declare const HUMAN_CONFIRM_TOOL_NAME: string;
+export interface CheckpointMeta {
+  id: number;
+  label?: string;
+  timestamp: number;
+  messageCount: number;
+}
+export interface CheckpointManager {
+  save(label?: string): number;
+  list(): CheckpointMeta[];
+  restore(id?: number): boolean;
+  canRestore(): boolean;
+}
+export declare function createCheckpointManager(deps: any): CheckpointManager;
+export declare function createCheckpointMiddleware(mgr: CheckpointManager): any;
 
 // ===== 持久化存储 =====
 export type StorageBackendType = 'indexed' | 'session' | 'local' | 'memory';
@@ -285,6 +318,10 @@ export interface ChatSdkOptions {
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
+  /** 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装) */
+  approval?: ApprovalOptions;
+  /** 会话级 checkpoint 回滚(回到上次正常时)。默认关闭;传 true 或 { maxCheckpoints?, auto? } 开启 */
+  checkpoint?: boolean | { maxCheckpoints?: number; auto?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
   mcp?: McpServerConfig[];
   /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
@@ -315,6 +352,10 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos) */
   inspect(): AgentInfo;
+  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);需开启 checkpoint,无可用返回 false */
+  restoreLastCheckpoint(): boolean;
+  /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */
+  listCheckpoints(): CheckpointMeta[];
 }
 
 export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;

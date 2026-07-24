@@ -9,7 +9,12 @@
  */
 import type { Block } from './treeData'
 
-defineProps<{ nodes: Block[]; level?: number }>()
+const props = defineProps<{ nodes: Block[]; level?: number; selectedId?: string }>()
+const emit = defineEmits<{ (e: 'select', block: Block): void }>()
+
+function onSelect(block: Block) {
+  emit('select', block)
+}
 
 // 把 style 对象压成可读的「key:val」串,展示自定义样式属性
 function styleText(style: Block['style']): string {
@@ -18,23 +23,46 @@ function styleText(style: Block['style']): string {
     .map(([k, v]) => `${k}:${v}`)
     .join(' · ')
 }
+
+// 把 style 对象转成 Vue 内联样式对象,应用到区块名/文案,让样式改动「肉眼可见」。
+// 只取视觉相关键;过滤 padding/margin/display 等会破坏树布局的键。
+const VISUAL_KEYS = new Set(['color', 'background', 'backgroundColor', 'fontSize', 'fontWeight', 'fontStyle', 'textDecoration', 'borderRadius', 'border', 'opacity'])
+function previewStyle(style: Block['style']): Record<string, string | number> | undefined {
+  if (!style) return undefined
+  const out: Record<string, string | number> = {}
+  for (const [k, v] of Object.entries(style)) {
+    if (VISUAL_KEYS.has(k) && v != null) out[k] = v as string | number
+  }
+  return Object.keys(out).length ? out : undefined
+}
 </script>
 
 <template>
   <ul class="tree">
     <li v-for="(block, i) in nodes" :key="block.id ?? i" class="tree-node">
-      <div class="tree-row" :style="{ paddingLeft: (level ?? 0) * 18 + 'px' }">
+      <div
+        class="tree-row"
+        :class="{ selected: props.selectedId === block.id }"
+        :style="{ paddingLeft: (level ?? 0) * 18 + 'px' }"
+        @click="onSelect(block)"
+      >
         <span class="tree-icon">{{ block.type === 'section' ? '🗂️' : block.type === 'text' ? '📝' : block.type === 'button' ? '🔘' : block.type === 'image' ? '🖼️' : '🏷️' }}</span>
-        <span class="tree-name" :class="{ section: block.type === 'section' }">{{ block.name }}</span>
-        <span v-if="block.text" class="tree-text">「{{ block.text }}」</span>
+        <span class="tree-name" :class="{ section: block.type === 'section' }" :style="previewStyle(block.style)">{{ block.name }}</span>
+        <span v-if="block.text" class="tree-text" :style="previewStyle(block.style)">「{{ block.text }}」</span>
         <span class="tree-type">{{ block.type }}</span>
         <span class="tree-id">#{{ block.id }}</span>
       </div>
       <div v-if="block.style" class="tree-style" :style="{ marginLeft: (level ?? 0) * 18 + 'px' }">
         🎨 {{ styleText(block.style) }}
       </div>
-      <!-- 递归渲染 children -->
-      <TreeRenderer v-if="block.children?.length" :nodes="block.children" :level="(level ?? 0) + 1" />
+      <!-- 递归渲染 children:透传 selectedId 与 select 事件 -->
+      <TreeRenderer
+        v-if="block.children?.length"
+        :nodes="block.children"
+        :level="(level ?? 0) + 1"
+        :selected-id="props.selectedId"
+        @select="emit('select', $event)"
+      />
     </li>
   </ul>
 </template>
@@ -53,6 +81,8 @@ function styleText(style: Block['style']): string {
   transition: background 0.12s;
 }
 .tree-row:hover { background: rgba(99, 102, 241, 0.08); }
+.tree-row { cursor: pointer; }
+.tree-row.selected { background: rgba(99, 102, 241, 0.16); outline: 2px solid rgba(99, 102, 241, 0.55); }
 .tree-icon { font-size: 15px; }
 .tree-name { color: #1f2937; }
 .tree-name.section { font-weight: 600; color: #4338ca; }

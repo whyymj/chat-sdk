@@ -479,6 +479,69 @@ verify: {
 >
 > **window 场景策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)。
 
+### 6.11 Approval 人工确认(工具调用前 human-in-the-loop)
+
+人工确认分**被动**与**主动**两侧,传 `approval` 选项即同时启用(默认关闭,不传 = 不装):
+
+- **被动侧(白名单)**:`tools`/`confirm` 指定的工具调用前自动弹确认框,用户「允许/拒绝」后才执行——防 AI 误改页面/误删数据。
+- **主动侧(humanConfirmTool,默认 true)**:装载 `request_human_confirmation` 工具,LLM 在**不确定 / 多方案 / 高风险不可逆**时主动调用征询用户;usageHints 自动注入默认提示词引导何时调用(无需你写 prompt)。
+
+```ts
+createChatSdk({
+  // ... 其他配置
+  approval: {
+    tools: ['set_window_prop', 'edit_window_prop', 'delete_window_prop'], // 被动:需确认的工具名
+    // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
+    // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
+    // humanConfirmTool: true,  // 主动侧(传 approval 默认 true;false 关闭 request_human_confirmation 工具)
+  },
+})
+```
+
+**机制**:`wrapToolCall` 拦截 → 发 `approval_request` 流式事件(带 `resolve` 回调,`resolve(boolean | string)`)→ 内置 `ChatDialog` 渲染确认条:
+- 被动确认:展示工具名 + 参数预览 + 允许/拒绝
+- 主动征询:展示问题(question)/可选方案(options)/推荐(recommendation),多方案时渲染选项按钮供用户选
+
+用户点击 `resolveApproval(true/false/方案)` → 中间件收口:允许则执行,拒绝则返回结构化 error(LLM 可据此改方案,如换只读路径)。
+
+**主动征询示例**:LLM 调 `request_human_confirmation({ question: '主标题改红色还是蓝色?', options: ['红色','蓝色'], recommendation: '红色更醒目' })`,UI 弹出问题 + 两个选项按钮,用户点「红色」→ 工具返回 `用户选择了:红色` → LLM 据此执行。
+
+**abort 联动**:用户「停止生成」或进入时 signal 已 abort → 自动拒绝(防永久挂起);`timeoutMs` 超时也自动拒绝。
+
+**headless 自建 UI**(`ui:false`):自监听 `approval_request` 事件,事件对象含 `{ toolName, args, resolve }`,自建确认框后调 `resolve(true/false/方案)` 收口。
+
+> **与 verify 区别**:approval = 执行**前**人工把关(防误改);verify = 返回**后**自动自纠(防错答)。二者可叠加。`nested-demo` 已演示对写操作的人工确认 + 主动征询。
+
+### 6.12 Checkpoint 会话级回滚(回到上次正常时)
+
+流程异常、AI 改坏页面、或走偏时,一键回退到上一个正常状态。默认关闭,传 `checkpoint` 选项开启。
+
+```ts
+const sdk = createChatSdk({
+  // ... 其他配置
+  checkpoint: true,            // 或 { maxCheckpoints: 5, auto: true }
+  windowProps: [{ path: 'Editor.PageInfo', schema, ... }],  // checkpoint 整体快照这些注册属性
+})
+sdk.mount()
+
+// 一键回退(对话历史 + 注册 window 属性 + vfs + todos 整体还原)
+sdk.restoreLastCheckpoint()
+sdk.listCheckpoints()  // 查看可用回退点
+```
+
+**自动存档**(`auto` 默认 true):每轮 agent 行动前(beforeModel 首次)自动存一个 checkpoint = 上一正常态 + 本轮 user 消息。回滚后**保留 user 消息、撤销 agent 本轮改动**,可直接重试本轮。
+
+**快照内容**(整体,区别于 windowOps 的 per-path 精细快照):对话历史 + 全部注册 window 属性 + vfs + todos。仅存内存(会话级,非持久化);FIFO 限长(默认 5)。
+
+**三个回滚入口**:
+- **UI**:ChatDialog error-bar「↩ 回退」按钮 + footer 常驻回退按钮(`canUndo` 时显示)——用户一键回退
+- **LLM 工具**:`restore_last_checkpoint`(流程异常/改坏页面时 AI 自纠回退)、`list_checkpoints`
+- **SDK API**:`sdk.restoreLastCheckpoint()` / `sdk.listCheckpoints()`(headless 自建 UI 用)
+
+**就地还原**:window 注册属性就地清空+重填(保留 Vue reactive 容器引用,UI 自动更新);messages 用 splice 替换内容(保留同一响应式数组引用);vfs 清空重填;todos reset。
+
+> **与 windowOps 快照区别**:per-path 快照(`restore_window_snapshot`)精细,单属性回退,自动随 set/edit/delete 入栈;checkpoint 整体,回滚到某轮起点(跨多属性 + 对话 + vfs + todos)。二者叠加:小错用 per-path 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
+
 ### 6.10 MCP(外部工具接入)
 
 连远程 MCP server,动态把其 tools 注入 agent(标准化扩展工具生态):

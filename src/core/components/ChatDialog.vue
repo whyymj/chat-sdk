@@ -21,6 +21,10 @@ const props = withDefaults(defineProps<{
   onClear?: () => void
   /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
   getInfo?: () => AgentInfo
+  /** 回退到上次正常 checkpoint(checkpoint 选项开启时注入) */
+  onUndo?: () => boolean
+  /** 是否有可回退的 checkpoint(checkpoint 选项开启时注入) */
+  canUndo?: () => boolean
   /** 显示头像(默认 true;false → 隐藏 🤖/👤 emoji 头像,更克制) */
   showAvatar?: boolean
   /** 显示打字动画(默认 true;false → 用「思考中…」文字替代三点动画) */
@@ -32,13 +36,43 @@ const props = withDefaults(defineProps<{
   showTyping: true,
 })
 
-const { state, scrollContainer, sendMessage, clearMessages, stop, retry, regenerate } = useChat({
+const { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
   onPersist: props.onPersist,
   onClear: props.onClear,
 })
+
+/** 待确认工具调用的参数预览(截断长 JSON,便于用户判断) */
+const approvalArgsPreview = computed(() => {
+  const a = pendingApproval.value?.args
+  if (a == null) return ''
+  try {
+    const s = typeof a === 'string' ? a : JSON.stringify(a, null, 2)
+    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+  } catch {
+    return String(a)
+  }
+})
+
+/** 是否为 LLM 主动征询(request_human_confirmation):展示问题/方案/推荐,而非工具调用确认 */
+const isHumanConfirm = computed(() => pendingApproval.value?.toolName === 'request_human_confirmation')
+/** 主动征询的可选方案列表(多方案时让用户选) */
+const approvalOptions = computed<string[]>(() => {
+  const opts = pendingApproval.value?.args?.options
+  return Array.isArray(opts) ? opts.map(String) : []
+})
+
+/** 是否有可回退的 checkpoint(响应式:每次 error-bar 渲染时重读) */
+const canUndo = computed(() => (typeof props.canUndo === 'function' ? !!props.canUndo() : false))
+
+/** 一键回退到上次正常 checkpoint */
+function handleUndo() {
+  if (props.onUndo?.()) {
+    state.error = null
+  }
+}
 
 const inputText = ref('')
 const isExpanded = ref(true)
@@ -224,7 +258,41 @@ function copyText(text: string) {
       <div v-if="state.error" class="error-bar">
         <span class="error-text">{{ state.error }}</span>
         <button v-if="hasUserMessage" class="retry-btn" @click="retry">重试</button>
+        <button v-if="canUndo" class="undo-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="handleUndo">↩ 回退</button>
       </div>
+    </div>
+
+    <!-- 人工确认:工具调用前需用户允许/拒绝(approval 中间件挂起) / LLM 主动征询(humanConfirm 工具挂起) -->
+    <div v-if="pendingApproval" class="approval-bar">
+      <!-- LLM 主动征询:展示问题 / 可选方案 / 推荐 -->
+      <template v-if="isHumanConfirm">
+        <div class="approval-head">
+          <span class="approval-icon">❓</span>
+          <span class="approval-title">AI 需要你确认</span>
+        </div>
+        <div v-if="pendingApproval.args?.question" class="approval-question">{{ pendingApproval.args.question }}</div>
+        <div v-if="pendingApproval.args?.context" class="approval-context">{{ pendingApproval.args.context }}</div>
+        <div v-if="pendingApproval.args?.recommendation" class="approval-recommend">💡 推荐:{{ pendingApproval.args.recommendation }}</div>
+        <div class="approval-actions">
+          <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
+          <template v-if="approvalOptions.length">
+            <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>
+          </template>
+          <button v-else class="approval-allow" @click="resolveApproval(true)">允许</button>
+        </div>
+      </template>
+      <!-- 工具调用确认:展示工具名 + 参数 -->
+      <template v-else>
+        <div class="approval-head">
+          <span class="approval-icon">✋</span>
+          <span class="approval-title">需确认工具调用:<code>{{ pendingApproval.toolName }}</code></span>
+        </div>
+        <pre v-if="approvalArgsPreview" class="approval-args">{{ approvalArgsPreview }}</pre>
+        <div class="approval-actions">
+          <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
+          <button class="approval-allow" @click="resolveApproval(true)">允许</button>
+        </div>
+      </template>
     </div>
 
     <!-- 输入区域 -->
@@ -232,6 +300,7 @@ function copyText(text: string) {
       <span v-if="props.getInfo" class="cap-badge" title="能力概览(MCP / 工具数)">
         🔌{{ summary.mcp }} · 🔧{{ summary.tools }}
       </span>
+      <button v-if="canUndo" class="undo-foot-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="handleUndo">↩ 回退</button>
       <textarea
         v-model="inputText"
         class="chat-input"
@@ -394,4 +463,28 @@ function copyText(text: string) {
 .message-row.assistant:hover .msg-actions { opacity: 1; }
 .msg-action-btn { padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
 .msg-action-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
+
+/* 回退按钮(error-bar 内 + footer 常驻;checkpoint 选项开启时显示) */
+.undo-btn { margin-left: 6px; padding: 2px 10px; border: 1px solid #f59e0b; border-radius: 6px; background: #fffbeb; color: #92400e; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+.undo-btn:hover { background: #fde68a; }
+.undo-foot-btn { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+.undo-foot-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
+
+/* 人工确认条(approval 中间件挂起时显示) */
+.approval-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: #fffbeb; }
+.approval-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #92400e; }
+.approval-icon { font-size: 15px; }
+.approval-title code { padding: 1px 6px; border-radius: 4px; background: #fef3c7; color: #78350f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.approval-args { margin: 8px 0; padding: 8px; max-height: 140px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; }
+.approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.approval-actions button { padding: 5px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
+.approval-deny { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+.approval-deny:hover { background: #e5e7eb; color: #374151; }
+.approval-allow { background: var(--cs-primary); color: #fff; }
+.approval-allow:hover { opacity: 0.9; }
+.approval-question { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: #fff; border: 1px solid #fde68a; font-size: 13px; color: #57534e; line-height: 1.5; white-space: pre-wrap; }
+.approval-context { margin: 4px 0 8px; font-size: 12px; color: #92400e; line-height: 1.5; }
+.approval-recommend { margin: 4px 0 8px; font-size: 12px; color: #1f4d3a; }
+.approval-opt { padding: 5px 14px; border: 1px solid var(--cs-primary); border-radius: 6px; background: #fff; color: var(--cs-primary); font-size: 13px; cursor: pointer; transition: all 0.2s; }
+.approval-opt:hover { background: var(--cs-primary); color: #fff; }
 </style>

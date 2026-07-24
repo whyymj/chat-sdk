@@ -16,16 +16,24 @@
  *   模块级 sharedCores 注册表 + 引用计数;mount/unmount 各自渲染到不同 container。
  */
 import { createApp, h, defineComponent, reactive, type App as VueApp } from 'vue'
-import type { StructuredToolInterface } from '@langchain/core/tools'
+import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import { ChatOpenAI } from '@langchain/openai'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
+import { z } from 'zod'
 import { createTodosMiddleware } from '../harness/todos'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
+import { createApprovalMiddleware } from '../harness/approval'
+import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../harness/humanConfirm'
+import {
+  createCheckpointManager,
+  createCheckpointMiddleware,
+  type CheckpointManager,
+} from '../harness/checkpoint'
 import type { Middleware } from '../harness/middleware'
 import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfig } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
@@ -142,6 +150,24 @@ export interface ChatSdkOptions {
     /** 对抗式验证(期四实现:spawn 找茬子 agent) */
     adversarial?: boolean
   }
+  /**
+   * 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装)。
+   * tools 指定需确认的工具名(如 ['set_window_prop','edit_window_prop']);confirm 自定义判定;timeoutMs 超时自动拒绝。
+   * humanConfirmTool(默认 true,传 approval 即装):装载 request_human_confirmation 工具,LLM 可在不确定/多方案/高风险时主动征询用户。
+   */
+  approval?: {
+    tools?: string[]
+    confirm?: (name: string, args: any) => boolean
+    timeoutMs?: number
+    /** 是否装载 request_human_confirmation 主动确认工具(传 approval 时默认 true;false 关闭) */
+    humanConfirmTool?: boolean
+  }
+  /**
+   * 会话级 checkpoint 回滚(回到上次正常时)。默认关闭,不传 = 不装。
+   * 传 true 用默认;或 { maxCheckpoints?, auto? }。auto(默认 true):每轮 agent 行动前自动存一个 checkpoint;
+   * restore_last_checkpoint / list_checkpoints 工具供 LLM 自纠;SDK 暴露 restoreLastCheckpoint/listCheckpoints 供 UI 一键回退。
+   */
+  checkpoint?: boolean | { maxCheckpoints?: number; auto?: boolean }
   /** MCP server 列表(连远程 server,动态把其 tools 注入 agent;浏览器仅 http/sse/websocket transport) */
   mcp?: McpServerConfig[]
   /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
@@ -184,6 +210,10 @@ export interface ChatSdk {
   switchSession(sessionId?: string): Promise<string>
   /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
+  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
+  restoreLastCheckpoint(): boolean
+  /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
+  listCheckpoints(): { id: number; label?: string; timestamp: number; messageCount: number }[]
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -225,6 +255,8 @@ interface AgentCore {
   mcpClosers: Array<() => Promise<void>>
   /** 已连 MCP server 元信息(getInfo 展示;失败的 server 不进) */
   mcpServers: { name: string; url: string; toolCount: number }[]
+  /** 会话级 checkpoint 管理器(未开启 checkpoint → null) */
+  checkpoint: CheckpointManager | null
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -339,6 +371,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const todosMw = createTodosMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
 
+  // agent 实例引用 holder(checkpoint manager 需读 agent.getState 取 todos,但 agent 在 initDone 内才创建;闭包延后读取)
+  const agentRef: { current: any } = { current: null }
+
+  // 会话级 checkpoint(默认关;传 options.checkpoint 开启):每轮自动存 + 一键回滚到上次正常时
+  const checkpointOpts = options.checkpoint
+  const useCheckpoint = checkpointOpts !== undefined && checkpointOpts !== false
+  const checkpointMgr: CheckpointManager | null = useCheckpoint
+    ? createCheckpointManager({
+        windowPaths: (options.windowProps ?? []).map((w) => w.path),
+        vfsStore,
+        todosMw,
+        getTodos: () => agentRef.current?.getState?.()?.todos ?? [],
+        messages,
+        maxCheckpoints:
+          checkpointOpts && typeof checkpointOpts === 'object' ? checkpointOpts.maxCheckpoints : undefined,
+      })
+    : null
+  const checkpointAuto = !checkpointOpts || typeof checkpointOpts !== 'object' || checkpointOpts.auto !== false
+
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
   const caps = options.capabilities
   const useWindowOps = caps?.windowOps !== false
@@ -359,7 +410,41 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(options.tools || []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
-  const allTools: StructuredToolInterface[] = [...builtinTools, ...userTools]
+  // 人工确认(主动侧):传 approval 且 humanConfirmTool 未关 → 装 request_human_confirmation 工具(LLM 主动征询用户)
+  const useHumanConfirm = !!options.approval && options.approval.humanConfirmTool !== false
+  const humanConfirmTool = useHumanConfirm ? createHumanConfirmTool() : null
+  if (humanConfirmTool) toolSources.set(HUMAN_CONFIRM_TOOL_NAME, 'builtin')
+  // 会话级 checkpoint 回滚工具(供 LLM 自纠:流程异常/走偏时回退到上次正常态)
+  const checkpointTools: StructuredToolInterface[] = useCheckpoint && checkpointMgr
+    ? [
+        tool(
+          async () => {
+            const list = checkpointMgr.list()
+            if (!list.length) return '无可用 checkpoint,无法回退。'
+            const ok = checkpointMgr.restore()
+            return ok
+              ? `已回退到最近一次正常状态(checkpoint #${list[list.length - 1].id})。对话历史、window 注册属性、vfs、todos 已整体还原。请基于回退后的状态重新判断并继续。`
+              : '回退失败:无可用 checkpoint。'
+          },
+          { name: 'restore_last_checkpoint', description: '回退到最近一次正常状态(整体还原对话历史 + window 注册属性 + vfs + todos)。当本轮操作出错、页面被改坏、或走偏时调用,回到本轮起点重新来过。不传参数即回退最近一次。', schema: z.object({}).optional() },
+        ),
+        tool(
+          async () => {
+            const list = checkpointMgr.list()
+            if (!list.length) return '无可用 checkpoint。'
+            return '可用 checkpoint:\n' + list.map((c) => `#${c.id} [${c.label ?? 'auto'}] 消息数=${c.messageCount} 时间=${new Date(c.timestamp).toLocaleTimeString()}`).join('\n')
+          },
+          { name: 'list_checkpoints', description: '列出可用会话 checkpoint(回退点)。', schema: z.object({}).optional() },
+        ),
+      ]
+    : []
+  checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
+  const allTools: StructuredToolInterface[] = [
+    ...builtinTools,
+    ...userTools,
+    ...(humanConfirmTool ? [humanConfirmTool] : []),
+    ...checkpointTools,
+  ]
 
   const usePlanning = caps?.planning !== false
   const useSkills = caps?.skills !== false
@@ -415,7 +500,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : undefined
 
   // 能力用法提示(最前,紧跟 base systemPrompt;按 caps 注入,全关则不注入)
-  const usageHintsMw = createUsageHintsMiddleware(caps, useWindowOps && !!(options.windowProps?.length))
+  const usageHintsMw = createUsageHintsMiddleware(
+    { ...caps, humanConfirm: useHumanConfirm },
+    useWindowOps && !!(options.windowProps?.length),
+  )
   const middlewares = [
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
@@ -440,6 +528,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       : []),
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
+    // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
+    ...(useCheckpoint && checkpointAuto && checkpointMgr ? [createCheckpointMiddleware(checkpointMgr)] : []),
+    // 人工确认(主动侧):拦截 request_human_confirmation,发 approval_request;装在 approval 白名单之前(更外层,先收口,避免双重确认)
+    ...(useHumanConfirm ? [createHumanConfirmMiddleware()] : []),
+    // 人工确认(被动侧):白名单工具调用前确认(wrapToolCall 洋葱,此处更内层)
+    ...(options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
+      ? [createApprovalMiddleware(options.approval)]
+      : []),
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
@@ -461,6 +557,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     refCount: 0,
     mcpClosers: [],
     mcpServers: [],
+    checkpoint: checkpointMgr,
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -556,6 +653,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         },
         mcp: { servers: core.mcpServers },
         lastCompression: core.agent?.getState?.()?.lastCompression as AgentInfo['lastCompression'],
+        checkpoints: checkpointMgr
+          ? { enabled: true, auto: checkpointAuto, list: checkpointMgr.list() }
+          : undefined,
       }
     },
   }
@@ -679,6 +779,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       debug: options.debug,
     })
+    agentRef.current = core.agent
   })()
 
   return core
@@ -744,6 +845,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             debugLogs: debugLogsRef.value,
             initialMessages: core.messages,
             getInfo: () => core.getInfo(),
+            onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,
+            canUndo: core.checkpoint ? () => core.checkpoint!.canRestore() : undefined,
             onPersist: async () => {
               core.afterRound()
               if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
@@ -795,5 +898,9 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     stream: core.stream,
     inspect: core.getInfo,
     messages: core.messages,
+    /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);无可用 checkpoint 返回 false */
+    restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,
+    /** 列出可用 checkpoint(回退点) */
+    listCheckpoints: () => core.checkpoint?.list() ?? [],
   }
 }

@@ -39,6 +39,7 @@ export type StreamEvent =
   | { type: 'tool_call'; name: string; args: any }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void }
   | { type: 'done'; content: string }
 
 /** 流式回调函数签名 */
@@ -94,5 +95,11 @@ export interface AgentInfo {
     originalMessages: number
     compressedMessages: number
     strategy: string
+  }
+  /** 会话级 checkpoint 装载状态(未开启 → undefined) */
+  checkpoints?: {
+    enabled: boolean
+    auto: boolean
+    list: { id: number; label?: string; timestamp: number; messageCount: number }[]
   }
 }

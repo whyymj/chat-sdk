@@ -18,6 +18,13 @@ import { isAbort } from '../harness/retry'
 type FetchFn = (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>
 type StreamFn = (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
 
+/** 待确认的工具调用(approval_request 事件挂起,等用户点「允许/拒绝/选方案」) */
+export interface PendingApproval {
+  toolName: string
+  args: any
+  resolve: (approved: boolean | string) => void
+}
+
 export function useChat(
   opts: {
     fetchResponse?: FetchFn
@@ -41,6 +48,9 @@ export function useChat(
 
   /** 消息列表容器 DOM 引用,用于自动滚动 */
   const scrollContainer = ref<HTMLElement | null>(null)
+
+  /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
+  const pendingApproval = ref<PendingApproval | null>(null)
 
   /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
@@ -118,6 +128,15 @@ export function useChat(
                     break
                   }
                 }
+              }
+              break
+            }
+            case 'approval_request': {
+              // 挂起等用户确认;resolve 由 resolveApproval 调用,清空后 agent 继续
+              pendingApproval.value = {
+                toolName: event.toolName,
+                args: event.args,
+                resolve: event.resolve,
               }
               break
             }
@@ -202,6 +221,14 @@ export function useChat(
     currentController?.abort()
   }
 
+  /** 人工确认:用户点「允许」(true) / 「拒绝」(false) / 选某方案(string) → 收口挂起的 approval_request */
+  function resolveApproval(approved: boolean | string) {
+    const p = pendingApproval.value
+    if (!p) return
+    pendingApproval.value = null
+    p.resolve(approved)
+  }
+
   /** 重试最后一条用户消息:移除其后所有消息(失败占位),清错误,重发 */
   async function retry() {
     if (!state.error) return // 仅出错时重试
@@ -220,5 +247,5 @@ export function useChat(
     await sendMessage(content)
   }
 
-  return { state, scrollContainer, sendMessage, clearMessages, stop, retry, regenerate }
+  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval }
 }

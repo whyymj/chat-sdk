@@ -22,6 +22,11 @@ export { createSubagentMiddleware, createSubagentsMiddleware } from './harness/s
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig } from './harness/subagent'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
+export { createApprovalMiddleware } from './harness/approval'
+export type { ApprovalOptions } from './harness/approval'
+export { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from './harness/humanConfirm'
+export { createCheckpointManager, createCheckpointMiddleware } from './harness/checkpoint'
+export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harness/checkpoint'
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // window 操作类型(属性注册表 + 增量编辑 + 快照)

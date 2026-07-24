@@ -22,6 +22,9 @@ import { isAbort, isRetryable, withRetry } from '../harness/retry'
 import { runPool } from '../utils/pool'
 import { createSubagentMiddleware, createSubagentsMiddleware } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../harness/verify'
+import { createApprovalMiddleware } from '../harness/approval'
+import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../harness/humanConfirm'
+import { createCheckpointManager, createCheckpointMiddleware } from '../harness/checkpoint'
 import { extractText } from '../mcp/client'
 import { createInitialState as createState } from '../harness/state'
 import {
@@ -927,6 +930,219 @@ console.log('\n[verify 中间件]')
 
   assert(mwOk.name === 'verify', '中间件 name=verify')
 }
+
+// ============ approval 中间件(人工确认:wrapToolCall 拦截 → approval_request → resolve) ============
+console.log('\n[approval 中间件]')
+{
+  const mw = createApprovalMiddleware({ tools: ['set_window_prop'] })
+  assert(mw.name === 'approval', '中间件 name=approval')
+
+  let captured: any = null
+  const mkCtx = (name: string, args: any, signal?: AbortSignal): any => ({
+    name,
+    args,
+    signal,
+    emit: (e: any) => { captured = e },
+  })
+
+  // 1. 不需确认的工具 → 直接 next,不发事件
+  let nextCalled = false
+  await mw.wrapToolCall!(mkCtx('get_window_prop', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
+  assert(nextCalled && !captured, '非确认工具 → 放行 next,不发 approval_request')
+
+  // 2. 需确认 → 发 approval_request,resolve(true) → 执行 next
+  captured = null
+  let execResult = { content: 'written', status: 'done' as const }
+  let p = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'a', value: 1 }), async () => execResult)
+  assert(captured?.type === 'approval_request' && captured.toolName === 'set_window_prop', '确认工具 → 发 approval_request 事件')
+  captured.resolve(true)
+  let r = await p
+  assert(r.content === 'written' && r.status === 'done', 'resolve(true) → 执行工具,返回真实结果')
+
+  // 3. resolve(false) → 返回 error(不执行 next)
+  captured = null
+  let denied = false
+  let p2 = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'b', value: 2 }), async () => { denied = true; return { content: 'x', status: 'done' } })
+  captured.resolve(false)
+  let r2 = await p2
+  assert(r2.status === 'error' && !denied, 'resolve(false) → 返回 error 且不执行工具')
+
+  // 4. abort 联动:signal 已 aborted → 自动拒绝
+  const ac = new AbortController(); ac.abort()
+  captured = null
+  let p3 = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'c' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
+  let r3 = await p3
+  assert(r3.status === 'error', 'signal 已 abort → 自动拒绝')
+
+  // 5. 超时自动拒绝
+  const mwT = createApprovalMiddleware({ tools: ['set_window_prop'], timeoutMs: 30 })
+  captured = null
+  let p4 = mwT.wrapToolCall!(mkCtx('set_window_prop', { path: 'd' }), async () => ({ content: 'x', status: 'done' }))
+  let r4 = await p4
+  assert(r4.status === 'error', 'timeoutMs 超时 → 自动拒绝')
+
+  // 6. confirm 自定义判定(优先于 tools)
+  const mwC = createApprovalMiddleware({ tools: ['set_window_prop'], confirm: (n) => n === 'edit_window_prop' })
+  captured = null
+  await mwC.wrapToolCall!(mkCtx('set_window_prop', { path: 'e' }), async () => ({ content: 'ok', status: 'done' }))
+  assert(!captured, 'confirm 优先于 tools:set_window_prop 不在 confirm 命中 → 放行不发事件')
+  captured = null
+  let p5 = mwC.wrapToolCall!(mkCtx('edit_window_prop', { path: 'f' }), async () => ({ content: 'ok', status: 'done' }))
+  assert(captured?.type === 'approval_request', 'confirm 命中 edit_window_prop → 发确认事件')
+  captured.resolve(true)
+  assert((await p5).content === 'ok', 'confirm 命中后 resolve(true) → 执行')
+
+  // 7. 不传 tools/confirm → 所有工具都确认
+  const mwAll = createApprovalMiddleware({})
+  captured = null
+  let p6 = mwAll.wrapToolCall!(mkCtx('any_tool', {}), async () => ({ content: 'ok', status: 'done' }))
+  assert(captured?.type === 'approval_request', '无 tools/confirm → 所有工具都确认')
+  captured.resolve(true)
+  await p6
+
+  // 8. tools 空数组 → 不确认任何工具(放行)
+  const mwEmpty = createApprovalMiddleware({ tools: [] })
+  captured = null
+  let nextHit = false
+  await mwEmpty.wrapToolCall!(mkCtx('any_tool', {}), async () => { nextHit = true; return { content: 'ok', status: 'done' } })
+  assert(!captured && nextHit, 'tools 空数组 → 不确认任何工具,直接放行')
+}
+
+// ============ humanConfirm 中间件(LLM 主动征询:request_human_confirmation) ============
+console.log('\n[humanConfirm 中间件]')
+{
+  const tool = createHumanConfirmTool()
+  assert(tool.name === HUMAN_CONFIRM_TOOL_NAME, '工具 name=request_human_confirmation')
+  assert(/不确定|多种|高风险/.test(tool.description), '工具描述含触发场景(不确定/多方案/高风险)')
+
+  const mw = createHumanConfirmMiddleware()
+  assert(mw.name === 'humanConfirm', '中间件 name=humanConfirm')
+
+  let captured: any = null
+  const mkCtx = (name: string, args: any, signal?: AbortSignal): any => ({
+    name, args, signal, emit: (e: any) => { captured = e },
+  })
+
+  // 1. 非 humanConfirm 工具 → 放行 next
+  captured = null
+  let hit = false
+  await mw.wrapToolCall!(mkCtx('get_window_prop', {}), async () => { hit = true; return { content: 'ok', status: 'done' } })
+  assert(hit && !captured, '非 humanConfirm 工具 → 放行不发事件')
+
+  // 2. resolve(true) → 同意
+  captured = null
+  let p = mw.wrapToolCall!(mkCtx(HUMAN_CONFIRM_TOOL_NAME, { question: '改红色还是蓝色?', recommendation: '红色' }), async () => ({ content: 'x', status: 'done' }))
+  assert(captured?.type === 'approval_request' && captured.args?.question === '改红色还是蓝色?', 'humanConfirm → 发 approval_request(带 question)')
+  captured.resolve(true)
+  let r = await p
+  assert(/用户同意了方案\(红色\)/.test(r.content), 'resolve(true) → 返回同意(含推荐)')
+
+  // 3. resolve(false) → 拒绝
+  captured = null
+  let p2 = mw.wrapToolCall!(mkCtx(HUMAN_CONFIRM_TOOL_NAME, { question: '删掉?' }), async () => ({ content: 'x', status: 'done' }))
+  captured.resolve(false)
+  let r2 = await p2
+  assert(/用户拒绝/.test(r2.content), 'resolve(false) → 返回拒绝')
+
+  // 4. resolve(string) → 选方案
+  captured = null
+  let p3 = mw.wrapToolCall!(mkCtx(HUMAN_CONFIRM_TOOL_NAME, { question: '选方案', options: ['A', 'B'] }), async () => ({ content: 'x', status: 'done' }))
+  captured.resolve('B')
+  let r3 = await p3
+  assert(/用户选择了:B/.test(r3.content), 'resolve(string) → 返回所选方案')
+
+  // 5. abort 联动:进入时已 abort → 拒绝
+  const ac = new AbortController(); ac.abort()
+  captured = null
+  let p4 = mw.wrapToolCall!(mkCtx(HUMAN_CONFIRM_TOOL_NAME, { question: 'x' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
+  let r4 = await p4
+  assert(/用户拒绝/.test(r4.content), 'signal 已 abort → 自动拒绝')
+}
+
+// ============ checkpoint 中间件(会话级回滚:save/list/restore + 自动存档中间件) ============
+console.log('\n[checkpoint 中间件]')
+{
+  // 模拟 window 注册属性 + vfs + todos + messages
+  ;(globalThis as any).window = globalThis
+  ;(globalThis as any).CP = { page: { title: '原标题', theme: 'light', list: [1, 2, 3] } }
+  const messages: any[] = [
+    { role: 'user', content: '你好', timestamp: Date.now() },
+  ]
+  const vfsFiles: Record<string, any> = { 'a.txt': { content: 'AAA', bytes: 3, updatedAt: 1 } }
+  const vfsStore = { files: vfsFiles } as any
+  let curTodos = [{ content: 't1', status: 'pending' }]
+  const todosMw = { reset: (t: any[]) => { curTodos = t.map((x) => ({ ...x })) } }
+  const mgr = createCheckpointManager({
+    windowPaths: ['CP.page'],
+    vfsStore,
+    todosMw: todosMw as any,
+    getTodos: () => curTodos,
+    messages: messages as any,
+    maxCheckpoints: 3,
+  })
+
+  // 1. 初始无 checkpoint
+  assert(mgr.list().length === 0 && !mgr.canRestore(), '初始无 checkpoint,canRestore=false')
+
+  // 2. save → 存档(含 window 全量 + vfs + todos + messages)
+  const id1 = mgr.save('auto')
+  assert(mgr.list().length === 1 && mgr.canRestore(), 'save 后有 checkpoint,canRestore=true')
+  assert(mgr.list()[0].label === 'auto', 'list 元信息含 label')
+
+  // 3. 改动 window/vfs/todos/messages 后 restore → 全部还原
+  ;(globalThis as any).CP.page.title = '被改坏的标题'
+  ;(globalThis as any).CP.page.theme = 'dark'
+  ;(globalThis as any).CP.page.list.push(99)
+  delete vfsFiles['a.txt']; vfsFiles['b.txt'] = { content: 'BBB', bytes: 3, updatedAt: 2 }
+  curTodos[0].status = 'completed'; curTodos.push({ content: 't2', status: 'pending' })
+  messages.push({ role: 'assistant', content: '坏回复', timestamp: Date.now() })
+
+  const ok = mgr.restore()
+  assert(ok, 'restore 成功返回 true')
+  assert((globalThis as any).CP.page.title === '原标题', 'restore 还原 window 标题')
+  assert((globalThis as any).CP.page.theme === 'light', 'restore 还原 window theme')
+  assert((globalThis as any).CP.page.list.length === 3 && !(globalThis as any).CP.page.list.includes(99), 'restore 还原 window 数组(就地清空+重填)')
+  assert(Object.keys(vfsFiles).includes('a.txt') && !('b.txt' in vfsFiles), 'restore 还原 vfs(清空+重填)')
+  assert(curTodos.length === 1 && curTodos[0].status === 'pending', 'restore 还原 todos')
+  assert(messages.length === 1 && messages[0].content === '你好', 'restore 还原对话历史(去掉坏回复)')
+
+  // 4. FIFO 限长:maxCheckpoints=3
+  mgr.save(); mgr.save(); mgr.save(); mgr.save()
+  assert(mgr.list().length === 3, 'FIFO 限长:maxCheckpoints=3,超出丢弃最旧')
+
+  // 5. restore 指定 id
+  const list = mgr.list()
+  const targetId = list[0].id
+  mgr.restore(targetId)
+  assert(true, 'restore(id) 不抛')
+
+  // 6. 无 checkpoint 时 restore 返回 false
+  const mgr2 = createCheckpointManager({ windowPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+  assert(mgr2.restore() === false, '无 checkpoint 时 restore 返回 false')
+
+  // 7. 自动存档中间件:beforeAgent 重置标记,beforeModel 首次触发 save
+  const autoMgr = createCheckpointManager({ windowPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+  const cpMw = createCheckpointMiddleware(autoMgr)
+  assert(cpMw.name === 'checkpoint', '中间件 name=checkpoint')
+  // beforeAgent 返回 undefined(不修改 state)
+  assert(cpMw.beforeAgent!({} as any) === undefined, 'beforeAgent 返回 undefined')
+  // beforeModel 首次 → save(产生 checkpoint)
+  assert(cpMw.beforeModel!({ messages: [], state: {} as any }) === undefined, 'beforeModel 返回 undefined')
+  assert(autoMgr.list().length === 1, 'beforeModel 首次触发 save')
+  // beforeModel 再次(同轮)→ 不重复 save
+  cpMw.beforeModel!({ messages: [], state: {} as any })
+  assert(autoMgr.list().length === 1, '同轮 beforeModel 再次不重复 save')
+  // beforeAgent 重置标记 → 下一轮 beforeModel 再次 save
+  cpMw.beforeAgent!({} as any)
+  cpMw.beforeModel!({ messages: [], state: {} as any })
+  assert(autoMgr.list().length === 2, '下一轮 beforeAgent 重置后 beforeModel 再次 save')
+
+  // 清理
+  delete (globalThis as any).CP
+  delete (globalThis as any).window
+}
+
+
 
 // ============ createWriteBackCheck(写后读回验证) ============
 console.log('\n[createWriteBackCheck]')

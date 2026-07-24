@@ -10,10 +10,10 @@
 import type { Middleware } from './middleware'
 
 /** capabilities 子集(仅用法提示相关开关) */
-type HintCapabilityFlags = { planning?: boolean; windowOps?: boolean; subagent?: boolean }
+type HintCapabilityFlags = { planning?: boolean; windowOps?: boolean; subagent?: boolean; humanConfirm?: boolean }
 
 /**
- * @param caps 能力开关(planning / windowOps / subagent)
+ * @param caps 能力开关(planning / windowOps / subagent / humanConfirm)
  * @param hasWindowOps 是否实际装了 window 操作工具(用于判断 snapshot 回退提示是否有意义)
  */
 export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasWindowOps: boolean): Middleware {
@@ -30,6 +30,9 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_window_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
       }
       if (caps?.subagent !== false) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
+      if (caps?.humanConfirm) {
+        hints.push('遇到不确定/需求有歧义、多种可行方案取舍影响大、或即将执行高风险不可逆操作(删除/覆盖/批量改动)时,先调 request_human_confirmation(question, options?, recommendation?) 征询用户确认后再继续,不要默默猜测后直接执行高风险动作。')
+      }
       return hints.length ? '## 能力使用提示\n' + hints.join('\n') : undefined
     },
   }
