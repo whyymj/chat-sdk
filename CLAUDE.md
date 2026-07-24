@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-`@whyymj/chat-sdk`(npm 包名 `@whyymj/chat-sdk`,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
+`page-agent-sdk`(npm 包名 `page-agent-sdk`,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
 
 由原 `zhuanti-agent`(Vue3 库、绑定"什么值得买专题"业务)重构而来,采用**自研 Deep Agents 风格 harness**(规避 `deepagentsjs#292` 浏览器打包阻塞,不引入 LangGraph/langchain 整包)。
 
@@ -213,7 +213,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 ## SDK 用法
 ```ts
-import { createChatSdk, defineTool, defineSkill, type Middleware } from '@whyymj/chat-sdk'
+import { createChatSdk, defineTool, defineSkill, type Middleware } from 'page-agent-sdk'
 createChatSdk({
   container: '#root', llm: { apiKey, baseUrl, model },
   systemPrompt: '...', windowProps: [{ path, description, schema }],
@@ -252,11 +252,11 @@ createChatSdk({
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
 ## 发布与引入
-包名 `@whyymj/chat-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`/`sideEffects`)。`vue` 打包进库(非 peer);`zod`/`@langchain/*` 为 peer(npm 安装时由消费者装)。三种引入方式:
+包名 `page-agent-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`/`sideEffects`)。`vue` 打包进库(非 peer);`zod`/`@langchain/*` 为 peer(npm 安装时由消费者装)。三种引入方式:
 
-- **npm**:`npm install @whyymj/chat-sdk` → `import { createChatSdk, z } from '@whyymj/chat-sdk'`(同时装 peer:`zod`、`@langchain/openai`、`@langchain/core`)。
-- **CDN · ESM(esm.sh)**:`import { createChatSdk, z } from 'https://esm.sh/@whyymj/chat-sdk'`(peer 由 esm.sh 自动解析,体积小,推荐模块化场景)。
-- **CDN · IIFE 全量**:`<script src="https://unpkg.com/@whyymj/chat-sdk"></script>` → 全局 `window.ChatSdk`(`ChatSdk.createChatSdk` / `ChatSdk.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
+- **npm**:`npm install page-agent-sdk` → `import { createChatSdk, z } from 'page-agent-sdk'`(同时装 peer:`zod`、`@langchain/openai`、`@langchain/core`)。
+- **CDN · ESM(esm.sh)**:`import { createChatSdk, z } from 'https://esm.sh/page-agent-sdk'`(peer 由 esm.sh 自动解析,体积小,推荐模块化场景)。
+- **CDN · IIFE 全量**:`<script src="https://unpkg.com/page-agent-sdk"></script>` → 全局 `window.ChatSdk`(`ChatSdk.createChatSdk` / `ChatSdk.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
 
 构建:`npm run build` = `build:lib`(ESM + UMD,peer 外置)+ `build:iife`(IIFE 全量,配置 `vite.iife.config.ts`)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。
 
@@ -275,7 +275,7 @@ createChatSdk({
 - **个人笔记** `doc/待确认问题.md` 已在 `.gitignore` 且仅存在于 Gitee,不进 GitHub。
 - **历史中的 `.env`**:旧提交含真实 key,两个远程历史都含;如需彻底清除须 `git filter-repo` 重写(改写所有哈希 + 两远程 force-push),按需再做。
 
-## npm 发布约定(包名 `@whyymj/chat-sdk`)
+## npm 发布约定(包名 `page-agent-sdk`)
 
 - **账号**:`whyymj`(已开 2FA,**禁止在文档/仓库/聊天记录中留存密码或 token 明文**)。凭据只存本机 user 级 `~/.npmrc`,**不进项目目录、不进 git**。
 - **registry 陷阱**:本机 `npm config get registry` 默认是公司私有源 `https://npm-team.smzdm.com/`。`package.json` 的 `publishConfig.registry` 已锁定 `https://registry.npmjs.org/`,`npm publish` 会发到官方 npm,**不受私有源影响**;但 `npm login`/`npm whoami` 走的是默认 registry,需显式 `--registry=https://registry.npmjs.org/`。
@@ -292,8 +292,8 @@ createChatSdk({
   5. `npm publish` —— 发到官方 npm(publishConfig 锁定)
 - **发布后测试**(验证可装):
   ```bash
-  npm view @whyymj/chat-sdk version          # 确认 latest 已更新
+  npm view page-agent-sdk version          # 确认 latest 已更新
   # 临时目录验证安装
-  cd $(mktemp -d) && npm init -y && npm i @whyymj/chat-sdk && node -e "import('@whyymj/chat-sdk').then(m=>console.log(Object.keys(m).slice(0,5)))"
+  cd $(mktemp -d) && npm init -y && npm i page-agent-sdk && node -e "import('page-agent-sdk').then(m=>console.log(Object.keys(m).slice(0,5)))"
   ```
 - **版本号策略**:GitHub 整理发布与 npm 发布解耦——npm 版本号独立维护,每次发 npm 前确认 `package.json` version 已 bump 且未与已发布版本重复。

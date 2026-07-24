@@ -46,27 +46,27 @@
 **方式一:npm**(推荐,模块化项目)
 
 ```bash
-npm install @whyymj/chat-sdk
+npm install page-agent-sdk
 # 同时装 peer 依赖
 npm install zod @langchain/openai @langchain/core
 ```
 
 ```ts
-import { createChatSdk, z } from '@whyymj/chat-sdk'
+import { createChatSdk, z } from 'page-agent-sdk'
 ```
 
 **方式二:CDN · ESM**(esm.sh 自动解析 peer,体积小)
 
 ```html
 <script type="module">
-  import { createChatSdk, z } from 'https://esm.sh/@whyymj/chat-sdk'
+  import { createChatSdk, z } from 'https://esm.sh/page-agent-sdk'
 </script>
 ```
 
 **方式三:CDN · IIFE 全量**(一行引入零配置,依赖全打包,适合无构建链路)
 
 ```html
-<script src="https://unpkg.com/@whyymj/chat-sdk"></script>
+<script src="https://unpkg.com/page-agent-sdk"></script>
 <script>
   const { createChatSdk, z } = window.ChatSdk
 </script>
@@ -77,7 +77,7 @@ import { createChatSdk, z } from '@whyymj/chat-sdk'
 最小可用例子 —— 让 Agent 能读写页面上的 `window.app`:
 
 ```ts
-import { createChatSdk, z } from '@whyymj/chat-sdk'
+import { createChatSdk, z } from 'page-agent-sdk'
 
 // 1. 你的页面状态(任意结构)
 window.app = { title: '你好', theme: 'light' }
@@ -250,7 +250,7 @@ Agent 自主调用这些内置工具(无需你写):
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):
 
 ```ts
-import { defineTool, z } from '@whyymj/chat-sdk'
+import { defineTool, z } from 'page-agent-sdk'
 
 const getWeather = defineTool({
   name: 'get_weather',
@@ -272,7 +272,7 @@ createChatSdk({ /* ... */ tools: [getWeather] })
 把**大段上下文**(如组件库文档、操作指南)做成 skill,Agent 按需加载,避免一次性塞满 prompt:
 
 ```ts
-import { defineSkill } from '@whyymj/chat-sdk'
+import { defineSkill } from 'page-agent-sdk'
 
 createChatSdk({
   skills: [
@@ -613,7 +613,7 @@ createChatSdk({
 **例子 1:埋点/审计**(最常用)
 
 ```ts
-import { createChatSdk, type Middleware } from '@whyymj/chat-sdk'
+import { createChatSdk, type Middleware } from 'page-agent-sdk'
 
 const analytics: Middleware = {
   name: 'analytics',
@@ -691,7 +691,7 @@ agent.unmount()
 
 **预设**(常见场景一键装载):
 ```ts
-import { createChatSdk, presets } from '@whyymj/chat-sdk'
+import { createChatSdk, presets } from 'page-agent-sdk'
 createChatSdk({ ...presets.pageBuilder, container: '#root', llm, windowProps })  // 页面构建助手
 createChatSdk({ ...presets.researcher, container, llm })                         // 并行调研
 createChatSdk({ ...presets.minimal, container, llm, windowProps })               // 极简(关高级能力)
@@ -707,7 +707,7 @@ createChatSdk({ ...presets.minimal, container, llm, windowProps })              
 <html>
 <body>
   <div id="agent"></div>
-  <script src="https://unpkg.com/@whyymj/chat-sdk"></script>
+  <script src="https://unpkg.com/page-agent-sdk"></script>
   <script>
     const { createChatSdk, z } = window.ChatSdk
     window.app = { count: 0 }
@@ -770,7 +770,7 @@ A: 不会。自动降级内存,数据不丢(可能不再持久化),并触发 `de
 ### 12.1 最简(30 秒起步)
 
 ```ts
-import { createChatSdk, z } from '@whyymj/chat-sdk'
+import { createChatSdk, z } from 'page-agent-sdk'
 
 createChatSdk({
   container: '#agent',
@@ -789,7 +789,7 @@ createChatSdk({
 ### 12.2 中等:自定义工具 + skill 文档源 + 持久化
 
 ```ts
-import { createChatSdk, defineTool, defineSkill, z } from '@whyymj/chat-sdk'
+import { createChatSdk, defineTool, defineSkill, z } from 'page-agent-sdk'
 
 const searchProduct = defineTool({
   name: 'search_product',
@@ -816,7 +816,7 @@ createChatSdk({
 ### 12.3 复杂:全能力(预声明子 agent + 独立 llm + verify + 中间件)
 
 ```ts
-import { createChatSdk, defineTool, defineSkill, z, type Middleware } from '@whyymj/chat-sdk'
+import { createChatSdk, defineTool, defineSkill, z, type Middleware } from 'page-agent-sdk'
 
 const searchProduct = defineTool({ name: 'search_product', /* ... */ } as any)
 
@@ -869,7 +869,7 @@ createChatSdk({
 ### 12.4 headless 自建 UI(不渲染内置对话框)
 
 ```ts
-import { createChatSdk } from '@whyymj/chat-sdk'
+import { createChatSdk } from 'page-agent-sdk'
 
 const agent = createChatSdk({ ui: false, llm, windowProps })
 agent.mount()
@@ -877,7 +877,7 @@ agent.messages        // 响应式数组,自建 UI 读它
 await agent.send('加一个提交按钮')
 ```
 
-也可 `import { ChatDialog, useChat } from '@whyymj/chat-sdk'` 复用对话框组件与流式 / 重试 / 停止 / 重生成逻辑。
+也可 `import { ChatDialog, useChat } from 'page-agent-sdk'` 复用对话框组件与流式 / 重试 / 停止 / 重生成逻辑。
 
 ### 12.5 主题定制(换主色)
 

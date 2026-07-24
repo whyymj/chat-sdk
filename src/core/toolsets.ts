@@ -2,7 +2,7 @@
  * 内置工具集预设 —— 直接导出工具数组,供集成方手动注入(替代默认自动装配)。
  *
  * 用法(「主要业务工具集单独引入、按需注入」):
- *   import { defineWindowToolset, fetchTools } from '@whyymj/chat-sdk'
+ *   import { defineWindowToolset, fetchTools } from 'page-agent-sdk'
  *   createChatSdk({
  *     tools: [...defineWindowToolset(windowProps), ...fetchTools, myTool],
  *     capabilities: { windowOps: false, fetch: false }, // 关默认自动装配,改用手动注入
