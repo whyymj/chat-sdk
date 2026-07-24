@@ -4,7 +4,7 @@
 
 > **AI agent 接入**：直接看下方「[Agent 接入速查](#agent-接入速查给-ai-agent-读)」（导出 / 选项表 / 扩展点 / 内置工具 / 文件结构），架构与约定坑见 [`CLAUDE.md`](./CLAUDE.md)。
 
-[![npm](https://img.shields.io/npm/v/chat-sdk.svg)](https://www.npmjs.com/package/chat-sdk)
+[![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
 [![tests](https://img.shields.io/badge/self%20tests-341%20asserts-brightgreen.svg)](#自测)
 
