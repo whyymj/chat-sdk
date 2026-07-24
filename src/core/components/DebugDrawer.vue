@@ -83,9 +83,9 @@ function roleOf(t: string) {
 function close() { emit('update:visible', false) }
 function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 
-const tab = ref<'logs' | 'info'>('logs')
+const tab = ref<'logs' | 'flow' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
-function switchTab(t: 'logs' | 'info') {
+function switchTab(t: 'logs' | 'flow' | 'info') {
   tab.value = t
   // 切到「Agent 信息」时实时拉取(含动态 todos)
   if (t === 'info' && props.getInfo) {
@@ -105,6 +105,39 @@ function srcClass(s?: string) {
   if (s.startsWith('mcp:')) return 'mcp'
   return 'user'
 }
+/** 流程视图:按 round 分组(llm_request/response + tool_call/result 有 round);无 round 的(context/error/middleware)归「准备」 */
+const flowRounds = computed(() => {
+  const map = new Map<number, DebugLog[]>()
+  const pre: DebugLog[] = []
+  for (const lg of logs.value) {
+    const r = (lg.data as any)?.round
+    if (typeof r === 'number' && r > 0) {
+      if (!map.has(r)) map.set(r, [])
+      map.get(r)!.push(lg)
+    } else {
+      pre.push(lg)
+    }
+  }
+  const rounds = [...map.entries()].sort((a, b) => a[0] - b[0]).map(([round, items]) => ({ round, items }))
+  return { pre, rounds }
+})
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + '…' : s
+}
+/** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
+function flowNodeDetail(lg: DebugLog): string {
+  const d = (lg.data || {}) as any
+  switch (lg.type) {
+    case 'context': return `${d.tools?.length ?? 0} 工具 · ${d.totalMessages ?? 0} 消息`
+    case 'llm_request': return `${(d.messages || []).length} 消息${d.tools?.length ? ' · ' + d.tools.length + ' 工具' : ''}`
+    case 'llm_response': return d.toolCalls?.length ? `${d.toolCalls.length} 个工具调用` : (d.content ? truncate(String(d.content), 50) : '')
+    case 'tool_call': return String(d.name ?? '')
+    case 'tool_result': return `${d.name ?? ''} · ${d.status === 'error' ? '❌' : '✅'}`
+    case 'error': return truncate(String(d.error ?? d.tool ?? ''), 60)
+    case 'middleware': return String(d.stage ?? '')
+    default: return ''
+  }
+}
 </script>
 
 <template>
@@ -115,6 +148,7 @@ function srcClass(s?: string) {
           <div class="drawer-header">
             <div class="tab-group">
               <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 日志</button>
+              <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 流程</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
             </div>
             <div class="header-actions">
@@ -254,6 +288,31 @@ function srcClass(s?: string) {
               </div>
               <pre v-if="rawExpanded.has(idx)" class="log-raw"><code>{{ formatJson(log.data) }}</code></pre>
             </div>
+            </template>
+
+            <!-- 执行流程:按轮次分组的流水视图(走到哪个模块 + 结果)-->
+            <template v-else-if="tab === 'flow'">
+              <div v-if="!logs.length" class="empty">暂无日志，发送消息后这里按轮次展示执行流程</div>
+              <div v-if="flowRounds.pre.length" class="flow-section">
+                <div class="flow-section-title">⚙️ 准备 / 其他</div>
+                <div v-for="(lg, i) in flowRounds.pre" :key="'p'+i" class="flow-node" :class="lg.type">
+                  <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
+                  <span class="flow-label">{{ typeMeta[lg.type]?.label }}</span>
+                  <span class="flow-detail">{{ flowNodeDetail(lg) }}</span>
+                  <span class="flow-time">{{ formatTime(lg.timestamp) }}</span>
+                </div>
+              </div>
+              <div v-for="r in flowRounds.rounds" :key="r.round" class="flow-round">
+                <div class="flow-round-head">🔁 第 {{ r.round }} 轮</div>
+                <div class="flow-round-body">
+                  <div v-for="(lg, i) in r.items" :key="i" class="flow-node" :class="lg.type">
+                    <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
+                    <span class="flow-label">{{ typeMeta[lg.type]?.label }}</span>
+                    <span class="flow-detail">{{ flowNodeDetail(lg) }}</span>
+                    <span class="flow-time">{{ formatTime(lg.timestamp) }}</span>
+                  </div>
+                </div>
+              </div>
             </template>
 
             <!-- Agent 信息 -->
@@ -440,4 +499,22 @@ function srcClass(s?: string) {
 .drawer-enter-active .drawer-panel, .drawer-leave-active .drawer-panel { transition: transform 0.25s ease; }
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .drawer-panel, .drawer-leave-to .drawer-panel { transform: translateX(100%); }
+
+/* 执行流程视图(按轮分组的流水) */
+.flow-section { margin-bottom: 14px; }
+.flow-section-title { font-size: 11px; font-weight: 600; color: #6b7280; margin-bottom: 6px; padding-left: 2px; }
+.flow-round { margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.flow-round-head { font-size: 12px; font-weight: 600; color: #fff; background: var(--cs-primary); padding: 5px 10px; }
+.flow-round-body { padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+.flow-node { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: #f9fafb; border-radius: 6px; font-size: 12px; border-left: 3px solid var(--cs-primary); }
+.flow-node.llm_request { border-left-color: #059669; }
+.flow-node.llm_response { border-left-color: #d97706; }
+.flow-node.tool_call { border-left-color: #7c3aed; }
+.flow-node.tool_result { border-left-color: #2563eb; }
+.flow-node.error { border-left-color: #dc2626; background: #fef2f2; }
+.flow-node.middleware { border-left-color: #0891b2; }
+.flow-ico { font-size: 13px; flex-shrink: 0; }
+.flow-label { font-weight: 600; color: #374151; white-space: nowrap; flex-shrink: 0; }
+.flow-detail { color: #6b7280; font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.flow-time { font-size: 10px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
 </style>

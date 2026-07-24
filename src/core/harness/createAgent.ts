@@ -344,10 +344,10 @@ export function createAgent(options: CreateAgentOptions) {
         async (c) => {
           if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
           onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
-          log('tool_call', { name: c.call.name, args: c.call.args, id: c.id })
+          log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
           const result = await toolHandler(c.ctx)
           onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status })
-          log('tool_result', { name: c.call.name, result: result.content, status: result.status })
+          log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status })
           return result
         },
         signal,
