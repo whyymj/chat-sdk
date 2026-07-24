@@ -39,7 +39,7 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { makeId } from '../utils/id'
 import { groupRounds, plainSummary } from '../utils/rounds'
-import type { AgentMessage, StreamHandler, AgentInfo, Toolset } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo } from '../types'
 
 export interface LLMConfig {
   apiKey: string
@@ -79,10 +79,8 @@ export interface ChatSdkOptions {
   shareContext?: boolean
   /** 系统提示词(通用"页面操作助手",可覆盖) */
   systemPrompt?: string
-  /** 用户自定义工具(与内置工具合并) */
+  /** 用户自定义工具(散工具 / 展开的预设数组 / 模块 default,皆可;与内置工具合并) */
   tools?: StructuredToolInterface[]
-  /** 工具集(成套工具打包,整体导入,展开合并到工具池;替代逐个 tools 点名) */
-  toolsets?: Toolset[]
   /** 声明式 skill(渐进式披露) */
   skills?: SkillSpec[]
   /** AGENTS.md 风格持久指令(加载时优先于持久化的 memory) */
@@ -118,7 +116,7 @@ export interface ChatSdkOptions {
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
-  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[]
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。需 capabilities.verify:true 开启;check 必填(期三起可省略,默认用 createWriteBackCheck) */
@@ -253,8 +251,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const builtinTools = selectBuiltinTools(caps, windowOps, fetchDocTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   const userTools: StructuredToolInterface[] = [
-    // 成套工具集展开合并(替代逐个 tools 点名)
-    ...(options.toolsets || []).flatMap((ts) => ts.tools as StructuredToolInterface[]),
     ...(options.tools || []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
@@ -276,11 +272,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 子 agent 中间件(capabilities.subagent 或 subagent.enabled 为 false 则关闭)
   const subOpts = options.subagent
-  // 子 agent 工具:allowedTools(点名)+ toolsets(成套,展开为名字)合并
-  const subToolsetNames = (subOpts?.toolsets ?? []).flatMap((ts) =>
-    (ts.tools as StructuredToolInterface[]).map((t) => t.name),
-  )
-  const subAllowed = [...(subOpts?.allowedTools ?? []), ...subToolsetNames]
+  // 子 agent 工具:allowedTools(从主池按名选)
+  const subAllowed = subOpts?.allowedTools ?? []
   const subagentMw =
     !useSubagent || subOpts?.enabled === false
       ? undefined

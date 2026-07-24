@@ -9,7 +9,7 @@ export { z } from 'zod'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig } from './sdk/createChatSdk'
-export { defineTool, defineToolset } from './sdk/defineTool'
+export { defineTool } from './sdk/defineTool'
 export { presets } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
@@ -38,7 +38,7 @@ export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuo
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, ToolStep } from './types'
-export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo, Toolset } from './types'
+export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
 // UI 模块(组件 + composable,供 headless 自建 UI 复用)
 export { default as ChatDialog } from './components/ChatDialog.vue'

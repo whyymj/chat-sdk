@@ -20,7 +20,7 @@ import { createAgent } from './createAgent'
 import { createSkillsMiddleware, type SkillSpec } from './skills'
 import type { Middleware } from './middleware'
 import { runPool } from '../utils/pool'
-import type { StreamEvent, Toolset } from '../types'
+import type { StreamEvent } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 
 /** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
@@ -236,8 +236,6 @@ export interface SubagentConfig {
   systemPrompt?: string
   /** 子 agent 专属工具(独立于主工具池,直接进子工具池) */
   tools?: StructuredToolInterface[]
-  /** 子 agent 专属工具集(展开合并进 tools) */
-  toolsets?: Toolset[]
   /** 子 agent 专属 skills */
   skills?: SkillSpec[]
   temperature?: number
@@ -258,10 +256,7 @@ const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
 /** SubagentConfig → runSubagent 的 opts(继承主缺省 + 展开专属 tools 为 extraTools) */
 function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOptions): SubagentOptions {
-  const extra = [
-    ...(config.tools ?? []),
-    ...(config.toolsets ?? []).flatMap((ts) => ts.tools as StructuredToolInterface[]),
-  ]
+  const extra = config.tools ?? []
   return {
     llm: config.llm ?? main.llm,
     allTools: main.allTools,

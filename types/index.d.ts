@@ -76,7 +76,6 @@ export interface SubagentConfig {
   llm?: LLMConfig | ChatModelLike;
   systemPrompt?: string;
   tools?: any[];
-  toolsets?: Toolset[];
   skills?: SkillSpec[];
   temperature?: number;
   maxTokens?: number;
@@ -95,7 +94,6 @@ export interface AgentInfo {
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
 }
-export interface Toolset { name: string; tools: unknown[]; }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
@@ -130,11 +128,6 @@ export interface WindowOpsOptions {
   onAudit?: (entry: { op: string; path: string; value?: any; detail?: string; timestamp: number }) => void;
   allowRawRead?: boolean;
   maxSnapshots?: number;
-}
-/** 内置工具集(可手动注入 toolsets,替代默认自动装配) */
-export interface BuiltinToolset {
-  name: string;
-  tools: any[];
 }
 
 export interface PermissionRule {
@@ -247,7 +240,6 @@ export interface ChatSdkOptions {
   shareContext?: boolean;
   systemPrompt?: string;
   tools?: any[];
-  toolsets?: Toolset[];
   skills?: SkillSpec[];
   memory?: string;
   windowProps?: WindowPropSpec[];
@@ -267,7 +259,7 @@ export interface ChatSdkOptions {
   maxParallelTools?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { windowOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
-  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
@@ -300,13 +292,12 @@ export declare function defineTool(opts: {
   schema: any;
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
-export declare function defineToolset(name: string, tools: any[]): Toolset;
 export declare function createWindowOps(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
 export declare function selectBuiltinTools(caps: { windowOps?: boolean; fetch?: boolean } | undefined, windowOps: any[], fetchDocs: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; windowOps?: boolean; subagent?: boolean } | undefined, hasWindowOps: boolean): any;
 export declare const fetchDocTools: any[];
-export declare const fetchTools: BuiltinToolset;
-export declare function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions): BuiltinToolset;
+export declare const fetchTools: any[];
+export declare function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
 export declare function createSubagentMiddleware(opts: any): any;

@@ -870,13 +870,13 @@ console.log('\n[adversarial verdict 判定]')
 // ============ toolsets + selectBuiltinTools(内置工具集导出 + caps 筛选)============
 console.log('\n[toolsets + selectBuiltinTools]')
 {
-  // fetchTools 静态预设
-  assert(fetchTools.name === 'fetch' && fetchTools.tools.length === fetchDocTools.length, 'fetchTools 静态预设含 fetch_document')
+  // fetchTools 静态预设(工具数组)
+  assert(fetchTools.length === fetchDocTools.length && fetchTools[0].name === 'fetch_document', 'fetchTools 静态预设含 fetch_document')
 
   // defineWindowToolset 工厂(依赖 windowProps,故为工厂)
   const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
   const wt = defineWindowToolset(props)
-  assert(wt.name === 'window' && wt.tools.length === 10, 'defineWindowToolset 工厂产出 10 个 window 工具')
+  assert(wt.length === 10 && wt[0].name === 'list_window_props', 'defineWindowToolset 工厂产出 10 个 window 工具(数组)')
 
   // selectBuiltinTools:默认全装(windowOps + fetch)
   const winOps = createWindowOps(props)

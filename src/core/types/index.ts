@@ -64,11 +64,6 @@ export interface ToolInfo { name: string; description: string; schema?: unknown;
 export interface SkillInfo { name: string; description: string; whenToUse?: string }
 export interface WindowPropInfo { path: string; description: string; schema?: unknown }
 
-/** 工具集(成套工具打包,可整体导入主 agent 或子 agent,替代逐个点名) */
-export interface Toolset {
-  name: string
-  tools: unknown[]
-}
 /** 子 agent 配置(subagent 委派能力检视) */
 export interface SubagentInfo {
   enabled: boolean

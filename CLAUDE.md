@@ -90,7 +90,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - `createAgent(options)`:ReAct 循环 + 可插拔中间件,不绑定具体工具/能力
 - **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent`/`beforeReturn` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**;`beforeReturn`(before 类正序)在 agent 返回最终结果前触发,可回灌 feedback 驱动自纠(verify 中间件用)
 - 内置中间件顺序(装载序):`usageHints(最前,能力用法提示) → todos → skills → vfs → summarization → memory → permissions(可选) → verify(可选) → subagent(可选) → 用户自定义(末尾)`
-- `createChatSdk` 组装:harness + 内置工具(`windowOps`/`fetchDoc` 默认装,可经 `capabilities.windowOps`/`capabilities.fetch` 关闭;`vfs` 工具随 vfs 中间件)+ 用户 `tools`/`toolsets`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
+- `createChatSdk` 组装:harness + 内置工具(`windowOps`/`fetchDoc` 默认装,可经 `capabilities.windowOps`/`capabilities.fetch` 关闭;`vfs` 工具随 vfs 中间件)+ 用户 `tools`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
 
 ### window 操作(属性注册表 + schema 校验 + 增量编辑 + 快照回退 + 大结果外存)
 - 集成方声明 `windowProps: [{ path, description, schema }]`
@@ -137,8 +137,8 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **复用 createAgent 工厂**:子 agent 自带独立 state/messages,只读工具子集(默认 window 只读 + fetch,排除 spawn 防递归);signal 继承(主停则子停);大结果经主 offload 转 vfs
 - **递归物理切断**:`maxDepth`(默认 1),depth+1≥maxDepth 时子 agent 不装 subagent 中间件 → 无 spawn 工具
 - **进度展示**:子 agent 工具调用进度经 `subagent` 事件转发到主 UI(`ToolStep.children` 嵌套展示),**不进入主 LLM 上下文**;文本/思考不转发(避免噪音)
-- **配置**:`subagent: { enabled?, allowedTools?, toolsets?, systemPrompt?, temperature?, maxTokens?, skills?, llm?, maxDepth?, maxParallel? }`(默认开启;子 agent 自定义身份/温度/上下文/tools/skills/独立 llm);`maxParallelTools`(同轮工具并发,默认 1 串行,>1 时注意 todos 等有状态中间件计数)
-- **预声明子 agent(命名角色)**:`subagents: [{ id, description, llm?, systemPrompt?, tools?, toolsets?, skills?, temperature?, maxTokens?, maxToolRounds? }]` 预声明一组子 agent,每个自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 看工具描述即知委派给谁),配置同主、缺省继承主。与 spawn 共存:预声明 = 固定角色(调研/审查),spawn = 临时自由委派
+- **配置**:`subagent: { enabled?, allowedTools?, systemPrompt?, temperature?, maxTokens?, skills?, llm?, maxDepth?, maxParallel? }`(默认开启;子 agent 自定义身份/温度/上下文/tools/skills/独立 llm);`maxParallelTools`(同轮工具并发,默认 1 串行,>1 时注意 todos 等有状态中间件计数)
+- **预声明子 agent(命名角色)**:`subagents: [{ id, description, llm?, systemPrompt?, tools?, skills?, temperature?, maxTokens?, maxToolRounds? }]` 预声明一组子 agent,每个自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 看工具描述即知委派给谁),配置同主、缺省继承主。与 spawn 共存:预声明 = 固定角色(调研/审查),spawn = 临时自由委派
 - **示例**:`examples/subagent-demo/`(`npm run dev` → `/subagent.html`)
 
 ### MCP(外部工具标准接入)
@@ -200,7 +200,7 @@ createChatSdk({
 
 **预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createChatSdk`。
 
-**内置工具集手动注入**(高级):`createWindowOps` / `fetchDocTools` 已从入口导出;另有 `fetchTools`(静态)/ `defineWindowToolset(props)`(工厂)toolset 预设。配合 `capabilities:{windowOps:false,fetch:false}` 关闭默认自动装配,改用 `toolsets:[defineWindowToolset(props), fetchTools]` 手动注入(主要业务工具集单独引入、按需注入)。
+**内置工具集手动注入**(高级):`createWindowOps` / `fetchDocTools` 已从入口导出;另有 `fetchTools`(静态数组)/ `defineWindowToolset(props)`(工厂)返工具数组。配合 `capabilities:{windowOps:false,fetch:false}` 关闭默认自动装配,改用 `tools:[...defineWindowToolset(props), ...fetchTools]` 手动注入(主要业务工具集单独引入、按需注入)。
 
 框架无关集成见 `demo/plain.html`(importmap + esm.sh 提供 peer dep)。
 

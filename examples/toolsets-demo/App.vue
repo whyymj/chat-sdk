@@ -3,7 +3,7 @@
  * 工具分离演示 —— 手动注入工具集(替代默认自动装配)
  *
  * 默认 createChatSdk 按 capabilities 自动装 windowOps + fetchDoc(零配置)。
- * 本 demo 展示「手动注入」:关闭默认自动装配(capabilities),改用 toolsets 显式组合;
+ * 本 demo 展示「手动注入」:关闭默认自动装配(capabilities),改用 tools 手动组合(散工具 / 展开的预设数组);
  * 也演示 createWindowOps / fetchDocTools 的独立导出(按 tools 自由拼装)。
  * 适合「主要业务工具集单独引入、按需组合」的进阶用法。
  *
@@ -49,13 +49,13 @@ onMounted(() => {
     systemPrompt:
       '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入 app.notes(经 set_window_prop)。',
     windowProps,
-    // ↓ 工具分离:关闭默认自动装配,改用 toolsets 显式组合
+    // ↓ 工具分离:关闭默认自动装配,改用 tools 手动组合(散工具 / 展开的预设数组)
     capabilities: { windowOps: false, fetch: false },
-    toolsets: [
-      defineWindowToolset(windowProps), // 手动注入 window 工具集(内部用 createWindowOps)
-      fetchTools, // 手动注入 fetch_document
+    tools: [
+      ...defineWindowToolset(windowProps), // 手动注入 window 工具集(展开数组)
+      ...fetchTools, // 手动注入 fetch_document
+      search, // 业务自定义工具
     ],
-    tools: [search], // 业务自定义工具
     debug: true,
     title: '工具分离 · 手动注入',
     placeholder: '试试:搜一下 SSR,把要点记到笔记里',
@@ -72,14 +72,14 @@ onUnmounted(() => agent?.unmount())
       <h2>🧰 工具分离演示</h2>
       <p class="hint">
         默认 <code>createChatSdk</code> 按 <code>capabilities</code> 自动装 windowOps + fetch(零配置)。
-        本 demo 展示<strong>手动注入</strong>:关闭默认自动装配,改用 <code>toolsets</code> 显式组合工具集。
+        本 demo 展示<strong>手动注入</strong>:关闭默认自动装配,改用 <code>tools</code> 手动组合(散工具 / 展开预设数组)。
       </p>
       <pre v-pre class="code">capabilities: { windowOps: false, fetch: false }
-toolsets: [
-  defineWindowToolset(windowProps),  // 手动注入 window 工具集
-  fetchTools,                         // 手动注入 fetch_document
-]
-tools: [search_docs]                  // 业务自定义工具</pre>
+tools: [
+  ...defineWindowToolset(windowProps),  // 手动注入 window 工具集
+  ...fetchTools,                         // 手动注入 fetch_document
+  search_docs,                           // 业务自定义工具
+]</pre>
       <p class="hint">
         ▶ 打开「日志 / Agent 信息」tab:工具池只有<strong>手动注入的</strong>(windowOps + fetch_document + search_docs)。
         planning / skills / vfs / subagent 仍开(可经 <code>capabilities</code> 进一步关,省 token)。

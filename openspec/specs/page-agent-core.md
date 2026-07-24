@@ -54,7 +54,7 @@ context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useConte
 `get_window_prop` 可读取注册属性的后代子路径(精确读局部,如 `page.components.0.text`);`get_window_paths` 批量按多个路径读取,逐行返回 `path = value`,未注册路径标记拒绝。
 
 ## Requirement: 自测覆盖核心逻辑
-`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean)、toolsets(selectBuiltinTools 筛选 + fetchTools/defineWindowToolset 结构)、usageHints(能力用法提示注入),157 项断言全过。
+`npm test`(tsx 跑 `src/__tests__/selftest.ts`)覆盖 windowOps(范围/校验/祖先读/后代读/批量读/增量编辑/快照回退)、offload(大结果外存三态)、vfs、todos/skills/permissions/memory 中间件、middleware 执行器(正序/逆序)、retry/pool/subagent/mcp extractText、verify(runBeforeReturn + createWriteBackCheck + isAdversarialClean)、toolsets(selectBuiltinTools 筛选 + fetchTools/defineWindowToolset 返工具数组)、usageHints(能力用法提示注入),157 项断言全过。
 
 ## Requirement: 循环 beforeReturn 钩子(可拦截 return 并回灌自纠)
 
@@ -82,7 +82,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: 内置工具集可独立导出与注入
 
-`createWindowOps` 与 `fetchDocTools` 从 SDK 入口导出;另提供 `fetchTools` 静态 toolset 预设(`defineToolset('fetch', fetchDocTools)`)与 `defineWindowToolset(props)` 工厂。集成方可 `import { createWindowOps, fetchDocTools }` 手动构造工具集,经 `tools` 或 `toolsets` 注入(替代默认自动装配),支持「主要业务工具集单独引入、按需注入」的高级用法。window 工具集依赖集成方声明的 `windowProps`,故不预构造为静态预设,由集成方手动 `createWindowOps(props)` 构造。
+`createWindowOps` 与 `fetchDocTools` 从 SDK 入口导出;另提供 `fetchTools`(静态工具数组)与 `defineWindowToolset(props)`(工厂,返工具数组)。集成方可 `import { createWindowOps, fetchDocTools }` 手动构造工具,经 `tools` 注入(展开数组,替代默认自动装配),支持「主要业务工具集单独引入、按需注入」的高级用法。window 工具集依赖集成方声明的 `windowProps`,故不预构造为静态数组,由集成方手动 `createWindowOps(props)` 构造。
 
 ## Requirement: 能力用法默认提示(克制注入)
 
@@ -90,7 +90,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: Agent 信息含 MCP 与工具来源
 
-`inspect()`(getInfo)返回已连接 MCP server 列表(`mcp.servers: [{name, url, toolCount}]`)与每个工具的来源标注(`source: 'builtin' | 'mcp:<name>' | 'user'`)。内置工具标 `builtin`,MCP 注入工具标 `mcp:<serverName>`,用户 `tools`/`toolsets` 标 `user`。DebugDrawer「Agent 信息」展示 MCP 区块与工具来源标签,使集成方能看清工具来源构成。
+`inspect()`(getInfo)返回已连接 MCP server 列表(`mcp.servers: [{name, url, toolCount}]`)与每个工具的来源标注(`source: 'builtin' | 'mcp:<name>' | 'user'`)。内置工具标 `builtin`,MCP 注入工具标 `mcp:<serverName>`,用户 `tools` 标 `user`。DebugDrawer「Agent 信息」展示 MCP 区块与工具来源标签,使集成方能看清工具来源构成。
 
 ## Requirement: 对话 regenerate 与复制
 
@@ -114,4 +114,4 @@ DebugDrawer 提供「流程」视图,把扁平 debugLog 按 `round` 分组成流
 
 ## Requirement: 预声明子 agent(subagents:[] + use_<id>)
 
-`createChatSdk` 接受 `subagents: SubagentConfig[]` 预声明一组命名子 agent(每个 `{ id, description, llm?, systemPrompt?, tools?, toolsets?, skills?, temperature?, maxTokens?, maxToolRounds? }`,配置方式同主)。为每个 subagent 自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 经工具描述判断何时委派),id 须合法工具名 `[a-zA-Z_][a-zA-Z0-9_]*` + 唯一(不合法 warn + 跳过)。子 agent 配置**缺省继承主**(llm/systemPrompt 不传则同主);专属 `tools`/`toolsets` 经 `extraTools` 直接进子工具池(不经主 allTools 白名单筛选,让子 agent 有主没有的专属工具)。经 `augmentPrompt` 注入「可用子 agent」索引。与 `spawn_agent`/`spawn_agents`(运行时自由委派)**共存**:预声明用于固定角色,spawn 用于临时子任务。子 agent 默认叶子(maxDepth 1,不可再 spawn);进度经 `subagent` 事件转发(不进主上下文)。
+`createChatSdk` 接受 `subagents: SubagentConfig[]` 预声明一组命名子 agent(每个 `{ id, description, llm?, systemPrompt?, tools?, skills?, temperature?, maxTokens?, maxToolRounds? }`,配置方式同主)。为每个 subagent 自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 经工具描述判断何时委派),id 须合法工具名 `[a-zA-Z_][a-zA-Z0-9_]*` + 唯一(不合法 warn + 跳过)。子 agent 配置**缺省继承主**(llm/systemPrompt 不传则同主);专属 `tools` 经 `extraTools` 直接进子工具池(不经主 allTools 白名单筛选,让子 agent 有主没有的专属工具)。经 `augmentPrompt` 注入「可用子 agent」索引。与 `spawn_agent`/`spawn_agents`(运行时自由委派)**共存**:预声明用于固定角色,spawn 用于临时子任务。子 agent 默认叶子(maxDepth 1,不可再 spawn);进度经 `subagent` 事件转发(不进主上下文)。
