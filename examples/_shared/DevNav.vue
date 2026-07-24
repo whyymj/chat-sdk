@@ -6,6 +6,7 @@
 const LINKS = [
   { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
   { href: '/subagent.html', label: '子 Agent', match: (p: string) => p.startsWith('/subagent') },
+  { href: '/toolsets.html', label: '工具分离', match: (p: string) => p.startsWith('/toolsets') },
   { href: '/mcp.html', label: 'MCP', match: (p: string) => p.startsWith('/mcp') },
   { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
 ]

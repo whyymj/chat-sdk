@@ -41,12 +41,18 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是方案调研助手。两种委派方式:① 预声明 —— 单方案深入分析用 use_analyst({ task })(已配「方案分析师」子 agent,会用 get_source 调研);② 自由委派 —— 多方案并行对比用 spawn_agents(每个设 role + get_source)。汇总后给推荐。',
+      '你是方案调研助手。三种委派:① 单方案深入用 use_analyst({ task })(会用 get_source 调研);② 风险审查用 use_reviewer({ task })(专挑短板);③ 多方案并行对比用 spawn_agents。汇总后给推荐。',
     tools: [getSource],
     subagent: { allowedTools: ['get_source'] }, // spawn 委派的子 agent 可用 get_source(默认只读 window/fetch 之外)
     // 预声明子 agent(命名角色):每个自动生成 use_<id> 委派工具,配置同主、缺省继承主。与上面的 spawn 共存
     subagents: [
       { id: 'analyst', description: '方案分析师,擅长用 get_source 对比成本/速度/风险', tools: [getSource] },
+      {
+        id: 'reviewer', description: '方案风险审查,专挑短板',
+        // llm 不传 → 继承主;如需独立 provider(如 Claude):
+        // llm: { apiKey, baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5' },
+        systemPrompt: '你是风险审查者,只挑方案的风险点和隐藏成本,不要泛泛而谈。',
+      },
     ],
     debug: true,
     title: '子 Agent 并行调研',
