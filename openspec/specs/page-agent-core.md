@@ -111,3 +111,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 ## Requirement: 执行流程视图(按轮次)
 
 DebugDrawer 提供「流程」视图,把扁平 debugLog 按 `round` 分组成流水:「准备」区放无 round 的日志(context / middleware / error),每轮一个卡片(第 N 轮:LLM请求 → LLM响应 → 工具调用 → 结果),节点左侧色条按类型区分,显示摘要(消息数 / 工具数 / 工具名 / 结果状态)+ 时间戳。`createAgent` 给 `tool_call`/`tool_result` 日志补 `round` 字段(与 llm_request/response 对齐)以支持按轮分组。便于排查「走到哪个模块、结果如何」,确认执行过程是否符合预期;详情仍看「日志」视图。
+
+## Requirement: 预声明子 agent(subagents:[] + use_<id>)
+
+`createChatSdk` 接受 `subagents: SubagentConfig[]` 预声明一组命名子 agent(每个 `{ id, description, llm?, systemPrompt?, tools?, toolsets?, skills?, temperature?, maxTokens?, maxToolRounds? }`,配置方式同主)。为每个 subagent 自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 经工具描述判断何时委派),id 须合法工具名 `[a-zA-Z_][a-zA-Z0-9_]*` + 唯一(不合法 warn + 跳过)。子 agent 配置**缺省继承主**(llm/systemPrompt 不传则同主);专属 `tools`/`toolsets` 经 `extraTools` 直接进子工具池(不经主 allTools 白名单筛选,让子 agent 有主没有的专属工具)。经 `augmentPrompt` 注入「可用子 agent」索引。与 `spawn_agent`/`spawn_agents`(运行时自由委派)**共存**:预声明用于固定角色,spawn 用于临时子任务。子 agent 默认叶子(maxDepth 1,不可再 spawn);进度经 `subagent` 事件转发(不进主上下文)。

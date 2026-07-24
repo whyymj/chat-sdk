@@ -41,9 +41,13 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是方案调研助手。当用户要对比/评估多个方案时,【必须】用 spawn_agents 并行委派子 agent:每个子 agent 设相应 role(如"A 方案分析师")并用 get_source 调研一个方案,给出该方案的评估要点,你再汇总对比并给出推荐。单个方案的问题可用 spawn_agent(可设 role/tools/model)。子 agent 之间互不通信,由你聚合。',
+      '你是方案调研助手。两种委派方式:① 预声明 —— 单方案深入分析用 use_analyst({ task })(已配「方案分析师」子 agent,会用 get_source 调研);② 自由委派 —— 多方案并行对比用 spawn_agents(每个设 role + get_source)。汇总后给推荐。',
     tools: [getSource],
-    subagent: { allowedTools: ['get_source'] }, // 子 agent 可用 get_source(默认只读 window/fetch 之外)
+    subagent: { allowedTools: ['get_source'] }, // spawn 委派的子 agent 可用 get_source(默认只读 window/fetch 之外)
+    // 预声明子 agent(命名角色):每个自动生成 use_<id> 委派工具,配置同主、缺省继承主。与上面的 spawn 共存
+    subagents: [
+      { id: 'analyst', description: '方案分析师,擅长用 get_source 对比成本/速度/风险', tools: [getSource] },
+    ],
     debug: true,
     title: '子 Agent 并行调研',
     placeholder: '试试:对比 A/B/C 三个方案,推荐哪个?',

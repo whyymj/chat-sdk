@@ -20,7 +20,7 @@ import { createMemoryMiddleware } from '../harness/memory'
 import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../harness/middleware'
 import { isAbort, isRetryable, withRetry } from '../harness/retry'
 import { runPool } from '../utils/pool'
-import { createSubagentMiddleware } from '../harness/subagent'
+import { createSubagentMiddleware, createSubagentsMiddleware } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../harness/verify'
 import { extractText } from '../mcp/client'
 import { createInitialState as createState } from '../harness/state'
@@ -956,6 +956,26 @@ console.log('\n[skills 文档源]')
   assert(/文档正文/.test(r1), 'load_skill: doc 源 → 读取文档注入(优先于 getContent)')
   const r2 = await invoke(loadTool.load_skill, { name: 'doc-skill' })
   assert(/已在本轮加载/.test(r2), 'load_skill: 重复加载 → 提示无需重复')
+}
+
+// ============ subagents 预声明(子 agent → use_<id> 委派工具)============
+console.log('\n[subagents 预声明]')
+{
+  const mw = createSubagentsMiddleware(
+    [
+      { id: 'researcher', description: '调研专家' },
+      { id: 'writer', description: '文案撰写' },
+      { id: 'bad-id!', description: '不合法 id' },
+      { id: 'researcher', description: '重复 id' },
+    ],
+    { llm: { apiKey: 'x' }, allTools: [] },
+  )
+  const names = (mw.tools as any[]).map((t) => t.name)
+  assert(names.includes('use_researcher') && names.includes('use_writer'), 'subagents → 每个 config 生成 use_<id> 工具')
+  assert(names.length === 2, '不合法 id + 重复 id 被跳过(剩 2 个)')
+  const seg = mw.augmentPrompt?.(createState()) || ''
+  assert(/use_researcher.*调研专家/.test(seg), 'augmentPrompt 注入子 agent 索引(use_<id>: desc)')
+  assert(mw.name === 'subagents', '中间件 name=subagents')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

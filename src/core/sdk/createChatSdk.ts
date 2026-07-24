@@ -25,7 +25,7 @@ import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import type { Middleware } from '../harness/middleware'
-import { createSubagentMiddleware } from '../harness/subagent'
+import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfig } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
@@ -118,7 +118,9 @@ export interface ChatSdkOptions {
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
-  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number }
+  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
+  /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
+  subagents?: SubagentConfig[]
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。需 capabilities.verify:true 开启;check 必填(期三起可省略,默认用 createWriteBackCheck) */
   verify?: {
     /** 显式关闭(优先级最高;即使 capabilities.verify:true) */
@@ -283,13 +285,23 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     !useSubagent || subOpts?.enabled === false
       ? undefined
       : createSubagentMiddleware({
-          llm: options.llm,
+          llm: subOpts?.llm ?? options.llm,
           allTools,
           allowedTools: subAllowed.length ? subAllowed : undefined,
+          // 子 agent 独立配置(自定义身份/温度/上下文上限/技能)
+          systemPrompt: subOpts?.systemPrompt,
+          temperature: subOpts?.temperature,
+          maxTokens: subOpts?.maxTokens,
+          skills: subOpts?.skills,
           maxDepth: subOpts?.maxDepth,
           maxParallel: subOpts?.maxParallel,
           debug: options.debug,
         })
+
+  // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
+  const subagentsMw = options.subagents?.length
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools, debug: options.debug })
+    : undefined
 
   // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回 window 检查而非臆测;windowOps 关闭则不含 window 工具)
   const READONLY_FOR_ADVERSARIAL = ['get_window_prop', 'get_window_paths', 'list_window_props', 'describe_window_prop', 'fetch_document']
@@ -324,6 +336,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
+    ...(subagentsMw ? [subagentsMw] : []),
     ...(options.middleware || []),
   ]
 

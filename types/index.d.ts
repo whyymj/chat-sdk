@@ -67,6 +67,21 @@ export interface SubagentInfo {
   maxParallel: number;
   allowedTools: string[];
 }
+/** 预声明子 agent 配置(同主配置子集 + id/description;缺省继承主 agent) */
+export interface SubagentConfig {
+  /** 唯一标识;生成委派工具名 use_<id>(须合法工具名) */
+  id: string;
+  /** 一句话说明(进主 systemPrompt 索引 + 作委派工具描述) */
+  description: string;
+  llm?: LLMConfig | ChatModelLike;
+  systemPrompt?: string;
+  tools?: any[];
+  toolsets?: Toolset[];
+  skills?: SkillSpec[];
+  temperature?: number;
+  maxTokens?: number;
+  maxToolRounds?: number;
+}
 export interface AgentInfo {
   id: string;
   model?: string;
@@ -252,7 +267,9 @@ export interface ChatSdkOptions {
   maxParallelTools?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { windowOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
-  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; maxDepth?: number; maxParallel?: number };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; toolsets?: Toolset[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
+  /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
+  subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */

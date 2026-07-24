@@ -372,6 +372,18 @@ createChatSdk({
 - ② **调用级**:LLM 调 spawn 时按需设 `role`(子 agent 身份)/ `tools`(本次限定)/ `model`
 - ③ **引导级**:systemPrompt 指导何时/如何委派(如「多方案对比用 spawn_agents」)
 - ④ **高级**:直接 `createSubagentMiddleware({ llm, allTools, allowedTools, ... })` 自构造中间件(自定义 harness)
+- ⑤ **预声明级(命名子 agent)**:`subagents: [...]` 预声明一组命名子 agent,每个自动生成 `use_<id>` 委派工具,配置同主(独立 llm / systemPrompt / tools / skills / 温度),缺省继承主。适合**固定角色**(调研专家 / 代码审查 / 文案):
+```ts
+createChatSdk({
+  llm: mainLlm,
+  subagents: [
+    { id: 'researcher', description: '调研专家', llm: claudeLlm, systemPrompt: '你是调研专家…', tools: [...] },
+    { id: 'reviewer', description: '代码审查', llm: deepseekLlm },
+  ],
+})
+// 主 LLM 直接调:use_researcher({ task }) / use_reviewer({ task })
+// 子 agent 配置缺省继承主(不传 llm/systemPrompt 则同主);与 spawn_agent 共存
+```
 
 > 子 agent 边界:默认**只读**(不改页面)、**过程隔离**(只回结论)、**递归物理切断**(maxDepth)、**signal 继承**(主停则子停)。
 
