@@ -16,11 +16,12 @@ import type { AgentMessage } from '../types'
 import type { BaseMessage } from '@langchain/core/messages'
 import { ToolMessage } from '@langchain/core/messages'
 import { groupRounds, plainSummary, type Round } from '../utils/rounds'
+import { estimateTokens } from '../utils/modelCaps'
 
 export interface ContextManagerOptions {
-  /** 滑动窗口：保留最近几轮完整对话 */
+  /** 滑动窗口：保留最近几轮完整对话（轮数模式用） */
   windowRounds: number
-  /** 超过多少轮触发摘要压缩（含窗口内） */
+  /** 超过多少轮触发摘要压缩（轮数模式用,含窗口内） */
   summaryThresholdRounds: number
   /** 旧工具结果截断长度（单轮 ReAct 内） */
   toolResultMaxChars: number
@@ -32,6 +33,12 @@ export interface ContextManagerOptions {
   enableLLMSummary: boolean
   /** 用于摘要的 LLM invoke 函数（可选） */
   llmInvoke?: (prompt: string) => Promise<string>
+  /** 模型上下文窗口(token);提供则按 token 触发压缩 + token 窗口(自适应大模型),否则按轮数 */
+  contextWindow?: number
+  /** 触发压缩的 token 比例(默认 0.5:历史估算 token > contextWindow*0.5 时压缩) */
+  summaryThresholdRatio?: number
+  /** 保留最近窗口的 token 预算比例(默认 0.4) */
+  windowRatio?: number
 }
 
 export interface CompressionStats {
@@ -67,6 +74,27 @@ function tokenize(text: string): string[] {
     .split(/[^a-z0-9\u4e00-\u9fa5]+/i)
     .map((t) => t.trim())
     .filter((t) => t.length >= 2 && !STOP_WORDS.has(t))
+}
+
+/** 估算单条消息 token(content + reasoning + 工具步骤的 args/result) */
+function estimateMessageTokens(m: AgentMessage): number {
+  let s = typeof m.content === 'string' ? m.content : ''
+  if (m.reasoning) s += m.reasoning
+  if (m.steps) {
+    for (const st of m.steps) {
+      s += ' ' + (st.name || '')
+      if (st.args != null) s += ' ' + (typeof st.args === 'string' ? st.args : JSON.stringify(st.args))
+      if (st.result) s += ' ' + st.result
+    }
+  }
+  return estimateTokens(s)
+}
+
+/** 估算一轮 token(user + 所有 assistant 消息) */
+function estimateRoundTokens(r: Round): number {
+  let t = estimateMessageTokens(r.userMsg)
+  for (const m of r.assistantMsgs) t += estimateMessageTokens(m)
+  return t
 }
 
 /** 用索引摘要（零成本）生成旧轮次摘要文本 */
@@ -118,26 +146,51 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     const rounds = groupRounds(messages)
     const originalCount = messages.length
 
-    // 未达阈值：不压缩
-    if (rounds.length <= config.summaryThresholdRounds) {
-      return {
-        messages,
-        stats: {
-          triggered: false,
-          roundsTotal: rounds.length,
-          roundsSummarized: 0,
-          roundsRecalled: 0,
-          originalMessages: originalCount,
-          compressedMessages: originalCount,
-          strategy: 'none',
-        },
-      }
-    }
+    const notTriggered = (strategy: string) => ({
+      messages,
+      stats: {
+        triggered: false,
+        roundsTotal: rounds.length,
+        roundsSummarized: 0,
+        roundsRecalled: 0,
+        originalMessages: originalCount,
+        compressedMessages: originalCount,
+        strategy,
+      },
+    })
 
-    // 切分窗口
-    const recentCount = Math.min(config.windowRounds, rounds.length)
-    const recent = rounds.slice(rounds.length - recentCount)
-    const older = rounds.slice(0, rounds.length - recentCount)
+    // 切分窗口:token 驱动(大模型自适应)优先,否则按轮数
+    let recent: Round[]
+    let older: Round[]
+    let strategyPrefix: string
+    if (config.contextWindow && config.contextWindow > 0) {
+      const totalTokens = rounds.reduce((s, r) => s + estimateRoundTokens(r), 0)
+      const threshold = config.contextWindow * (config.summaryThresholdRatio ?? 0.5)
+      if (totalTokens <= threshold) return notTriggered('none')
+      const windowBudget = config.contextWindow * (config.windowRatio ?? 0.4)
+      // 从最新轮往回累加 token,加进去就超预算的轮纳入 older(被摘),其后保留
+      let acc = 0
+      let splitIdx = 0
+      for (let i = rounds.length - 1; i >= 0; i--) {
+        acc += estimateRoundTokens(rounds[i])
+        if (acc >= windowBudget) {
+          splitIdx = i + 1
+          break
+        }
+      }
+      if (splitIdx > rounds.length - 1) splitIdx = rounds.length - 1 // 至少保留最新 1 轮
+      if (splitIdx < 0) splitIdx = 0
+      recent = rounds.slice(splitIdx)
+      older = rounds.slice(0, splitIdx)
+      if (!older.length) return notTriggered('none')
+      strategyPrefix = 'token-window+'
+    } else {
+      if (rounds.length <= config.summaryThresholdRounds) return notTriggered('none')
+      const recentCount = Math.min(config.windowRounds, rounds.length)
+      recent = rounds.slice(rounds.length - recentCount)
+      older = rounds.slice(0, rounds.length - recentCount)
+      strategyPrefix = 'window+'
+    }
 
     // 当前问题（最新一条用户消息）
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')
@@ -149,14 +202,14 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     if (config.enableLLMSummary && config.llmInvoke) {
       try {
         summaryText = await config.llmInvoke(indexSummarize(older))
-        strategy = 'window+llm_summary'
+        strategy = strategyPrefix + 'llm_summary'
       } catch {
         summaryText = indexSummarize(older)
-        strategy = 'window+index_summary(llm_fallback)'
+        strategy = strategyPrefix + 'index_summary(llm_fallback)'
       }
     } else {
       summaryText = indexSummarize(older)
-      strategy = 'window+index_summary'
+      strategy = strategyPrefix + 'index_summary'
     }
 
     // 召回
@@ -172,7 +225,7 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
 
     // 组装注入的系统消息
     const parts: string[] = [
-      `【对话历史摘要】以下是之前 ${older.length} 轮对话的要点（最新 ${recentCount} 轮已完整保留）：`,
+      `【对话历史摘要】以下是之前 ${older.length} 轮对话的要点（最新 ${recent.length} 轮已完整保留）：`,
       summaryText,
     ]
     if (recallBlock) {

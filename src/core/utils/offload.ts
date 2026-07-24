@@ -23,6 +23,8 @@ export interface OffloadCtx {
   toolName: string
   /** 字符阈值,默认 6000(≈1500 token) */
   threshold?: number
+  /** vfs 不可用时的放行上限(字符数):结果 ≤ 此值则完整进上下文(不截断),超过才截断兜底。默认同 threshold */
+  passThroughChars?: number
 }
 
 export const DEFAULT_OFFLOAD_THRESHOLD = 6000
@@ -33,7 +35,11 @@ function normalize(path: string): string {
 }
 
 /**
- * 处理工具结果:超阈值则外存 vfs 或硬截断,否则原样。
+ * 处理工具结果:超阈值则外存 vfs 或按放行上限放行,否则原样。
+ * 三态:
+ *  - content > 阈值 且 vfs 可用 → 写 vfs,返回「预览 + vfs_read 引用」(完整可回读,不截断)
+ *  - content > 阈值 但 vfs 不可用 → 按放行上限:≤ 上限完整放行(信任大上下文,避免丢信息),> 上限才截断兜底
+ *  - content ≤ 阈值 → 原样返回
  * 返回最终写入 ToolMessage 的 content 字符串。
  */
 export function offloadLargeResult(content: string, ctx: OffloadCtx): string {
@@ -54,6 +60,11 @@ export function offloadLargeResult(content: string, ctx: OffloadCtx): string {
     ].join('\n')
   }
 
-  // vfs 不可用 → 硬截断兜底
-  return content.slice(0, threshold) + `\n…[结果过大(共 ${content.length} 字符),已截断,仅显示前 ${threshold} 字符]`
+  // vfs 不可用 → 按放行上限:小则完整放行(不截断,信任大上下文),大才截断兜底
+  const passThrough = ctx.passThroughChars ?? threshold
+  if (content.length <= passThrough) return content
+  return (
+    content.slice(0, passThrough) +
+    `\n…[结果过大(共 ${content.length} 字符),vfs 未启用无法外存,已截断,仅显示前 ${passThrough} 字符。建议开启 vfs(capabilities.vfs 默认开启)以完整外存可回读]`
+  )
 }

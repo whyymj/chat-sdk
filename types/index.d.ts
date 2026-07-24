@@ -108,6 +108,10 @@ export interface LLMConfig {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /** 模型上下文窗口(token);缺省按 model 名查表。影响 offload 阈值与压缩触发(大模型自适应) */
+  contextWindow?: number;
+  /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
+  maxOutputTokens?: number;
 }
 /** LangChain BaseChatModel 的结构形状(provider 抽离:llm 可传任意 provider 实例) */
 export type ChatModelLike = {
@@ -123,11 +127,18 @@ export interface WindowPropSpec {
   /** 值的 zod schema(写入时校验) */
   schema: any;
 }
-/** createWindowOps 选项(审计回调 / 只读探测 / 快照上限) */
+/** createWindowOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读) */
 export interface WindowOpsOptions {
   onAudit?: (entry: { op: string; path: string; value?: any; detail?: string; timestamp: number }) => void;
   allowRawRead?: boolean;
   maxSnapshots?: number;
+  /**
+   * 字段白名单读模式(默认 true):仅允许读「注册 path 自身 / 其后代」,禁止读未注册的祖先,
+   * 防止 LLM 经 get_window_prop('page') 把整个大 JSON 拉进上下文。
+   * 集成方注册「可操作子路径」(如 page.theme.color / page.components)而非顶层时,默认即「LLM 只见声明字段」。
+   * 设 false 回退原行为(允许读注册 path 的祖先,即整体读)。
+   */
+  whitelist?: boolean;
 }
 
 export interface PermissionRule {
@@ -257,6 +268,10 @@ export interface ChatSdkOptions {
   maxRetries?: number;
   /** 同轮工具并发上限(默认 1 串行) */
   maxParallelTools?: number;
+  /** 模型上下文窗口(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表。影响 offload 阈值与压缩触发 */
+  contextWindow?: number;
+  /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
+  maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { windowOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
@@ -308,3 +323,58 @@ export declare function createSessionStore(config?: StorageConfig): SessionStore
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
 export declare function isQuotaError(err: unknown): boolean;
+
+// ============ 大 JSON 查询/搜索/沙箱脚本(windowQuery)============
+export interface JpNode {
+  /** 相对属性根的点号路径(数组索引用数字,如 components.0.text) */
+  path: string;
+  /** 匹配元素值 */
+  value: unknown;
+  /** 父为数组时的索引(便于后续 edit_window_prop 的 jsonPath 定位) */
+  index?: number;
+}
+export interface SearchHit {
+  path: string;
+  key?: string;
+  value: string;
+  score?: number;
+}
+export type SearchMode = 'substring' | 'regex' | 'fuzzy';
+export interface EvalResult {
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+  elapsedMs: number;
+}
+/** JSONPath 查询(只读,无副作用);expr 子集:$ .key [n] ["key"] [*] [?(filter)] ..key ..* */
+export declare function jpEval(root: unknown, expr: string): JpNode[];
+/** 在 JSON 子树内搜索文本(substring/regex/fuzzy) */
+export declare function searchJson(
+  root: unknown,
+  query: string,
+  opts?: { mode?: SearchMode; fuzzyThreshold?: number; matchKey?: boolean; limit?: number },
+): SearchHit[];
+/** Web Worker 沙箱执行自定义 JS(无 window/document,禁 fetch/XHR/WebSocket/importScripts,超时可终止) */
+export declare function runSandboxedScript(data: unknown, script: string, timeoutMs?: number): Promise<EvalResult>;
+
+// ============ 工具报错(结构化 ERROR:{json},供 LLM 排查)============
+export interface ToolErrorInput {
+  /** 机器可读错误码(大写蛇形,如 NOT_REGISTERED / SCHEMA_INVALID / JSON_PARSE / PATH_UNSAFE / NOT_OBJECT / PATCH_FAILED / JSONPATH_SYNTAX / REGEX_INVALID / SCRIPT_TIMEOUT / SCRIPT_ERROR / NOT_FOUND / NO_MATCH / AMBIGUOUS_MATCH) */
+  code: string;
+  /** 人类可读:具体发生了什么 */
+  message: string;
+  /** 建议的修复动作(可操作) */
+  hint?: string;
+  /** 相关属性路径 */
+  path?: string;
+  /** 额外结构化细节(zod issues / 匹配位置 / 实际值等) */
+  details?: unknown;
+}
+/** 格式化工具错误为 `ERROR: {json}` 字符串(单行 JSON,前缀 ERROR) */
+export declare function toolError(e: ToolErrorInput): string;
+/** zod 校验失败 → toolError(提取 issues 为 details) */
+export declare function zodError(path: string, issues: unknown[]): string;
+/** JSON 解析失败 → toolError(带原解析错误 + 预览) */
+export declare function jsonParseError(path: string | undefined, raw: string, err: unknown): string;
+/** 提取 zod issues 为结构化 details(每条 path/expected/received/message) */
+export declare function formatZodIssues(issues: unknown[]): unknown[];

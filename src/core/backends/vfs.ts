@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { Middleware } from '../harness/middleware'
 import type { VfsFile } from '../harness/state'
+import { toolError } from '../tools/toolError'
 
 /** 持久化钩子(可选):由 createChatSdk 注入,工具层无感 */
 export interface VfsPersist {
@@ -181,7 +182,9 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
   const vfsRead = tool(
     async ({ path, offset, limit }) => {
       const f = store.files[normalize(path)]
-      if (!f) return `未找到文件 "${path}"。可用 vfs_ls 查看。`
+      if (!f) {
+        return toolError({ code: 'NOT_FOUND', path, message: `未找到文件 "${path}"`, hint: '用 vfs_ls 查看虚拟工作区文件列表;大工具结果外存后路径由系统在工具返回里给出' })
+      }
       const lines = f.content.split('\n')
       const start = offset
       const end = Math.min(start + limit, lines.length)
@@ -218,10 +221,34 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
     async ({ path, oldString, newString }) => {
       const key = normalize(path)
       const f = store.files[key]
-      if (!f) return `未找到文件 "${path}"。`
+      if (!f) {
+        return toolError({ code: 'NOT_FOUND', path, message: `未找到文件 "${path}"`, hint: '用 vfs_ls 查看虚拟工作区文件列表' })
+      }
       const count = f.content.split(oldString).length - 1
-      if (count === 0) return `${path} 中未找到该内容。`
-      if (count > 1) return `${path} 中找到 ${count} 处匹配,请提供更唯一的 oldString。`
+      if (count === 0) {
+        return toolError({
+          code: 'NO_MATCH',
+          path,
+          message: `${path} 中未找到该 oldString`,
+          hint: '确认 oldString 与文件内容完全一致(含空格/换行);可先 vfs_read 查看实际内容',
+        })
+      }
+      if (count > 1) {
+        // 给出前几处匹配的行号,帮助 LLM 提供更唯一的 oldString
+        const lineHints: string[] = []
+        const lines = f.content.split('\n')
+        for (let li = 0; li < lines.length && lineHints.length < 5; li++) {
+          const idx = lines[li].indexOf(oldString)
+          if (idx >= 0) lineHints.push(`行 ${li + 1}: ${lines[li].slice(Math.max(0, idx - 10), idx + oldString.length + 10)}`)
+        }
+        return toolError({
+          code: 'AMBIGUOUS_MATCH',
+          path,
+          message: `${path} 中找到 ${count} 处匹配,oldString 不唯一`,
+          hint: '扩大 oldString 上下文使其唯一(含前后行/更多字符);下方为前几处匹配位置',
+          details: { matches: lineHints },
+        })
+      }
       store.files[key] = { content: f.content.replace(oldString, newString), updatedAt: now() }
       return `已替换 ${path} 中 1 处。`
     },
@@ -251,7 +278,12 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
 
   const vfsGlob = tool(
     async ({ pattern }) => {
-      const re = globToRegex(pattern)
+      let re: RegExp
+      try {
+        re = globToRegex(pattern)
+      } catch (e) {
+        return toolError({ code: 'GLOB_INVALID', message: `glob 模式无效: ${(e as Error).message}`, hint: '* 匹配非斜杠,** 匹配任意;避免未闭合的字符类', details: { pattern } })
+      }
       const matched = Object.keys(store.files).filter((n) => re.test(n))
       return matched.length
         ? `匹配 ${pattern}:\n${matched.map((n) => `- ${n}`).join('\n')}`
@@ -266,7 +298,12 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
 
   const vfsGrep = tool(
     async ({ pattern, path }) => {
-      const re = new RegExp(pattern)
+      let re: RegExp
+      try {
+        re = new RegExp(pattern)
+      } catch (e) {
+        return toolError({ code: 'REGEX_INVALID', path, message: `正则表达式无效: ${(e as Error).message}`, hint: '检查括号/量词是否闭合;若想搜普通字符串可先转义特殊字符', details: { pattern } })
+      }
       const targets = path ? [normalize(path)] : Object.keys(store.files)
       const out: string[] = []
       for (const p of targets) {

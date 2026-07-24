@@ -33,6 +33,13 @@ import {
   createMemoryBackend,
   createSessionStore,
 } from '../backends/storage'
+import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
+import { useContextManager } from '../composables/useContextManager'
+import { jpEval, searchJson } from '../tools/windowQuery'
+import { createAgent, trimContextIfNeededImpl } from '../harness/createAgent'
+import type { Middleware } from '../harness/middleware'
+import { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -70,13 +77,14 @@ console.log('\n[windowOps]')
   assert(w.app.theme === 'dark' && /已设置/.test(r), 'set 合法值生效 + 返回成功')
 
   r = await invoke(t['set_window_prop'], { path: 'app.theme', value: '"red"' })
-  assert(/校验失败/.test(r) && w.app.theme === 'dark', 'set 非法值被 schema 校验拦截(不写入)')
+  assert(/SCHEMA_INVALID/.test(r) && w.app.theme === 'dark', 'set 非法值被 schema 校验拦截(不写入,返回结构化错误码)')
 
   r = await invoke(t['set_window_prop'], { path: 'app.unknown', value: '1' })
   assert(/未在注册表中声明/.test(r), 'set 未注册属性被范围控制拒绝')
 
+  // 字段白名单读模式(默认 true):仅注册 path 自身/后代可读,祖先(app)不可读
   r = await invoke(t['get_window_prop'], { path: 'app' })
-  assert(/theme/.test(r), 'get 祖先路径(page)可读整体')
+  assert(/未注册|不可读|不暴露/.test(r), 'whitelist 默认:get 祖先路径(app)被拒(不暴露整体)')
 
   r = await invoke(t['get_window_prop'], { path: 'app.theme' })
   assert(/dark/.test(r), 'get 注册属性返回值')
@@ -94,7 +102,7 @@ console.log('\n[windowOps]')
   assert(!('count' in w.app), 'delete 注册属性生效')
 
   r = await invoke(t['set_window_prop'], { path: 'app.count', value: '"not a number"' })
-  assert(/校验失败/.test(r), 'set 类型不符被校验拦截')
+  assert(/SCHEMA_INVALID/.test(r), 'set 类型不符被校验拦截(结构化错误码)')
 }
 
 // ============ windowOps:edit + 快照 ============
@@ -132,7 +140,7 @@ console.log('\n[windowOps edit + snapshot]')
   // edit schema 失败 → live 不变(校验在副本,失败不入栈不落地)
   const beforeA = w.app.cfg.a
   r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'set', jsonPath: 'a', value: '"not a number"' })
-  assert(/校验失败/.test(r) && w.app.cfg.a === beforeA, 'edit 校验失败 live 未变')
+  assert(/SCHEMA_INVALID/.test(r) && w.app.cfg.a === beforeA, 'edit 校验失败 live 未变(结构化错误码)')
 
   // edit 未注册拒绝
   r = await invoke(t['edit_window_prop'], { path: 'app.unknown', op: 'set', jsonPath: 'x', value: '1' })
@@ -176,6 +184,147 @@ console.log('\n[windowOps edit + snapshot]')
   delete w.app.cfg
 }
 
+// ============ windowOps:字段白名单读模式(子路径注册,LLM 不见完整 JSON)============
+console.log('\n[windowOps whitelist]')
+{
+  // 模拟大 JSON:page 含很多字段,集成方只声明可操作的子路径
+  ;(globalThis as any).window = {
+    page: {
+      title: '首页',
+      secret: '不应暴露的内部数据',
+      theme: { color: '#1f4d3a', mode: 'dark' },
+      components: [
+        { id: 1, type: 'card', price: 50, title: '卡片A', internal: 'x' },
+        { id: 2, type: 'list', price: 200, title: '列表B', internal: 'y' },
+      ],
+    },
+  }
+  // 集成方只声明必要字段:叶子 + 数组(元素 schema 用 passthrough 只校验必要 key)
+  const tools = createWindowOps([
+    { path: 'page.title', description: '页面标题', schema: z.string() },
+    { path: 'page.theme.color', description: '主题色', schema: z.string() },
+    {
+      path: 'page.components',
+      description: '组件数组',
+      schema: z.array(z.object({ id: z.number(), type: z.string(), price: z.number(), title: z.string() }).passthrough()),
+    },
+  ])
+  const t = byName(tools)
+  const w = (globalThis as any).window
+
+  // list 只列声明字段(不含 secret/internal)
+  let r = await invoke(t['list_window_props'], {})
+  assert(/page\.title/.test(r) && /page\.theme\.color/.test(r) && /page\.components/.test(r), 'list 只列声明的可操作子路径')
+
+  // get 声明叶子:可读
+  r = await invoke(t['get_window_prop'], { path: 'page.theme.color' })
+  assert(/1f4d3a/.test(r), 'whitelist: get 声明叶子可读')
+
+  // get 后代(声明数组的元素字段):可读
+  r = await invoke(t['get_window_prop'], { path: 'page.components.0.price' })
+  assert(/50/.test(r), 'whitelist: get 声明数组的后代字段可读')
+
+  // get 未声明的祖先(整个 page):被拒,不暴露 secret
+  r = await invoke(t['get_window_prop'], { path: 'page' })
+  assert(!/secret/.test(r) && /未注册|不可读|不暴露/.test(r), 'whitelist: get 未声明祖先(page)被拒,不暴露 secret')
+
+  // get 未声明的兄弟字段(page.secret):被拒
+  r = await invoke(t['get_window_prop'], { path: 'page.secret' })
+  assert(/未注册|不可读/.test(r), 'whitelist: get 未声明字段(secret)被拒')
+
+  // set 声明叶子:只写该叶子,只校验其 schema,不传完整 JSON
+  r = await invoke(t['set_window_prop'], { path: 'page.theme.color', value: '"#000000"' })
+  assert(w.page.theme.color === '#000000' && /已设置/.test(r), 'whitelist: set 声明叶子生效(只写叶子)')
+
+  // edit 声明数组的元素字段:增量 patch,元素 schema 用 passthrough 放行 internal
+  r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'set', jsonPath: '1.price', value: '180' })
+  assert(w.page.components[1].price === 180 && w.page.components[1].internal === 'y', 'whitelist: edit 增量改元素字段,passthrough 保留未声明字段')
+
+  // set 未声明字段:被拒
+  r = await invoke(t['set_window_prop'], { path: 'page.secret', value: '"leaked"' })
+  assert(/未在注册表中声明/.test(r) && w.page.secret === '不应暴露的内部数据', 'whitelist: set 未声明字段被拒(不泄露)')
+
+  // whitelist:false 回退原行为:祖先读可用
+  const toolsLegacy = createWindowOps(
+    [{ path: 'page.title', description: '标题', schema: z.string() }],
+    { whitelist: false },
+  )
+  const tLegacy = byName(toolsLegacy)
+  r = await invoke(tLegacy['get_window_prop'], { path: 'page' })
+  assert(/title/.test(r), 'whitelist:false → 祖先读回退可用(整体读)')
+}
+
+// ============ 工具报错机制(结构化 ERROR:{json},供 LLM 排查)============
+console.log('\n[tool errors]')
+{
+  ;(globalThis as any).window = { app: { theme: 'dark', count: 5, cfg: { a: 1 } } }
+  const tools = createWindowOps([
+    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
+    { path: 'app.count', description: '计数', schema: z.number().int().min(0) },
+    { path: 'app.cfg', description: '配置', schema: z.object({ a: z.number(), name: z.string().optional() }) },
+  ])
+  const t = byName(tools)
+
+  // 未注册:结构化错误码 + hint
+  let r = await invoke(t['set_window_prop'], { path: 'app.unknown', value: '1' })
+  assert(/^ERROR: \{.*"error":\s*"NOT_REGISTERED"/.test(r), '未注册 → ERROR json 含 error=NOT_REGISTERED')
+  assert(/"hint"/.test(r), '错误含 hint(可操作建议)')
+
+  // schema 失败:details 含 zod issues(path/expected/received)
+  r = await invoke(t['set_window_prop'], { path: 'app.count', value: '"x"' })
+  assert(/"error":\s*"SCHEMA_INVALID"/.test(r), 'schema 失败 → error=SCHEMA_INVALID')
+  const detailMatch = r.match(/"details":\s*(\[[^\]]*\])/)
+  assert(detailMatch && /expected/.test(detailMatch[1]) && /received/.test(detailMatch[1]), 'schema 失败 details 含 zod issue 的 expected/received')
+
+  // JSON 解析失败:带原解析错误 + 预览
+  r = await invoke(t['set_window_prop'], { path: 'app.count', value: '{bad' })
+  assert(/"error":\s*"JSON_PARSE"/.test(r) && /预览|bad/.test(r), 'JSON 解析失败 → error=JSON_PARSE + 预览')
+
+  // edit 非对象:NOT_OBJECT + hint 指向 set
+  r = await invoke(t['edit_window_prop'], { path: 'app.theme', op: 'set', jsonPath: 'x', value: '1' })
+  assert(/"error":\s*"NOT_OBJECT"/.test(r) && /set_window_prop/.test(r), 'edit 叶子 → NOT_OBJECT + hint 指向 set_window_prop')
+
+  // edit 不安全路径:PATH_UNSAFE
+  r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'set', jsonPath: '__proto__.x', value: '1' })
+  assert(/"error":\s*"PATH_UNSAFE"/.test(r), 'edit __proto__ → PATH_UNSAFE')
+
+  // query 语法错误:JSONPATH_SYNTAX + details.expr
+  r = await invoke(t['query_window_prop'], { path: 'app.cfg', expr: '$[?(@.x==' })
+  assert(/"error":\s*"JSONPATH_SYNTAX"/.test(r) && /"expr"/.test(r), 'query 语法错 → JSONPATH_SYNTAX + details.expr')
+
+  // 正常成功:不是 ERROR 前缀
+  r = await invoke(t['get_window_prop'], { path: 'app.theme' })
+  assert(!/^ERROR:/.test(r) && /dark/.test(r), '正常读不返回 ERROR 前缀')
+}
+
+// ============ vfs 报错(正则/glob 不抛,edit 多匹配给位置)============
+console.log('\n[vfs errors]')
+{
+  const vfs = createVfs({ 'a.txt': 'line1 foo\nline2 foo\nline3 bar' })
+  const tools = createVfsTools(vfs)
+  const t = byName(tools)
+
+  // grep 非法正则:返回 toolError 而非抛异常
+  let r = await invoke(t['vfs_grep'], { pattern: '(' })
+  assert(/"error":\s*"REGEX_INVALID"/.test(r), 'vfs_grep 非法正则 → REGEX_INVALID(不抛异常)')
+
+  // glob 正常匹配(globToRegex 转义所有特殊字符,几乎不抛;try-catch 为防御)
+  r = await invoke(t['vfs_glob'], { pattern: '*.txt' })
+  assert(/a\.txt/.test(r), 'vfs_glob 正常匹配 *.txt')
+
+  // edit 多匹配:AMBIGUOUS_MATCH + matches 位置
+  r = await invoke(t['vfs_edit'], { path: 'a.txt', oldString: 'foo', newString: 'baz' })
+  assert(/"error":\s*"AMBIGUOUS_MATCH"/.test(r) && /"matches"/.test(r), 'vfs_edit 多匹配 → AMBIGUOUS_MATCH + matches 位置')
+
+  // edit 未找到:NO_MATCH
+  r = await invoke(t['vfs_edit'], { path: 'a.txt', oldString: 'nope', newString: 'x' })
+  assert(/"error":\s*"NO_MATCH"/.test(r), 'vfs_edit 未找到 → NO_MATCH')
+
+  // read 未找到:NOT_FOUND
+  r = await invoke(t['vfs_read'], { path: 'missing.txt' })
+  assert(/"error":\s*"NOT_FOUND"/.test(r), 'vfs_read 未找到 → NOT_FOUND')
+}
+
 // ============ offload(大结果外存)============
 console.log('\n[offload]')
 {
@@ -191,9 +340,13 @@ console.log('\n[offload]')
   assert(/已转存到虚拟工作区/.test(offloaded) && keys.length === 1, '大结果+vfs可用 → 外存并返回预览引用')
   assert(files[keys[0]].content === big && /get_x/.test(keys[0]), '外存内容完整 + 文件名含工具名')
 
-  // 大结果 + vfs 不可用 → 硬截断兜底
-  const truncated = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000 })
-  assert(/已截断/.test(truncated) && truncated.length < big.length, 'vfs 不可用 → 硬截断兜底')
+  // 大结果 + vfs 不可用 → 按放行上限:≤上限完整放行(不截断),>上限才截断兜底
+  const passThrough = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000, passThroughChars: 20000 })
+  assert(passThrough === big, 'vfs 不可用 + 结果 ≤ 放行上限 → 完整放行(不截断)')
+  const stillTruncated = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000, passThroughChars: 5000 })
+  assert(/已截断/.test(stillTruncated) && stillTruncated.length < big.length, 'vfs 不可用 + 结果 > 放行上限 → 截断兜底')
+  const defaultTrunc = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000 })
+  assert(/已截断/.test(defaultTrunc), 'vfs 不可用 + 未传 passThrough → 默认截断(= threshold)')
 }
 
 // ============ vfs ============
@@ -876,7 +1029,7 @@ console.log('\n[toolsets + selectBuiltinTools]')
   // defineWindowToolset 工厂(依赖 windowProps,故为工厂)
   const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
   const wt = defineWindowToolset(props)
-  assert(wt.length === 10 && wt[0].name === 'list_window_props', 'defineWindowToolset 工厂产出 10 个 window 工具(数组)')
+  assert(wt.length === 13 && wt[0].name === 'list_window_props', 'defineWindowToolset 工厂产出 13 个 window 工具(10 原有 + query/search/eval)')
 
   // selectBuiltinTools:默认全装(windowOps + fetch)
   const winOps = createWindowOps(props)
@@ -976,6 +1129,290 @@ console.log('\n[subagents 预声明]')
   const seg = mw.augmentPrompt?.(createState()) || ''
   assert(/use_researcher.*调研专家/.test(seg), 'augmentPrompt 注入子 agent 索引(use_<id>: desc)')
   assert(mw.name === 'subagents', '中间件 name=subagents')
+}
+
+// ============ 模型能力自适应 + token 估算 + offload 阈值 ============
+console.log('\n[模型能力自适应]')
+{
+  // resolveModelCaps:声明优先覆盖表
+  const declared = resolveModelCaps({ model: 'deepseek-chat', contextWindow: 1000000, maxOutputTokens: 4096 })
+  assert(declared.contextWindow === 1000000 && declared.maxOutputTokens === 4096, 'resolveModelCaps: 声明优先覆盖表')
+
+  // 表匹配
+  const ds = resolveModelCaps({ model: 'deepseek-chat' })
+  assert(ds.contextWindow === 131072 && ds.maxOutputTokens === 8192, 'resolveModelCaps: deepseek-chat 表匹配 128K/8K')
+  const dsr = resolveModelCaps({ model: 'deepseek-reasoner' })
+  assert(dsr.contextWindow === 65536, 'resolveModelCaps: deepseek-reasoner 64K')
+  const gpt = resolveModelCaps({ model: 'gpt-4o' })
+  assert(gpt.contextWindow === 131072 && gpt.maxOutputTokens === 16384, 'resolveModelCaps: gpt-4o 128K/16K')
+
+  // 缺省(未知模型 / 无 model)
+  const unk = resolveModelCaps({ model: 'unknown-xyz' })
+  assert(unk.contextWindow === 32768 && unk.maxOutputTokens === 4096, 'resolveModelCaps: 未知模型 → 缺省 32K/4K')
+  assert(resolveModelCaps({}).contextWindow === 32768, 'resolveModelCaps: 无 model → 缺省')
+
+  // estimateTokens 量级
+  assert(estimateTokens('a'.repeat(1000)) === 250, 'estimateTokens: 1000 英文字符 → 250 token')
+  assert(estimateTokens('中'.repeat(100)) === 150, 'estimateTokens: 100 中文字符 → 150 token')
+  assert(estimateTokens('a'.repeat(400) + '中'.repeat(200)) === 400, 'estimateTokens: 混合 → 400 token')
+
+  // offloadThresholdChars clamp [2000, 20000]
+  assert(offloadThresholdChars(1000000) === 20000, 'offloadThreshold: 1M → 20000(上限)')
+  assert(offloadThresholdChars(32768) === 2000, 'offloadThreshold: 32K → 2000(下限)')
+  assert(offloadThresholdChars(131072) === 4588, 'offloadThreshold: 128K → 4588')
+
+  // offloadPassThroughChars(vfs 不可用时的放行上限)clamp [offloadThreshold, 200000]
+  assert(offloadPassThroughChars(1000000) === 200000, 'offloadPassThrough: 1M → 200000(上限,几乎不截断)')
+  assert(offloadPassThroughChars(32768) === 22938, 'offloadPassThrough: 32K → 22938(~20%)')
+  assert(offloadPassThroughChars(131072) === 91750, 'offloadPassThrough: 128K → 91750(~20%)')
+  assert(offloadPassThroughChars(1000) >= offloadThresholdChars(1000), 'offloadPassThrough: 下限 ≥ offloadThreshold')
+}
+
+// ============ token 驱动压缩(大模型自适应)============
+console.log('\n[token 驱动压缩]')
+{
+  const mkMsgs = (n: number) => {
+    const out: any[] = []
+    for (let i = 0; i < n; i++) {
+      out.push({ role: 'user', content: 'u' + i + 'x'.repeat(300), timestamp: i * 2 })
+      out.push({ role: 'assistant', content: 'a' + i + 'y'.repeat(300), timestamp: i * 2 + 1 })
+    }
+    return out
+  }
+
+  // token 模式:小历史不触发
+  const cmSmall = useContextManager({ contextWindow: 100000 })
+  const rSmall = await cmSmall.compress(mkMsgs(3))
+  assert(rSmall.stats.triggered === false, 'token 模式:小历史不触发压缩')
+
+  // token 模式:大历史触发,保留最近窗口
+  const cmBig = useContextManager({ contextWindow: 800, summaryThresholdRatio: 0.5, windowRatio: 0.4 })
+  const rBig = await cmBig.compress(mkMsgs(6))
+  assert(rBig.stats.triggered === true, 'token 模式:大历史触发压缩')
+  assert(rBig.stats.roundsSummarized >= 1, 'token 模式:至少摘 1 轮')
+  assert(rBig.stats.compressedMessages < rBig.stats.originalMessages, 'token 模式:压缩后消息更少')
+  assert(/token-window/.test(rBig.stats.strategy), 'token 模式:strategy 含 token-window')
+  assert(rBig.messages[0].role === 'system', 'token 模式:首条为摘要 system 消息')
+
+  // 轮数模式(无 contextWindow):现状兼容
+  const cmRounds = useContextManager({ summaryThresholdRounds: 2, windowRounds: 1 })
+  const rRounds = await cmRounds.compress(mkMsgs(4))
+  assert(rRounds.stats.triggered === true, '轮数模式:超阈值触发')
+  assert(/window/.test(rRounds.stats.strategy) && !/token/.test(rRounds.stats.strategy), '轮数模式:strategy 为 window+ 非 token')
+
+  // 显式 contextWindow:0 关闭 token 模式回退轮数
+  const cmZero = useContextManager({ contextWindow: 0, summaryThresholdRounds: 2, windowRounds: 1 })
+  const rZero = await cmZero.compress(mkMsgs(4))
+  assert(rZero.stats.triggered === true && !/token/.test(rZero.stats.strategy), 'contextWindow:0 → 回退轮数模式')
+}
+
+// ============ 大 JSON 查询/搜索(query_window_prop / search_window_prop)============
+console.log('\n[window query + search]')
+{
+  const data = {
+    components: [
+      { type: 'card', title: '商品卡片A', price: 50, stock: 3 },
+      { type: 'list', title: '列表B', price: 200, stock: 0 },
+      { type: 'card', title: '商品卡片C', price: 80, stock: 5 },
+    ],
+    meta: { total: 3, owner: { name: '张三', city: '北京' } },
+  }
+  ;(globalThis as any).window = { page: data }
+  const tools = createWindowOps([
+    { path: 'page', description: '页面', schema: z.any() },
+  ])
+  const t = byName(tools)
+
+  // jpEval 纯函数:过滤数组(需先 .components 再过滤)
+  let nodes = jpEval(data, '$.components[?(@.type=="card" && @.price<100)]')
+  assert(nodes.length === 2 && nodes[0].index === 0 && nodes[1].index === 2, 'jpEval: 过滤 card 且 price<100 → 命中 index 0/2')
+
+  // 递归找后代
+  nodes = jpEval(data, '$..title')
+  assert(nodes.length === 3 && nodes.some((n) => n.value === '商品卡片C'), 'jpEval: $..title 递归找全部 title')
+
+  // 点号路径 + 索引
+  nodes = jpEval(data, '$.components.1.title')
+  assert(nodes.length === 1 && nodes[0].value === '列表B', 'jpEval: $.components.1.title 精确定位')
+
+  // 通配
+  nodes = jpEval(data, '$.components[*].type')
+  assert(nodes.length === 3, 'jpEval: $.components[*].type 通配展开')
+
+  // 工具包装:query_window_prop
+  let r = await invoke(t['query_window_prop'], { path: 'page', expr: '$.components[?(@.stock==0)]' })
+  let parsed = JSON.parse(r)
+  assert(parsed.matched === 1 && parsed.results[0].index === 1, 'query_window_prop: stock==0 → 命中 index 1')
+
+  // 工具包装:未注册属性拒绝
+  r = await invoke(t['query_window_prop'], { path: 'nope', expr: '$' })
+  assert(/未注册/.test(r), 'query_window_prop: 未注册属性被拒')
+
+  // 工具包装:语法错误返回错误信息(不抛)
+  r = await invoke(t['query_window_prop'], { path: 'page', expr: '$[?(@.x==' })
+  assert(/JSONPath/.test(r), 'query_window_prop: 语法错误返回错误信息')
+
+  // searchJson 子串
+  let hits = searchJson(data, '卡片')
+  assert(hits.length === 2, 'searchJson: substring "卡片" → 命中 2 个 title')
+
+  // searchJson 模糊(记不清)
+  hits = searchJson(data, '商品卡A', { mode: 'fuzzy', fuzzyThreshold: 2 })
+  assert(hits.length >= 1, 'searchJson: fuzzy "商品卡A" 近似命中 "商品卡片A"')
+
+  // searchJson 正则
+  hits = searchJson(data, '^商品', { mode: 'regex' })
+  assert(hits.length === 2, 'searchJson: regex ^商品 → 命中 2')
+
+  // 工具包装:search_window_prop
+  r = await invoke(t['search_window_prop'], { path: 'page', query: '北京' })
+  parsed = JSON.parse(r)
+  assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_window_prop: 命中 owner.city')
+
+  // 工具数量:10 + 3 新工具 = 13
+  assert(tools.length === 13, 'createWindowOps: 含 13 个工具(10 原有 + query/search/eval)')
+
+  // eval_window_script 工具存在(node 无 Worker,仅校验装配 + 未注册拒绝)
+  assert(!!t['eval_window_script'], 'eval_window_script 工具已装配')
+  r = await invoke(t['eval_window_script'], { path: 'nope', script: 'data' })
+  assert(/未注册/.test(r), 'eval_window_script: 未注册属性被拒')
+}
+
+// ============ 树形(递归 children)声明与读写 ============
+console.log('\n[window tree: 递归 children]')
+{
+  // 递归 schema:节点含 children(自引用 z.lazy),passthrough 放行未声明字段
+  const TreeNode: z.ZodType = z.object({
+    id: z.number(),
+    type: z.string(),
+    text: z.string().optional(),
+    children: z.array(z.lazy(() => TreeNode)).optional(),
+  }).passthrough()
+
+  ;(globalThis as any).window = {
+    page: {
+      components: [
+        { id: 1, type: 'container', children: [
+          { id: 2, type: 'card', text: 'A', children: [{ id: 4, type: 'card', text: 'A1' }] },
+          { id: 3, type: 'card', text: 'B' },
+        ] },
+        { id: 5, type: 'card', text: 'C' },
+      ],
+    },
+  }
+  const tools = createWindowOps([
+    { path: 'page.components', description: '组件树(递归 children)', schema: z.array(TreeNode) },
+  ])
+  const t = byName(tools)
+  const w = (globalThis as any).window
+
+  // 递归查所有 card(任意深度):$..*[?(@.type=="card")]
+  let r = await invoke(t['query_window_prop'], { path: 'page.components', expr: '$..*[?(@.type=="card")]' })
+  let parsed = JSON.parse(r)
+  assert(parsed.matched === 3, '树查询: $..*[?(@.type=="card")] 递归找全部 3 个 card(任意深度)')
+  // 父子同现不误判 [Circular]
+  assert(!/\[Circular\]/.test(r), '树查询: 父子同现不被误判为 [Circular](各自独立序列化)')
+  assert(parsed.results.some((x: any) => x.value.id === 4), '树查询: 最深 card#4 值完整返回(id=4)')
+
+  // 增量改深层节点文本(jsonPath 定位)
+  r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'set', jsonPath: '0.children.0.children.0.text', value: '"A1-改"' })
+  assert(/已 edit/.test(r) && w.page.components[0].children[0].children[0].text === 'A1-改', 'edit: jsonPath 深层定位改子节点文本')
+
+  // 递归 schema 校验:append 缺 id 的非法节点被拒
+  r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'append', jsonPath: '0.children', value: '{"type":"bad"}' })
+  assert(/SCHEMA_INVALID/.test(r), 'edit: 递归 schema 拒绝非法节点(缺 id),校验穿透到 children')
+
+  // passthrough:节点可有未声明字段(extra/style)
+  r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'merge', jsonPath: '1', value: '{"extra":"ok","style":{"color":"red"}}' })
+  assert(w.page.components[1].extra === 'ok' && w.page.components[1].style?.color === 'red', 'edit: passthrough 保留未声明的额外字段')
+}
+
+// ============ 安全:merge 原型污染 + jsonPath 边界 ============
+console.log('\n[security: merge 原型污染 + jsonPath 边界]')
+{
+  ;(globalThis as any).window = { page: { a: 1, items: ['x'] } }
+  const tools = createWindowOps([
+    { path: 'page', description: 'p', schema: z.object({ a: z.number(), items: z.array(z.string()) }).passthrough() },
+  ])
+  const t = byName(tools)
+  const w = (globalThis as any).window
+
+  // merge value 含 __proto__/constructor:不应污染 Object.prototype,不应给目标加 own 危险键
+  let r = await invoke(t['edit_window_prop'], { path: 'page', op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"constructor":{"x":1},"b":2}' })
+  assert(w.page.b === 2, 'merge: 正常键 b 落地')
+  assert(!Object.prototype.hasOwnProperty.call(w.page, '__proto__'), 'merge: 目标无 __proto__ own 属性')
+  assert(!Object.prototype.hasOwnProperty.call(w.page, 'constructor'), 'merge: 目标无 constructor own 属性')
+  assert(({} as any).polluted === undefined, 'merge: 未污染 Object.prototype(__proto__ 未生效)')
+  assert(({} as any).x === undefined, 'merge: 未污染 Object.prototype(constructor 未生效)')
+
+  // jsonPath 含 __proto__ 段:一律拒绝(PATH_UNSAFE)
+  r = await invoke(t['edit_window_prop'], { path: 'page', op: 'set', jsonPath: '__proto__.polluted', value: 'true' })
+  assert(/PATH_UNSAFE/.test(r), 'edit: jsonPath 含 __proto__ 被拒')
+  assert(({} as any).polluted === undefined, 'edit: __proto__ jsonPath 未造成污染')
+
+  // set 越界数组索引:schema 校验在副本上拦截稀疏空洞,不写入
+  r = await invoke(t['edit_window_prop'], { path: 'page', op: 'set', jsonPath: 'items.5', value: '"y"' })
+  assert(/SCHEMA_INVALID|PATCH_FAILED/.test(r), 'edit: set 越界数组索引被 schema 拦截(不产生稀疏空洞)')
+  assert(w.page.items.length === 1 && w.page.items[0] === 'x', 'edit: 越界 set 未改动原数组')
+}
+
+// ============ ReAct 循环健壮性(收口综合 / afterAgent 兜底 / 逐轮 trim)============
+console.log('\n[harness loop: 收口综合 + afterAgent 兜底 + 逐轮 trim]')
+{
+  // mock LLM:按 scripts 顺序返回响应(支持 tool_calls 或纯文本);不绑工具(allTools 空时 createAgent 不调 bindTools)
+  class MockLLM extends BaseChatModel {
+    scripts: Array<{ content?: string; toolCalls?: Array<{ id?: string; name: string; args?: any }> }>
+    idx = 0
+    constructor(scripts: any[]) { super({}); this.scripts = scripts }
+    _llmType(): string { return 'mock' }
+    async *_streamResponseChunks(_messages: any, _options: any): AsyncGenerator<any> {
+      const s = this.scripts[this.idx++] ?? { content: '完成。' }
+      const tcc = (s.toolCalls ?? []).map((tc, i) => ({ id: tc.id ?? `c${i}`, name: tc.name, args: JSON.stringify(tc.args ?? {}), index: i }))
+      yield { text: s.content ?? '', message: new AIMessageChunk({ content: s.content ?? '', tool_call_chunks: tcc }), generationInfo: {} }
+    }
+    async _generate(_messages: any, _options: any): Promise<any> {
+      const s = this.scripts[this.idx++] ?? { content: '完成。' }
+      const msg = new AIMessage({ content: s.content ?? '', tool_calls: (s.toolCalls ?? []).map((tc, i) => ({ id: tc.id ?? `c${i}`, name: tc.name, args: tc.args ?? {} })) })
+      return { generations: [{ text: s.content ?? '', message: msg }], llmOutput: {} }
+    }
+  }
+
+  // ① 收口综合:工具轮耗尽(末尾是 ToolMessage)→ 强制再跑一轮综合,返回最终回答而非"请简化问题"
+  const mockA = new MockLLM([
+    { toolCalls: [{ name: 'noop', args: {} }] },
+    { toolCalls: [{ name: 'noop', args: {} }] },
+    { content: '最终综合回答' },
+  ])
+  const agentA = createAgent({ llm: mockA as any, maxToolRounds: 2, maxRetries: 0 })
+  let finalA = ''
+  await agentA.stream([{ role: 'user', content: '做点事', timestamp: Date.now() }], (e) => { if (e.type === 'done') finalA = e.content }, undefined)
+  assert(finalA === '最终综合回答', '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
+
+  // ② afterAgent 兜底:模型抛错时 stream reject,但 afterAgent 经 finally 仍执行(中间件清理不跳过)
+  class ThrowingLLM extends MockLLM {
+    async *_streamResponseChunks(): AsyncGenerator<any> { throw new Error('boom') }
+    async _generate(): Promise<any> { throw new Error('boom') }
+  }
+  let afterAgentRan = false
+  const mw: Middleware = { name: 'rec', afterAgent: () => { afterAgentRan = true; return undefined } }
+  const agentB = createAgent({ llm: new ThrowingLLM([]) as any, middleware: [mw], maxToolRounds: 5, maxRetries: 0 })
+  let threwB = false
+  try { await agentB.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined) } catch { threwB = true }
+  assert(threwB, '异常路径:模型抛错时 stream 仍 reject(错误不被吞)')
+  assert(afterAgentRan, '异常路径:afterAgent 经 finally 兜底仍执行(中间件清理不跳过)')
+
+  // ③ 逐轮 trim 纯函数:tool 结果累积超放行上限 → 最早 ToolMessage 压缩为占位摘要(保留 tool_call_id)
+  const big = 'x'.repeat(1000)
+  const msgs = [new SystemMessage('sys'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: big }), new ToolMessage({ tool_call_id: '2', content: big })]
+  const out = trimContextIfNeededImpl(msgs, 1500)
+  assert(out.length === 4, 'trim: 消息数不变(只压内容不删消息)')
+  const total = out.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : 0), 0)
+  assert(total < 2000, 'trim: 总字符从 ~2004 降到阈值附近(<2000)')
+  assert(out[0].content === 'sys' && out[1].content === 'q', 'trim: system/human 原样保留')
+  assert(/已自动压缩/.test(out[2].content as string), 'trim: 最早 ToolMessage 压缩为占位摘要')
+  assert((out[2] as any).tool_call_id === '1', 'trim: 保留 tool_call_id(结构完整,模型仍能对应)')
+  const out2 = trimContextIfNeededImpl(msgs, 5000)
+  assert(out2 === msgs, 'trim: 未超阈值原样返回同引用')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

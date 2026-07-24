@@ -38,6 +38,7 @@ import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { makeId } from '../utils/id'
+import { resolveModelCaps } from '../utils/modelCaps'
 import { groupRounds, plainSummary } from '../utils/rounds'
 import type { AgentMessage, StreamHandler, AgentInfo } from '../types'
 
@@ -47,6 +48,10 @@ export interface LLMConfig {
   model?: string
   temperature?: number
   maxTokens?: number
+  /** 模型上下文窗口(token);缺省按 model 名查表。影响 offload 阈值与压缩触发(大模型自适应) */
+  contextWindow?: number
+  /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
+  maxOutputTokens?: number
 }
 
 /** 单 agent 实例的会话控制 */
@@ -103,6 +108,10 @@ export interface ChatSdkOptions {
   maxRetries?: number
   /** 同轮多个工具调用的并发上限(默认 1 串行;>1 并发,可能影响有状态中间件如 todos 的计数) */
   maxParallelTools?: number
+  /** 模型上下文窗口(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表。影响 offload 阈值与压缩触发 */
+  contextWindow?: number
+  /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
+  maxOutputTokens?: number
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
     windowOps?: boolean      // window 操作工具集(默认 true;关 → 不装 10 个 window 工具,省 token/上下文)
@@ -218,6 +227,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     store.onEvent((e) => console.log('[chat-sdk][storage]', e))
   }
 
+  // ===== 模型能力(声明优先 > model 名查表 > 缺省):供 offload 阈值/压缩触发/maxTokens 缺省自适应 =====
+  const llmCfg = isChatModel(options.llm) ? undefined : (options.llm as LLMConfig)
+  const modelCaps = resolveModelCaps({
+    model: llmCfg?.model,
+    contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
+    maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
+  })
+  if (options.debug) console.log('[chat-sdk][modelCaps]', modelCaps)
+
   // ===== 共享 messages(send/mount 唯一来源)=====
   const messages = reactive<AgentMessage[]>([])
 
@@ -324,7 +342,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         ]
       : []),
     ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
-    ...(useSummarization ? [createSummarizationMiddleware(options.contextOptions === false ? undefined : options.contextOptions)] : []),
+    ...(useSummarization
+      ? [
+          createSummarizationMiddleware({
+            ...(options.contextOptions === false ? {} : options.contextOptions ?? {}),
+            // token 驱动压缩(大模型自适应):未显式声明时用 caps.contextWindow;显式 0 关闭回退轮数模式
+            contextWindow:
+              (options.contextOptions === false ? undefined : options.contextOptions?.contextWindow) ?? modelCaps.contextWindow,
+          }),
+        ]
+      : []),
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
@@ -558,6 +585,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxToolRounds: options.maxToolRounds,
       maxRetries: options.maxRetries,
       maxParallelTools: options.maxParallelTools,
+      // 模型能力透传(已在 buildCore 解析,声明优先 > 表 > 缺省):驱动 maxTokens 缺省与 offload 阈值
+      contextWindow: modelCaps.contextWindow,
+      maxOutputTokens: modelCaps.maxOutputTokens,
       // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       debug: options.debug,

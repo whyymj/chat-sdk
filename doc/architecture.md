@@ -75,7 +75,7 @@ flowchart TD
   D --> E["响应式触发 → PageRenderer 更新<br/>审计日志 → DebugDrawer"]
 ```
 
-**window 工具集**(均限属性注册表):`list_window_props` · `describe_window_prop` · `get_window_prop`(读自身/后代子路径/祖先) · `get_window_paths`(批量按路径读局部) · `set_window_prop`(范围 + schema 校验,整体替换) · `edit_window_prop`(按 jsonPath 增量改:set/remove/merge/append) · `delete_window_prop` · `snapshot_window_prop`/`list_window_snapshots`/`restore_window_snapshot`(快照回退)。
+**window 工具集**(均限属性注册表):`list_window_props` · `describe_window_prop` · `get_window_prop`(读自身/后代子路径;字段白名单读模式默认禁止祖先整体读) · `get_window_paths`(批量按路径读局部) · `set_window_prop`(范围 + schema 校验,整体替换) · `edit_window_prop`(按 jsonPath 增量改:set/remove/merge/append) · `delete_window_prop` · `snapshot_window_prop`/`list_window_snapshots`/`restore_window_snapshot`(快照回退) · `query_window_prop`(JSONPath 查询) · `search_window_prop`(模糊/子串/正则搜索) · `eval_window_script`(Web Worker 沙箱脚本)。
 
 - **范围控制**:写操作仅限集成方声明的 `windowProps`(集成方可只暴露 `app.*` 命名空间收紧边界)。
 - **schema 校验**:`set`/`edit` 按 zod schema 校验 JSON 值,失败返回结构化错误(不写入),Agent 据此修正。

@@ -38,8 +38,7 @@ export function defineSkill(spec: SkillSpec): SkillSpec {
 /** skill 文档读取结果:成功返回 content,失败返回 error 文案 */
 export type DocReadResult = { ok: true; content: string } | { ok: false; error: string }
 
-/** skill 文档长度上限(与 fetch_document 一致,防撑爆上下文) */
-const MAX_DOC_CHARS = 20000
+/** skill 文档来源二选一(doc 优先):http 远程经 fetch(CORS/截断由 offload 统一处理)、vfs 本地直读 */
 
 /** 远程 URL 命中(CORS 友好的 http/https + 协议相对 //) */
 const HTTP_RE = /^https?:\/\//i
@@ -68,11 +67,8 @@ export async function readSkillDoc(
       const res = await fetch(doc)
       if (!res.ok) return { ok: false, error: `HTTP ${res.status} ${res.statusText}(${doc})` }
       const text = await res.text()
-      const body =
-        text.length > MAX_DOC_CHARS
-          ? text.slice(0, MAX_DOC_CHARS) + `\n…[已截断,原长度 ${text.length}]`
-          : text
-      return { ok: true, content: body }
+      // 不截断:大文档由 load_skill 工具结果经 createAgent 的 offload 统一外存 vfs(可 vfs_read 分页回读 / vfs_grep 检索)
+      return { ok: true, content: text }
     } catch (e) {
       const msg = (e as Error)?.message || String(e)
       if (/Failed to fetch|NetworkError|CORS|blocked/i.test(msg)) {

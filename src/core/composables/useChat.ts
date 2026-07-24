@@ -72,14 +72,22 @@ export function useChat(
         reasoning: '',
         steps: [] as ToolStep[],
       })
+      // 轮次分隔:多轮工具循环中模型每轮的 text/reasoning 直接拼接会连成一段("我来查一下根据结果…"),
+      // 在 round>1 的首个 delta 前插一个换行,保持轮次边界可读
+      let pendingSep = false
       state.messages.push(assistantMsg)
       try {
         await fetchStream(state.messages.slice(0, -1), (event) => {
           switch (event.type) {
+            case 'round_start':
+              if (event.round > 1 && (assistantMsg.content || assistantMsg.reasoning)) pendingSep = true
+              break
             case 'reasoning':
+              if (pendingSep) { assistantMsg.reasoning += '\n'; pendingSep = false }
               assistantMsg.reasoning += event.delta
               break
             case 'text':
+              if (pendingSep) { assistantMsg.content += '\n'; pendingSep = false }
               assistantMsg.content += event.delta
               break
             case 'tool_call':

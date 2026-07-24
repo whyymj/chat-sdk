@@ -22,6 +22,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { AgentMessage, StreamHandler } from '../types'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
+import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
 import { createInitialState, type HarnessState } from './state'
 import { withRetry, isAbort } from './retry'
 import {
@@ -54,6 +55,10 @@ export interface CreateAgentOptions {
   model?: string
   temperature?: number
   maxTokens?: number
+  /** 集成方显式声明模型上下文窗口(token);缺省按 model 名查表,再缺省 32K。影响 offload 阈值与压缩触发 */
+  contextWindow?: number
+  /** 集成方显式声明模型最大输出(token);缺省按 model 名查表,再缺省 4K。maxTokens 未传时作其缺省 */
+  maxOutputTokens?: number
   systemPrompt?: string
   /** 用户自定义工具(与中间件贡献的工具合并) */
   tools?: StructuredToolInterface[]
@@ -75,13 +80,38 @@ export interface CreateAgentOptions {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 10
 
+/**
+ * 逐轮上下文保底压缩(纯函数,可单测):循环内每轮 tool 结果累积,单条已由 offload 限制,多条累积仍可能超。
+ * 当总字符超过放行上限(maxChars)时,从最早的 ToolMessage 起截断为占位摘要,
+ * 保留 tool_call_id(结构完整,模型仍能对应),不动对话/system/ai 消息。大模型阈值高几乎不触发。
+ */
+export function trimContextIfNeededImpl(messages: BaseMessage[], maxChars: number): BaseMessage[] {
+  const total = messages.reduce(
+    (s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length),
+    0,
+  )
+  if (total <= maxChars) return messages
+  let trimmed = 0
+  const need = total - maxChars
+  return messages.map((m) => {
+    if (trimmed >= need) return m
+    if (!(m instanceof ToolMessage)) return m
+    const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+    if (c.length <= 400) return m // 太短不值得压
+    const keep = 200
+    const summary = `…[已自动压缩 ${c.length} 字符,保留首 ${keep}]\n` + c.slice(0, keep)
+    trimmed += c.length - summary.length
+    return new ToolMessage({ tool_call_id: (m as any).tool_call_id, content: summary })
+  })
+}
+
 export function createAgent(options: CreateAgentOptions) {
   const {
     apiKey,
     baseUrl,
     model = 'gpt-3.5-turbo',
     temperature = 0.7,
-    maxTokens = 16384, // 大 JSON 写入场景默认提高;.env VITE_AI_MAX_TOKENS / llm.maxTokens 仍可覆盖
+    maxTokens, // 不设默认:缺省由模型能力(maxOutputTokens)推导,避免设错被截断
     systemPrompt,
     tools: extraTools = [],
     middleware: middlewares = [],
@@ -93,6 +123,19 @@ export function createAgent(options: CreateAgentOptions) {
     onLog,
     debug = false,
   } = options
+
+  // 模型能力:声明优先 > model 名查表 > 缺省。
+  // maxTokens 缺省 = maxOutputTokens(DeepSeek 8192 等,避免固定 16384 被截断);
+  // offload 外存阈值按上下文窗口自适应(1M→20000,32K→2000)
+  const caps = resolveModelCaps({
+    model,
+    contextWindow: options.contextWindow,
+    maxOutputTokens: options.maxOutputTokens,
+  })
+  const resolvedMaxTokens = maxTokens ?? caps.maxOutputTokens
+  const offloadThreshold = offloadThresholdChars(caps.contextWindow)
+  // vfs 不可用时的放行上限:大模型(1M)→ 200000 几乎不截断,小模型按上下文 20% 推导
+  const offloadPassThrough = offloadPassThroughChars(caps.contextWindow)
 
   // shallowRef:浅响应式,不深度代理 push 进来的 data 对象,避免与 currentMessages 共享引用污染日志快照
   const debugLogs = shallowRef<DebugLog[]>([])
@@ -118,7 +161,7 @@ export function createAgent(options: CreateAgentOptions) {
     apiKey,
     model,
     temperature,
-    maxTokens,
+    maxTokens: resolvedMaxTokens,
     configuration: baseUrl ? { baseURL: baseUrl } : undefined,
   })
   const llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
@@ -159,13 +202,15 @@ export function createAgent(options: CreateAgentOptions) {
    * - 可恢复错误(网络/429/5xx)经 withRetry 自动重试;abort 不重试
    * - abort 时不抛,返回 { aborted:true, content: 已累积 partial }(保留已生成内容,等同 ChatGPT 停止)
    */
-  async function coreModelCall(req: ModelRequest, onEvent?: StreamHandler, signal?: AbortSignal): Promise<ModelResponse> {
+  async function coreModelCall(req: ModelRequest, onEvent?: StreamHandler, signal?: AbortSignal, caller?: BaseChatModel): Promise<ModelResponse> {
+    // caller 默认 llmWithTools(绑工具);收口综合传裸 llm,避免模型再触发工具调用
+    const streamer = caller ?? llmWithTools
     const run = async (): Promise<ModelResponse> => {
       let aggregated: AIMessageChunk | null = null
       let content = ''
       try {
         // stream 启动 + 迭代都纳入 try:启动阶段被 abort 也走 aborted 分支(不冒泡、不重试)
-        const stream = await llmWithTools.stream(req.messages, signal ? { signal } : undefined)
+        const stream = await streamer.stream(req.messages, signal ? { signal } : undefined)
         for await (const chunk of stream) {
           aggregated = aggregated ? aggregated.concat(chunk) : chunk
           const textDelta = typeof chunk.content === 'string' ? chunk.content : ''
@@ -213,6 +258,8 @@ export function createAgent(options: CreateAgentOptions) {
         files: ctx.state.files,
         vfsAvailable: allTools.some((t) => t.name === 'vfs_read'),
         toolName: ctx.name,
+        threshold: offloadThreshold,
+        passThroughChars: offloadPassThrough,
       })
       return { content, status: 'done' }
     } catch (err: any) {
@@ -227,6 +274,13 @@ export function createAgent(options: CreateAgentOptions) {
     if (m instanceof SystemMessage) return 'system'
     if (m instanceof ToolMessage) return 'tool'
     return 'unknown'
+  }
+
+  /**
+   * 逐轮上下文保底压缩(模块级纯函数 trimContextIfNeeded 的薄封装,复用其 typeOf)
+   */
+  function trimContextIfNeeded(messages: BaseMessage[], maxChars: number): BaseMessage[] {
+    return trimContextIfNeededImpl(messages, maxChars)
   }
 
   /** 格式化消息为接近实际请求体的结构(role 用接口名 user/assistant/tool/system,含 tool_calls/tool_call_id),按发送顺序 */
@@ -282,97 +336,133 @@ export function createAgent(options: CreateAgentOptions) {
 
     let rounds = 0
     let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
-    while (rounds < maxToolRounds) {
-      // 每轮开始检查 abort(用户停止)
-      if (signal?.aborted) break
-      onEvent({ type: 'round_start', round: rounds + 1 })
+    try {
+      while (rounds < maxToolRounds) {
+        // 每轮开始检查 abort(用户停止)
+        if (signal?.aborted) break
+        onEvent({ type: 'round_start', round: rounds + 1 })
 
-      // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
-      state = runBeforeModel(middlewares, { messages: currentMessages, state })
-      currentMessages = replaceSystem(currentMessages)
+        // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
+        state = runBeforeModel(middlewares, { messages: currentMessages, state })
+        currentMessages = replaceSystem(currentMessages)
+        // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
+        currentMessages = trimContextIfNeeded(currentMessages, offloadPassThrough)
 
-      log('llm_request', {
-        round: rounds + 1,
-        model,
-        tools: allTools.map((t) => t.name),
-        messages: formatForLog(currentMessages),
-      })
+        log('llm_request', {
+          round: rounds + 1,
+          model,
+          tools: allTools.map((t) => t.name),
+          messages: formatForLog(currentMessages),
+        })
 
-      const response = await modelHandler({ messages: currentMessages, state })
-      currentMessages.push(response.message)
+        const response = await modelHandler({ messages: currentMessages, state })
+        currentMessages.push(response.message)
 
-      log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
+        log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
 
-      state = runAfterModel(middlewares, response, state)
+        state = runAfterModel(middlewares, response, state)
 
-      // 模型被 abort(用户停止):保留已累积 partial,正常结束(不执行后续工具)
-      if (response.aborted) {
-        onEvent({ type: 'done', content: response.content })
-        await runAfterAgent(middlewares, state)
-        return response.content
-      }
-
-      if (!response.toolCalls.length) {
-        // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
-        // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
-        if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
-          const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
-          if (feedback) {
-            lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
-            state.verifyAttempts += 1
-            currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
-            log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
-            rounds += 1
-            continue // 回灌反馈,继续循环让模型修正(不 return)
-          }
+        // 模型被 abort(用户停止):保留已累积 partial,正常结束(不执行后续工具)
+        if (response.aborted) {
+          onEvent({ type: 'done', content: response.content })
+          return response.content
         }
-        onEvent({ type: 'done', content: response.content })
+
+        if (!response.toolCalls.length) {
+          // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
+          // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
+          if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
+            const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
+            if (feedback) {
+              lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
+              state.verifyAttempts += 1
+              currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
+              log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
+              rounds += 1
+              continue // 回灌反馈,继续循环让模型修正(不 return)
+            }
+          }
+          onEvent({ type: 'done', content: response.content })
+          return response.content
+        }
+
+        // 执行工具(经 wrapToolCall 洋葱;按 maxParallelTools 并发,默认 1 串行保持原语义)
+        const calls = response.toolCalls
+        const ctxs = calls.map((call) => {
+          const id = call.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+          return { id, call, ctx: { id, name: call.name, args: call.args, state, signal, emit: onEvent, logSink: pushLog } as ToolCallContext }
+        })
+        // 并发池执行(emit tool_call/result 在 fn 内,串行时保持交替 UX;结果按原顺序收集)
+        const results = await runPool(
+          ctxs,
+          maxParallelTools,
+          async (c) => {
+            if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
+            onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
+            log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
+            const result = await toolHandler(c.ctx)
+            onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status })
+            log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status })
+            return result
+          },
+          signal,
+        )
+        // 按原 tool_calls 顺序回填 ToolMessage(跳过 abort 未执行的)
+        for (let i = 0; i < ctxs.length; i++) {
+          const r = results[i]
+          if (!r) continue
+          currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: r.content }))
+        }
+        if (signal?.aborted) break // 中止则不进入下一轮
+        rounds++
+      }
+
+      // 循环退出:abort(用户停止)或达到最大轮次
+      if (signal?.aborted) {
+        onEvent({ type: 'done', content: '' })
+        return ''
+      }
+      // 自纠耗尽 rounds 预算 → 优先返回最近一次缓存的有效最终答
+      if (lastFinalContent != null) {
+        onEvent({ type: 'done', content: lastFinalContent })
+        return lastFinalContent
+      }
+      // 工具轮耗尽且未综合:末尾是 ToolMessage → 强制收口综合(裸 llm 不绑工具,注入「工具已用尽,直接作答」提示),
+      // 保证最终一定有综合输出,而非白费全部工具产出后丢一句「请简化问题」
+      const last = currentMessages[currentMessages.length - 1]
+      if (last && typeOf(last) === 'tool') {
+        // 提示并入首部 system(单条 system 在首,避免尾部 system 消息被部分 API 拒收)
+        const rest = currentMessages.filter((m) => typeOf(m) !== 'system')
+        const wrapUpMessages = [
+          new SystemMessage(
+            buildSystemPrompt() + '\n\n工具调用次数已达上限,请基于已有工具结果直接给出最终回答,不要再调用工具。',
+          ),
+          ...rest,
+        ]
+        log('llm_request', { round: 'wrap_up', model, tools: [], messages: formatForLog(wrapUpMessages) })
+        const resp = await coreModelCall({ messages: wrapUpMessages, state }, onEvent, signal, llm)
+        log('llm_response', { round: 'wrap_up', content: resp.content })
+        if (resp.aborted) {
+          onEvent({ type: 'done', content: resp.content })
+          return resp.content
+        }
+        if (resp.content) {
+          onEvent({ type: 'done', content: resp.content })
+          return resp.content
+        }
+      }
+      // 收口也无文本(极端)→ 兜底文案
+      const fallback = '已达到最大工具调用轮次，请简化你的问题。'
+      onEvent({ type: 'done', content: fallback })
+      return fallback
+    } finally {
+      // afterAgent 必跑(含异常路径):中间件清理/flush 不因模型或中间件抛错被跳过;其自身错误吞掉不影响主流程
+      try {
         await runAfterAgent(middlewares, state)
-        return response.content
+      } catch (e) {
+        console.warn('[Agent] afterAgent 清理出错(已忽略):', e)
       }
-
-      // 执行工具(经 wrapToolCall 洋葱;按 maxParallelTools 并发,默认 1 串行保持原语义)
-      const calls = response.toolCalls
-      const ctxs = calls.map((call) => {
-        const id = call.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-        return { id, call, ctx: { id, name: call.name, args: call.args, state, signal, emit: onEvent, logSink: pushLog } as ToolCallContext }
-      })
-      // 并发池执行(emit tool_call/result 在 fn 内,串行时保持交替 UX;结果按原顺序收集)
-      const results = await runPool(
-        ctxs,
-        maxParallelTools,
-        async (c) => {
-          if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
-          onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
-          log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
-          const result = await toolHandler(c.ctx)
-          onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status })
-          log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status })
-          return result
-        },
-        signal,
-      )
-      // 按原 tool_calls 顺序回填 ToolMessage(跳过 abort 未执行的)
-      for (let i = 0; i < ctxs.length; i++) {
-        const r = results[i]
-        if (!r) continue
-        currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: r.content }))
-      }
-      if (signal?.aborted) break // 中止则不进入下一轮
-      rounds++
     }
-
-    // 循环退出:abort(用户停止)或达到最大轮次
-    if (signal?.aborted) {
-      onEvent({ type: 'done', content: '' })
-      await runAfterAgent(middlewares, state)
-      return ''
-    }
-    // 自纠耗尽 rounds 预算 → 优先返回最近一次缓存的有效最终答(而非误导性"请简化问题");纯工具循环耗尽(无缓存)才用兜底文案
-    const fallback = lastFinalContent ?? '已达到最大工具调用轮次，请简化你的问题。'
-    onEvent({ type: 'done', content: fallback })
-    await runAfterAgent(middlewares, state)
-    return fallback
   }
 
   /** 非流式入口(复用 stream,聚合最终文本;透传 signal 支持停止) */

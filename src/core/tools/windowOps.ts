@@ -17,6 +17,8 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
+import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './windowQuery'
+import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 
 /** 可操作属性注册项 */
 export interface WindowPropSpec {
@@ -43,6 +45,13 @@ export interface WindowOpsOptions {
   allowRawRead?: boolean
   /** 每个注册属性最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
+  /**
+   * 字段白名单读模式(默认 true):仅允许读「注册 path 自身 / 其后代」,禁止读未注册的祖先,
+   * 防止 LLM 经 get_window_prop('page') 把整个大 JSON 拉进上下文。
+   * 设 false 回退原行为(允许读注册 path 的祖先,即整体读)。
+   * 集成方注册「可操作子路径」(如 page.theme.color / page.components)而非顶层时,默认即「LLM 只见声明字段」。
+   */
+  whitelist?: boolean
 }
 
 /** 快照条目(per-path 栈) */
@@ -59,8 +68,30 @@ type EditOp = 'set' | 'remove' | 'merge' | 'append'
 
 // ============ 点号路径 helper ============
 
+/** 危险 key:经点号路径可触发原型污染(__proto__ 访问/改 Object.prototype、constructor/prototype 链),一律拒绝 */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** 路径任一段命中危险 key → 不安全。LLM 可控的 jsonPath 必须先过此关,防原型污染 */
+function isUnsafePath(path: string): boolean {
+  return path.split('.').some((k) => UNSAFE_KEYS.has(k))
+}
+
+/**
+ * 安全合并:逐 own键赋值,跳过 __proto__/constructor/prototype。
+ * Object.assign 会因源对象 own 的 __proto__ 键触发原型 setter 污染 target 原型
+ * (JSON.parse 产生的 {"__proto__":...} 是 own property,非字面量 setter),故 merge 必经此函数。
+ */
+function safeMerge(target: Record<string, any>, src: unknown): void {
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return
+  for (const k of Object.keys(src)) {
+    if (UNSAFE_KEYS.has(k)) continue
+    target[k] = (src as Record<string, any>)[k]
+  }
+}
+
 /** 点号路径取值 */
 function getByPath(obj: unknown, path: string): unknown {
+  if (isUnsafePath(path)) return undefined
   const keys = path.split('.')
   let cur: any = obj
   for (const k of keys) {
@@ -72,6 +103,7 @@ function getByPath(obj: unknown, path: string): unknown {
 
 /** 点号路径设值(逐级创建对象) */
 function setByPath(obj: unknown, path: string, value: unknown): void {
+  if (isUnsafePath(path)) return
   const keys = path.split('.')
   let cur: any = obj
   for (let i = 0; i < keys.length - 1; i++) {
@@ -84,6 +116,7 @@ function setByPath(obj: unknown, path: string, value: unknown): void {
 
 /** 点号路径删除 */
 function deleteByPath(obj: unknown, path: string): boolean {
+  if (isUnsafePath(path)) return false
   const keys = path.split('.')
   let cur: any = obj
   for (let i = 0; i < keys.length - 1; i++) {
@@ -153,7 +186,7 @@ function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unkn
     if (target == null || typeof target !== 'object' || Array.isArray(target)) {
       return `merge 目标${jsonPath ? `(${jsonPath})` : '(根)'}不是对象`
     }
-    Object.assign(target, value)
+    safeMerge(target as Record<string, any>, value)
     return null
   }
   // append
@@ -172,7 +205,7 @@ function applyPatchToLive(path: string, op: EditOp, jsonPath: string, value: unk
     deleteByPath(window, `${path}.${jsonPath}`)
   } else if (op === 'merge') {
     const target = (jsonPath ? getByPath(window, `${path}.${jsonPath}`) : getByPath(window, path)) as Record<string, unknown>
-    Object.assign(target, value)
+    safeMerge(target as Record<string, any>, value)
   } else {
     // append
     const arr = (jsonPath ? getByPath(window, `${path}.${jsonPath}`) : getByPath(window, path)) as unknown[]
@@ -223,6 +256,16 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     opts.onAudit?.(entry)
   }
 
+  // 字段白名单读模式(默认 true):仅注册 path 自身/后代可读;false 时允许读祖先(整体读)
+  const allowAncestorRead = (opts.whitelist ?? true) === false
+  /** 读权限:allowRawRead 最高;否则注册 path 自身/后代可读;非白名单模式另允许祖先读 */
+  function canRead(path: string): boolean {
+    if (opts.allowRawRead) return true
+    return [...registry.keys()].some(
+      (k) => path === k || path.startsWith(k + '.') || (allowAncestorRead && k.startsWith(path + '.')),
+    )
+  }
+
   /** 写操作前自动存快照(修改前的当前值),返回快照 id */
   function pushSnapshot(path: string, op: WindowSnapshotEntry['op'], label?: string): number {
     const before = deepClone(getByPath(window, path))
@@ -250,11 +293,18 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   const describeWindowProp = tool(
     async ({ path }) => {
       const p = registry.get(path)
-      if (!p) return `属性 "${path}" 未注册。请用 list_window_props 查看可用属性。`
+      if (!p) {
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
+      }
       return [
         `路径: ${p.path}`,
         `说明: ${p.description}`,
-        `格式: 写入值需为 JSON,且通过注册时声明的 schema 校验(校验失败时 set_window_prop/edit_window_prop 会返回具体错误)。`,
+        `格式: 写入值需为 JSON,且通过注册时声明的 schema 校验(校验失败时 set_window_prop/edit_window_prop 会返回结构化错误,含具体字段与期望类型)。`,
       ].join('\n')
     },
     {
@@ -266,12 +316,14 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
 
   const getWindowProp = tool(
     async ({ path }) => {
-      // 允许读:注册属性自身 / 其后代(精确读局部,如 page.components.0.text)/ 其祖先(读整体)
-      const readable =
-        opts.allowRawRead ||
-        [...registry.keys()].some((k) => path === k || path.startsWith(k + '.') || k.startsWith(path + '.'))
-      if (!readable) {
-        return `属性 "${path}" 未注册,不可读取。请用 list_window_props 查看可用属性。`
+      // 字段白名单读模式(默认):仅注册 path 自身/后代可读;非白名单模式另允许祖先读(整体读)
+      if (!canRead(path)) {
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 不可读取(未注册,且非已注册路径的后代)`,
+          hint: '用 list_window_props 查看可操作字段;字段白名单读模式下未注册的祖先(整体大 JSON)不暴露,需读其声明子路径',
+        })
       }
       const val = getByPath(window, path)
       if (val === undefined) return `${path} = (undefined)`
@@ -279,8 +331,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
     {
       name: 'get_window_prop',
-      description: '读取一个已注册 window 属性的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。',
-      schema: z.object({ path: z.string().describe('已注册的属性路径或其祖先') }),
+      description:
+        '读取一个已注册 window 属性的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。字段白名单读模式(默认)下仅可读注册 path 自身/后代;未注册祖先(整体大 JSON)不可读,避免大 JSON 拉进上下文。',
+      schema: z.object({ path: z.string().describe('已注册的属性路径或其后代') }),
     },
   )
 
@@ -288,28 +341,38 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     async ({ path, value }) => {
       const spec = registry.get(path)
       if (!spec) {
-        return `错误:属性 "${path}" 未在注册表中声明,不可写。请用 list_window_props 查看可用属性。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未在注册表中声明,不可写`,
+          hint: '用 list_window_props 查看可用属性;集成方需先在 windowProps 声明该 path',
+        })
       }
       let parsed: unknown
       try {
         parsed = JSON.parse(value)
-      } catch {
-        return `错误:value 不是合法 JSON 字符串。请传入 JSON 文本。`
+      } catch (e) {
+        return jsonParseError(path, value, e)
       }
       const res = spec.schema.safeParse(parsed)
       if (!res.success) {
-        return `校验失败:${res.error.message}\n请按 describe_window_prop("${path}") 查看格式后重试。`
+        return zodError(path, res.error.issues)
       }
-      // 写前快照(支持回退)+ 就地写回(不替换父对象引用,兼容 reactive)
+      // 写前快照(支持回退)+ 就地覆盖(对象/数组保留 reactive 容器引用,语义=整体替换;原始值直接赋值)
       pushSnapshot(path, 'set')
-      setByPath(window, path, res.data)
+      const live = getByPath(window, path)
+      if (live !== null && typeof live === 'object' && res.data !== null && typeof res.data === 'object') {
+        restoreInPlace(live as Record<string, unknown> | unknown[], res.data)
+      } else {
+        setByPath(window, path, res.data)
+      }
       audit({ op: 'set', path, value: res.data, timestamp: Date.now() })
       return `已设置 ${path} = ${safeStringify(res.data, 600)}`
     },
     {
       name: 'set_window_prop',
       description:
-        '设置一个已注册 window 属性的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。改局部建议用 edit_window_prop,避免重传整个大对象。',
+        '设置一个已注册 window 属性的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。大对象/数组强烈建议改用 edit_window_prop 增量 patch —— 整体重传大 JSON 时输出可能被 max_tokens 截断,导致 JSON 不完整而校验失败,且浪费 token。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
         value: z.string().describe('JSON 字符串形式的值,需符合该属性 schema'),
@@ -321,32 +384,63 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     async ({ path, op, jsonPath, value }) => {
       const spec = registry.get(path)
       if (!spec) {
-        return `错误:属性 "${path}" 未在注册表中声明,不可写。请用 list_window_props 查看可用属性。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未在注册表中声明,不可写`,
+          hint: '用 list_window_props 查看可用属性',
+        })
       }
       const jp = jsonPath || ''
+      // 原型污染防御:jsonPath 由 LLM 完全可控,含 __proto__/constructor/prototype 段一律拒绝
+      if (isUnsafePath(jp)) {
+        return toolError({
+          code: 'PATH_UNSAFE',
+          path,
+          message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`,
+          hint: '使用正常的属性路径,如 components.0.text(数组索引用数字)',
+        })
+      }
       // value 解析(set/merge/append 必填)
       let parsed: unknown
       if (op !== 'remove') {
         if (value === undefined || value === '') {
-          return `错误:${op} 操作需要 value(JSON 字符串)。`
+          return toolError({
+            code: 'MISSING_VALUE',
+            path,
+            message: `${op} 操作需要 value(JSON 字符串)`,
+            hint: `op 为 ${op} 时 value 必填;若想删除请用 op:'remove'`,
+          })
         }
         try {
           parsed = JSON.parse(value)
-        } catch {
-          return `错误:value 不是合法 JSON 字符串。`
+        } catch (e) {
+          return jsonParseError(path, value, e)
         }
       }
       const current = getByPath(window, path)
       if (current == null || typeof current !== 'object') {
-        return `错误:edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}。叶子属性请用 set_window_prop。`
+        return toolError({
+          code: 'NOT_OBJECT',
+          path,
+          message: `edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}`,
+          hint: '叶子属性(原始类型)请用 set_window_prop 整体设置',
+        })
       }
       // ① 在深拷贝副本上应用 patch → 整体 schema 校验(不写入)
       const clone = deepClone(current)
       const patchErr = applyPatchToClone(clone, op, jp, parsed)
-      if (patchErr) return `错误:${patchErr}`
+      if (patchErr) {
+        return toolError({
+          code: 'PATCH_FAILED',
+          path,
+          message: patchErr,
+          hint: '检查 op 与目标类型:merge 需目标为对象,append 需目标为数组;jsonPath 指向需存在',
+        })
+      }
       const res = spec.schema.safeParse(clone)
       if (!res.success) {
-        return `校验失败:${res.error.message}\n请按 describe_window_prop("${path}") 查看格式后重试。`
+        return zodError(path, res.error.issues)
       }
       // ② 校验通过 → 写前快照 + 就地落地(改子属性,不替换注册属性根引用 → 兼容 reactive)
       pushSnapshot(path, 'edit')
@@ -370,7 +464,12 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   const deleteWindowProp = tool(
     async ({ path }) => {
       if (!registry.has(path)) {
-        return `错误:属性 "${path}" 未在注册表中声明,不可删除。请用 list_window_props 查看可用属性。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未在注册表中声明,不可删除`,
+          hint: '用 list_window_props 查看可用属性',
+        })
       }
       pushSnapshot(path, 'delete')
       const ok = deleteByPath(window, path)
@@ -387,7 +486,12 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   const snapshotWindowProp = tool(
     async ({ path, label }) => {
       if (!registry.has(path)) {
-        return `错误:属性 "${path}" 未注册,无法打快照。请用 list_window_props 查看可用属性。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册,无法打快照`,
+          hint: '用 list_window_props 查看可用属性',
+        })
       }
       const id = pushSnapshot(path, 'manual', label)
       return `已为 ${path} 创建快照 #${id}${label ? `(${label})` : ''}。可用 list_window_snapshots 查看、restore_window_snapshot 回退。`
@@ -406,7 +510,12 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     async ({ path }) => {
       const paths = path ? [path] : [...registry.keys()]
       if (path && !registry.has(path)) {
-        return `错误:属性 "${path}" 未注册。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
       }
       const lines: string[] = []
       for (const p of paths) {
@@ -438,20 +547,41 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     async ({ path, id }) => {
       const spec = registry.get(path)
       if (!spec) {
-        return `错误:属性 "${path}" 未注册。请用 list_window_props 查看可用属性。`
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
       }
       const stack = snapshots.get(path) || []
       if (!stack.length) {
-        return `错误:"${path}" 无快照可回退。`
+        return toolError({
+          code: 'NO_SNAPSHOT',
+          path,
+          message: `"${path}" 无快照可回退`,
+          hint: 'set/edit/delete 会自动存快照;也可先 snapshot_window_prop 手动创建检查点',
+        })
       }
       const entry = id !== undefined ? stack.find((s) => s.id === id) : stack[stack.length - 1]
       if (!entry) {
-        return `错误:未找到快照 #${id}。请用 list_window_snapshots 查看可用快照。`
+        return toolError({
+          code: 'SNAPSHOT_NOT_FOUND',
+          path,
+          message: `未找到快照 #${id}`,
+          hint: '用 list_window_snapshots 查看可用快照序号',
+        })
       }
       // 保险:快照值应符合当前 schema(历史值本应合法)
       const chk = spec.schema.safeParse(entry.value)
       if (!chk.success) {
-        return `错误:快照 #${entry.id} 的值不符合当前 schema,无法回退:${chk.error.message}`
+        return toolError({
+          code: 'SNAPSHOT_SCHEMA_INVALID',
+          path,
+          message: `快照 #${entry.id} 的值不符合当前 schema,无法回退`,
+          hint: 'schema 可能已变更;该快照已过期,选其他快照或重新设置',
+          details: formatZodIssues(chk.error.issues),
+        })
       }
       // 就地还原(保留 reactive 容器引用);restore 不再入栈(避免无限增长)
       restoreLive(path, deepClone(entry.value))
@@ -472,12 +602,8 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     async ({ paths }) => {
       const lines: string[] = []
       for (const p of paths) {
-        // 范围:注册属性自身 / 后代(精确读局部)/ 祖先(读整体)
-        const allowed =
-          opts.allowRawRead ||
-          [...registry.keys()].some((k) => p === k || p.startsWith(k + '.') || k.startsWith(p + '.'))
-        if (!allowed) {
-          lines.push(`- ${p} = (未注册,不可读。用 list_window_props 查看可用属性)`)
+        if (!canRead(p)) {
+          lines.push(`- ${p} = ERROR: ${toolError({ code: 'NOT_REGISTERED', path: p, message: `不可读取(未注册,且非已注册路径的后代)`, hint: '用 list_window_props 查看可操作字段' })}`)
           continue
         }
         const val = getByPath(window, p)
@@ -488,9 +614,191 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     {
       name: 'get_window_paths',
       description:
-        '批量按路径读取 window 属性的局部或多个字段(避免对大 JSON 整体读取)。paths 支持注册属性的任意后代路径(如 page.components.0.text)、自身、或祖先。逐行返回 path = value;单个值过大仍由系统自动外存 vfs。',
+        '批量按路径读取 window 属性的局部或多个字段(避免对大 JSON 整体读取)。paths 支持注册属性的任意后代路径(如 page.components.0.text)、自身。字段白名单读模式(默认)下未注册祖先不可读。逐行返回 path = value;单个值过大仍由系统自动外存 vfs。',
       schema: z.object({
         paths: z.array(z.string().describe('路径,如 page.components.0.text')).min(1).max(20),
+      }),
+    },
+  )
+
+  // ============ 大 JSON 查询/搜索/脚本(只读探查为主,transform 写回经 schema 校验) ============
+
+  const queryWindowProp = tool(
+    async ({ path, expr, limit }) => {
+      const spec = registry.get(path)
+      if (!spec) {
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
+      }
+      const root = getByPath(window, path)
+      if (root == null || typeof root !== 'object') {
+        return toolError({
+          code: 'NOT_OBJECT',
+          path,
+          message: `"${path}" 不是对象/数组,无法查询(当前为 ${root === undefined ? 'undefined' : typeof root})`,
+          hint: 'query 仅适用于对象/数组;叶子属性用 get_window_prop 读',
+        })
+      }
+      let nodes
+      try {
+        nodes = jpEval(root, expr)
+      } catch (e) {
+        return toolError({
+          code: 'JSONPATH_SYNTAX',
+          path,
+          message: `JSONPath 解析错误: ${(e as Error).message}`,
+          hint: '语法子集:$ .key [n] ["key"] [*] [?(filter)] ..key ..*;filter:@.field op literal,&&/||/();对象根需先点出数组字段再过滤,如 $.components[?(@.x>1)]',
+          details: { expr },
+        })
+      }
+      const cap = limit ?? 50
+      const sliced = nodes.slice(0, cap)
+      // 每个结果独立 safeStringify(各自 fresh WeakSet),避免父子同现时
+      // 共享引用被外层 WeakSet 误判为 [Circular](树查询时父节点结果含子、子又是独立结果的典型场景)
+      const parts = sliced.map(
+        (n) =>
+          `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(n.value)}}`,
+      )
+      return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
+    },
+    {
+      name: 'query_window_prop',
+      description:
+        '用 JSONPath 表达式对一个已注册的对象/数组属性做结构化查询(只读,无副作用)。语法子集:$ 根、.key、[n]、["key"]、[*] 通配、[?(filter)] 过滤、..key 递归找后代、..* 全后代。过滤表达式:@.field op literal(op:==/!=/</<=/>/>=),&&/||/() 连接;@ 指当前元素。注意过滤作用于"当前节点的子元素数组",若注册属性是对象需先点出数组字段再过滤,如 $.components[?(@.type=="card" && @.price<100)]。返回匹配元素的 path(相对属性根,数组索引可作后续 edit_window_prop 的 jsonPath)+ index(若父为数组)+ value。适合在大数组里按条件筛选元素,定位后再用 edit_window_prop 增量改。',
+      schema: z.object({
+        path: z.string().describe('已注册的对象/数组属性路径'),
+        expr: z
+          .string()
+          .describe(
+            'JSONPath 表达式,如 $[?(@.type=="card" && @.price<100)] 或 $..title(递归找所有 title)',
+          ),
+        limit: z.number().int().min(1).max(200).optional().describe('返回结果上限,默认 50'),
+      }),
+    },
+  )
+
+  const searchWindowProp = tool(
+    async ({ path, query, mode, fuzzyThreshold, matchKey, limit }) => {
+      const spec = registry.get(path)
+      if (!spec) {
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
+      }
+      const root = getByPath(window, path)
+      if (root == null) return toolError({ code: 'EMPTY', path, message: `"${path}" 为空,无可搜索内容` })
+      try {
+        const hits = searchJson(root, query, {
+          mode: mode as SearchMode,
+          fuzzyThreshold,
+          matchKey,
+          limit: limit ?? 50,
+        })
+        return safeStringify({ matched: hits.length, results: hits })
+      } catch (e) {
+        return toolError({
+          code: 'REGEX_INVALID',
+          path,
+          message: `搜索错误: ${(e as Error).message}`,
+          hint: 'regex 模式下 query 须为合法正则;改 mode 为 substring/fuzzy 可避免正则语法问题',
+          details: { query },
+        })
+      }
+    },
+    {
+      name: 'search_window_prop',
+      description:
+        '在一个已注册 window 属性内做文本搜索(只读,无副作用)。mode:substring(子串,默认,大小写不敏感)、regex(正则,i 标志)、fuzzy(模糊:子串命中或 Levenshtein 距离 ≤ fuzzyThreshold)。递归遍历所有叶子值(及可选 key),返回命中元素的 path + value(超 200 字符截断)。适合在大 JSON 里找名字近似、记不清的元素,定位 path 后用 edit_window_prop 改。',
+      schema: z.object({
+        path: z.string().describe('已注册的属性路径(在它的子树内搜索)'),
+        query: z.string().describe('搜索词(substring/regex/fuzzy 共用)'),
+        mode: z.enum(['substring', 'regex', 'fuzzy']).optional().describe('匹配模式,默认 substring'),
+        fuzzyThreshold: z.number().int().min(0).max(5).optional().describe('fuzzy 模式最大编辑距离,默认 2'),
+        matchKey: z.boolean().optional().describe('是否同时匹配 key 名,默认 true'),
+        limit: z.number().int().min(1).max(200).optional().describe('返回上限,默认 50'),
+      }),
+    },
+  )
+
+  const evalWindowScript = tool(
+    async ({ path, script, mode }) => {
+      const spec = registry.get(path)
+      if (!spec) {
+        return toolError({
+          code: 'NOT_REGISTERED',
+          path,
+          message: `属性 "${path}" 未注册`,
+          hint: '用 list_window_props 查看可用属性',
+        })
+      }
+      if (script.length > 8000) {
+        return toolError({
+          code: 'SCRIPT_TOO_LARGE',
+          path,
+          message: `脚本过长(${script.length} 字符,上限 8000)`,
+          hint: '精简脚本;复杂逻辑可分步(先 query 探查再 transform 改),或拆成多次 eval',
+        })
+      }
+      const root = getByPath(window, path)
+      // query 模式:对深拷贝跑脚本,返回结果(只读,不改 window)
+      // transform 模式:脚本返回新值 → schema 校验 → 就地落地
+      const data = deepClone(root)
+      const res = await runSandboxedScript(data, script, 3000)
+      if (!res.ok) {
+        const isTimeout = /超时/.test(res.error || '')
+        return toolError({
+          code: isTimeout ? 'SCRIPT_TIMEOUT' : 'SCRIPT_ERROR',
+          path,
+          message: `脚本执行失败: ${res.error}`,
+          hint: isTimeout
+            ? '脚本可能有死循环或过重计算;加边界检查/分批;transform 返回完整新值勿返回巨大中间结果'
+            : '检查脚本语法与运行时错误;入参为 data(属性深拷贝),沙箱内禁用 fetch/XHR/WebSocket',
+          details: { elapsedMs: res.elapsedMs, scriptLen: script.length },
+        })
+      }
+      if (mode === 'transform') {
+        const chk = spec.schema.safeParse(res.result)
+        if (!chk.success) {
+          return toolError({
+            code: 'SCHEMA_INVALID',
+            path,
+            message: `脚本返回值校验失败,未写入(transform 模式要求返回该属性的完整新值且符合 schema)`,
+            hint: `确认脚本 return 了完整新值(非部分);按 describe_window_prop("${path}") 查看格式`,
+            details: formatZodIssues(chk.error.issues),
+          })
+        }
+        pushSnapshot(path, 'edit', 'eval_transform')
+        const live = getByPath(window, path)
+        if (live !== null && typeof live === 'object' && chk.data !== null && typeof chk.data === 'object') {
+          restoreInPlace(live as Record<string, unknown> | unknown[], chk.data)
+        } else {
+          setByPath(window, path, chk.data)
+        }
+        audit({ op: 'edit', path, detail: 'eval_transform', timestamp: Date.now() })
+        return `已通过脚本 transform 更新 ${path}(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(getByPath(window, path), 600)}`
+      }
+      // query 模式
+      return safeStringify({ ok: true, result: res.result, elapsedMs: res.elapsedMs })
+    },
+    {
+      name: 'eval_window_script',
+      description:
+        '在隔离的 Web Worker 沙箱里对一个已注册 window 属性跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(该属性的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为该属性的新整体值,经 schema 校验后就地落地,适合批量重写)。注意:transform 需返回完整新值;query 不改 window。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。',
+      schema: z.object({
+        path: z.string().describe('已注册的属性路径,其深拷贝作为脚本的 data 入参'),
+        script: z
+          .string()
+          .describe(
+            'JS 脚本体,如 data.filter(c=>c.stock>0).map(c=>c.id);入参名 data;末尾表达式或 return 即返回值',
+          ),
+        mode: z.enum(['query', 'transform']).optional().describe('query=只读返回结果(默认),transform=校验后落地为新值'),
       }),
     },
   )
@@ -506,5 +814,8 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     snapshotWindowProp,
     listWindowSnapshots,
     restoreWindowSnapshot,
+    queryWindowProp,
+    searchWindowProp,
+    evalWindowScript,
   ]
 }

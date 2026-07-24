@@ -186,7 +186,7 @@ Agent 自主调用这些内置工具(无需你写):
 | 工具 | 作用 |
 |---|---|
 | `list_window_props` / `describe_window_prop` | 列出 / 查看可操作属性 |
-| `get_window_prop` / `get_window_paths` | 读属性(支持祖先/后代路径精确读局部) |
+| `get_window_prop` / `get_window_paths` | 读属性(支持后代路径精确读局部;字段白名单读模式默认禁止祖先整体读,避免大 JSON 进上下文) |
 | `set_window_prop` | 写属性(**按 schema 校验**,不合法返回错误不写入) |
 | `edit_window_prop` | 增量 patch(`components.0.text`),避免重传整个大 JSON |
 | `delete_window_prop` | 删属性 |
@@ -203,6 +203,42 @@ Agent 自主调用这些内置工具(无需你写):
   - 例:Agent 误改 `page.theme`,对话「回退 page.theme 最近一次修改」→ Agent 调 `restore_window_snapshot({ path: 'page.theme' })`
 - **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **零桥接**:工具直接操作宿主页面主 `window`,无 iframe/shadow 隔离。
+- **大 JSON 只暴露声明字段**(字段白名单读模式,默认开启):当宿主有个大 JSON(如 `window.page` 含上百字段),你不必声明完整 schema,也无需让 Agent 看到全貌。做法:
+  - 注册「可操作子路径」而非顶层,各自 schema;数组元素用 `.passthrough()` 只校验必要 key、其余放行:
+
+    ```ts
+    windowProps: [
+      { path: 'page.title', description: '页面标题', schema: z.string() },
+      { path: 'page.theme.color', description: '主题色', schema: z.string() },
+      { path: 'page.components', description: '组件数组',
+        schema: z.array(z.object({
+          id: z.number(), type: z.string(), price: z.number(), title: z.string()
+        }).passthrough()) },  // 元素其余字段(internal 等)不校验、放行
+    ],
+    ```
+
+  - Agent 只能 `get`/`set`/`edit` 这些声明字段;`get_window_prop('page')`(未注册祖先)被拒 → 完整 JSON 不进上下文,省 token、防泄露。
+  - 改数组元素某字段用 `edit_window_prop('page.components', { op:'set', jsonPath:'1.price', value:'180' })` 增量 patch,只发改动、不重传整个数组。
+  - 需整体读祖先时设 `createChatSdk({ ..., })` 内 `windowOps` 选项 `whitelist:false`(回退原行为)。
+- **树形/递归 children 结构**:节点含 `children` 自引用时,用 zod `z.lazy(() => TreeNode)` 声明递归 schema,`.passthrough()` 让节点可带未声明字段:
+
+  ```ts
+  const TreeNode: z.ZodType = z.object({
+    id: z.number(),
+    type: z.string(),
+    text: z.string().optional(),
+    children: z.array(z.lazy(() => TreeNode)).optional(),  // 自引用 → 任意深度
+  }).passthrough()
+
+  windowProps: [
+    { path: 'page.components', description: '组件树(递归 children)', schema: z.array(TreeNode) },
+  ],
+  ```
+
+  - **查**:递归找任意深度的节点用 `query_window_prop` 的 `$..*[?(@.type=="card")]`(找所有 card);精确定位用 `$.components.0.children.0.children.0.text`
+  - **改**:增量改深层节点用 `edit_window_prop('page.components', { op:'set', jsonPath:'0.children.0.children.0.text', value:'"新文本"' })` —— jsonPath 逐级定位,只发改动,无需重传整棵树
+  - **校验**:递归 schema 自动穿透到 children,append 非法节点(如缺 `id`)被拒;passthrough 保留节点的额外字段(extra/style 等)
+  - **复杂遍历**(如带父路径聚合、按多条件递归筛选)用 `eval_window_script` 写递归 visit 函数最直观
 
 ### 6.2 自定义工具
 
