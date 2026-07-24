@@ -102,4 +102,12 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: UI 样式可配
 
-`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(主色 `--cs-primary`、背景、圆角等,提供默认值)与 props(头像显示 `showAvatar`、打字动画 `showTyping`);默认采用中性主题(去渐变、单色主色)。集成方可经 CSS 变量覆盖主题或经 props 关闭装饰,无需改组件代码。
+`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(主色 `--cs-primary`、背景、圆角等,提供默认值)与 props(头像显示 `showAvatar`、打字动画 `showTyping`);默认采用中性主题(去渐变;主色墨绿 `#1f4d3a`,去 AI 风格化 indigo)。集成方可经 CSS 变量覆盖主题或经 props 关闭装饰,无需改组件代码。
+
+## Requirement: skill 文档源(doc)
+
+`defineSkill` 的内容来源支持 `doc` 字段(与 `getContent` 二选一,`doc` 优先):`http(s)://` 远程 md → `load_skill` 时 fetch 读取(同源/CORS 约束);`vfs://path` 或裸路径 → 从 vfs 读取(由 `createChatSdk` 在 vfs 启用时注入 `readVfs`)。skill 内容与代码解耦,集成方可把 skill 指南放 md 文档维护。读取失败(跨域 / 未找到 / vfs 未启用)返回结构化错误提示;超长截断(默认 20000 字符)。`resolveDocKind` 判定来源、`readSkillDoc` 读取(纯函数 + vfs 分支自测覆盖)。
+
+## Requirement: 执行流程视图(按轮次)
+
+DebugDrawer 提供「流程」视图,把扁平 debugLog 按 `round` 分组成流水:「准备」区放无 round 的日志(context / middleware / error),每轮一个卡片(第 N 轮:LLM请求 → LLM响应 → 工具调用 → 结果),节点左侧色条按类型区分,显示摘要(消息数 / 工具数 / 工具名 / 结果状态)+ 时间戳。`createAgent` 给 `tool_call`/`tool_result` 日志补 `round` 字段(与 llm_request/response 对齐)以支持按轮分组。便于排查「走到哪个模块、结果如何」,确认执行过程是否符合预期;详情仍看「日志」视图。

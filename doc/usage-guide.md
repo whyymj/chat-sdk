@@ -238,13 +238,17 @@ createChatSdk({
       name: 'component-lib',
       description: '组件库使用文档',
       whenToUse: '用户要用组件库搭页面时',
+      // 内容来源二选一(doc 优先于 getContent):
       getContent: () => fetch('/docs/components.md').then(r => r.text()),
+      // 或用 doc 文档源(skill 内容与代码解耦,放 md 文档维护):
+      // doc: 'https://host/components.md',        // 远程 md(同源/CORS)
+      // doc: 'vfs://skills/components.md',        // vfs 启用时从工作区读
     }),
   ],
 })
 ```
 
-Agent 会在需要时调用 `load_skill('component-lib')` 把内容载入上下文。
+Agent 会在需要时调用 `load_skill('component-lib')` 把内容载入上下文。`doc` 源在加载时自动读取(http fetch / vfs 读取),读取失败(跨域 / 未找到 / vfs 未启用)返回结构化错误提示,超长截断(20000 字符)。
 
 ### 6.4 Memory(持久指令)
 

@@ -203,9 +203,9 @@ createChatSdk({
 
 框架无关集成见 `demo/plain.html`(importmap + esm.sh 提供 peer dep)。
 
-**UI 模块可复用**(headless 进阶):`ChatDialog` / `MessageContent` / `CodePreview` 组件 + `useChat` composable 均从入口导出。headless(`ui:false`)自建 UI 时可 `import { ChatDialog, useChat }` 复用对话框组件与流式/重试/停止/重生成逻辑。`inspect()` 的 `AgentInfo` 含 `mcp.servers`(已连 MCP 列表)与每个工具的 `source`(`builtin`/`mcp:<name>`/`user`),DebugDrawer「Agent 信息」展示。
+**UI 模块可复用**(headless 进阶):`ChatDialog` / `MessageContent` / `CodePreview` 组件 + `useChat` composable 均从入口导出。headless(`ui:false`)自建 UI 时可 `import { ChatDialog, useChat }` 复用对话框组件与流式/重试/停止/重生成逻辑。`inspect()` 的 `AgentInfo` 含 `mcp.servers`(已连 MCP 列表)与每个工具的 `source`(`builtin`/`mcp:<name>`/`user`),DebugDrawer「Agent 信息」展示。DebugDrawer 另有「🔀 流程」tab,把扁平日志按轮次分组成流水(准备区 + 每轮:LLM请求→响应→工具→结果),便于排查「走到哪个模块、结果如何」。
 
-**主题定制**:ChatDialog/DebugDrawer 暴露 CSS 变量(`--cs-primary`/`--cs-bg`/`--cs-radius` 等,默认中性主题,去 AI 风格化渐变)+ props(`showAvatar`/`showTyping`)。集成方可覆盖变量换主题或经 props 关装饰,无需改组件代码。
+**主题定制**:ChatDialog/DebugDrawer 暴露 CSS 变量(`--cs-primary`/`--cs-bg`/`--cs-radius` 等,默认主色墨绿 `#1f4d3a`,去 AI 风格化 indigo/渐变)+ props(`showAvatar`/`showTyping`)。集成方可覆盖变量换主题或经 props 关装饰,无需改组件代码。
 
 ## 编码规范
 - `<script setup lang="ts">`,Composition API;注释用中文,只解释非显而易见处
