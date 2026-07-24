@@ -265,8 +265,8 @@ function copyText(text: string) {
 <style scoped>
 .chat-dialog {
   /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变)。在祖先元素或 :root 覆盖 --cs-* 即可换主题 */
-  --cs-primary: #4f46e5;
-  --cs-primary-rgb: 79, 70, 229;
+  --cs-primary: #1f4d3a;
+  --cs-primary-rgb: 31, 77, 58;
   --cs-bg: #ffffff;
   --cs-bubble-ai: #f3f4f6;
   --cs-radius: 12px;
@@ -327,7 +327,7 @@ function copyText(text: string) {
   width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6;
   display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
 }
-.message-row.user .message-avatar { background: #ede9fe; }
+.message-row.user .message-avatar { background: #ecf5ef; }
 .message-content { max-width: 75%; }
 .message-bubble {
   padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5;
@@ -345,12 +345,12 @@ function copyText(text: string) {
 @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px); } }
 .typing-text { font-size: 13px; color: #9ca3af; }
 
-.reasoning-block { margin-bottom: 6px; border: 1px dashed #c7d2fe; border-radius: 8px; overflow: hidden; background: #f5f3ff; }
-.reasoning-header { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; user-select: none; font-size: 12px; color: #6d28d9; }
+.reasoning-block { margin-bottom: 6px; border: 1px dashed #b8d4c5; border-radius: 8px; overflow: hidden; background: #f0f7f3; }
+.reasoning-header { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; user-select: none; font-size: 12px; color: #2d5a47; }
 .reasoning-icon { font-size: 13px; }
 .reasoning-title { font-weight: 600; }
 .reasoning-toggle { margin-left: auto; }
-.reasoning-body { padding: 8px 10px; border-top: 1px dashed #c7d2fe; font-size: 12px; line-height: 1.6; color: #4c1d95; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
+.reasoning-body { padding: 8px 10px; border-top: 1px dashed #b8d4c5; font-size: 12px; line-height: 1.6; color: #16402f; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
 
 .steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 3px; }
 .step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; }
@@ -358,7 +358,7 @@ function copyText(text: string) {
 .step-icon { font-size: 11px; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .step-status.running { color: #0891b2; }
-.step-children { padding-left: 12px; border-left: 2px solid #c7d2fe; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.step-children { padding-left: 12px; border-left: 2px solid #b8d4c5; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
 .step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 8px; background: #f8fafc; font-size: 10px; color: #64748b; }
 
 .stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--cs-primary); animation: blink 1s steps(2) infinite; }
@@ -396,5 +396,5 @@ function copyText(text: string) {
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }
 .message-row.assistant:hover .msg-actions { opacity: 1; }
 .msg-action-btn { padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
-.msg-action-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f5f3ff; }
+.msg-action-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
 </style>
