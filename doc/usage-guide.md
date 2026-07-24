@@ -25,6 +25,7 @@
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
 - [10. 环境变量](#10-环境变量)
 - [11. 常见问题与坑](#11-常见问题与坑)
+- [12. 完整示例(简 → 繁)](#12-完整示例简--繁)
 
 ---
 
@@ -620,6 +621,134 @@ A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共�
 
 **Q: 隐私模式 / 存储满了会崩吗?**
 A: 不会。自动降级内存,数据不丢(可能不再持久化),并触发 `degraded` 事件。
+
+---
+
+## 12. 完整示例(简 → 繁)
+
+从最简到复杂,覆盖全部能力。复制即用。
+
+### 12.1 最简(30 秒起步)
+
+```ts
+import { createChatSdk, z } from 'chat-sdk'
+
+createChatSdk({
+  container: '#agent',
+  llm: { apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  systemPrompt: '你是页面助手,帮用户改 window.page。',
+  // 声明 agent 能碰的 window 属性(范围 + schema 校验,读写都经工具)
+  windowProps: [
+    { path: 'page.title', description: '页面标题', schema: z.string() },
+    { path: 'page.theme', description: '主题', schema: z.enum(['light', 'dark']) },
+  ],
+}).mount()
+```
+
+零配置自动获得 21 个内置工具(get/set/edit window + 快照回退 + fetch + todos + load_skill + vfs + spawn)。
+
+### 12.2 中等:自定义工具 + skill 文档源 + 持久化
+
+```ts
+import { createChatSdk, defineTool, defineSkill, z } from 'chat-sdk'
+
+const searchProduct = defineTool({
+  name: 'search_product',
+  description: '搜索商品库',
+  schema: z.object({ keyword: z.string() }),
+  handler: ({ keyword }) => fetch(`/api/search?q=${keyword}`).then(r => r.text()),
+})
+
+createChatSdk({
+  container: '#agent',
+  id: 'shop-editor',              // 稳定 id:多 agent 隔离 + 刷新恢复
+  storage: 'indexed',             // 持久化(对话 / vfs / todos / memory)
+  llm: { apiKey, baseUrl, model: 'deepseek-chat' },
+  systemPrompt: '你是商品页编辑助手。复杂任务先 write_todos 拆解。',
+  windowProps: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
+  tools: [searchProduct],
+  skills: [
+    defineSkill({ name: 'style-guide', description: '设计规范', doc: 'https://host/style.md' }),  // doc 文档源(http 远程 / vfs 本地)
+  ],
+  memory: '用简体中文;价格显示 ¥。',
+}).mount()
+```
+
+### 12.3 复杂:全能力(预声明子 agent + 独立 llm + verify + 中间件)
+
+```ts
+import { createChatSdk, defineTool, defineSkill, z, type Middleware } from 'chat-sdk'
+
+const searchProduct = defineTool({ name: 'search_product', /* ... */ } as any)
+
+// 自定义中间件:工具埋点
+const analytics: Middleware = {
+  name: 'analytics',
+  afterToolCall: async (ctx, next) => {
+    const res = await next(ctx)
+    console.log('[埋点]', ctx.name, res?.status)
+    return res
+  },
+}
+
+createChatSdk({
+  container: '#agent',
+  id: 'shop-editor',
+  storage: 'indexed',
+
+  // —— 主 agent ——
+  llm: { apiKey, baseUrl, model: 'deepseek-chat', temperature: 0.3, maxTokens: 16384 },
+  systemPrompt: '你是商品页编辑助手。复杂任务先 write_todos;调研用 use_researcher;审查用 use_reviewer。',
+  windowProps: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
+  tools: [searchProduct],
+  skills: [defineSkill({ name: 'style-guide', description: '设计规范', doc: 'vfs://skills/style.md' })],
+  memory: '用简体中文;价格显示 ¥。',
+
+  // —— 预声明子 agent(命名角色,各配独立 llm / provider)——
+  subagents: [
+    {
+      id: 'researcher', description: '市场调研,擅长分析竞品',
+      llm: { apiKey, baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5' },  // 不同 provider
+      systemPrompt: '你是市场调研专家,给数据支撑的结论。',
+      tools: [searchProduct],
+      temperature: 0.2, maxTokens: 8192,
+    },
+    { id: 'reviewer', description: '文案审查', systemPrompt: '你是文案审查者,找语病和不合规表述。' },  // 不传 llm → 继承主
+  ],
+
+  // —— 自检:返回前验证 window 写入(写后读回 + schema)——
+  capabilities: { verify: true },
+  verify: { maxAttempts: 2 },
+
+  middleware: [analytics],
+  debug: true,
+}).mount()
+```
+
+主 LLM 会自动:多步任务先 `write_todos` → 调研调 `use_researcher({task})` → 审查调 `use_reviewer({task})` → 改 `page.components` 前自动 snapshot(误改可 `restore_window_snapshot`)→ 返回前 verify 自检。
+
+### 12.4 headless 自建 UI(不渲染内置对话框)
+
+```ts
+import { createChatSdk } from 'chat-sdk'
+
+const agent = createChatSdk({ ui: false, llm, windowProps })
+agent.mount()
+agent.messages        // 响应式数组,自建 UI 读它
+await agent.send('加一个提交按钮')
+```
+
+也可 `import { ChatDialog, useChat } from 'chat-sdk'` 复用对话框组件与流式 / 重试 / 停止 / 重生成逻辑。
+
+### 12.5 主题定制(换主色)
+
+默认主色墨绿 `#1f4d3a`(去 AI 风 indigo)。覆盖 CSS 变量即可换主题:
+
+```css
+#agent { --cs-primary: #b45309; }   /* 换成焦糖棕 */
+```
+
+可覆盖变量:`--cs-primary`(主色)/ `--cs-bg`(背景)/ `--cs-radius`(圆角);props:`showAvatar` / `showTyping`(关装饰)。
 
 ---
 
