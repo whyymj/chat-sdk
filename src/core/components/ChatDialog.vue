@@ -264,8 +264,8 @@ function copyText(text: string) {
 
 <style scoped>
 .chat-dialog {
-  /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变) */
-  --cs-primary: var(--cs-primary);
+  /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变)。在祖先元素或 :root 覆盖 --cs-* 即可换主题 */
+  --cs-primary: #4f46e5;
   --cs-primary-rgb: 79, 70, 229;
   --cs-bg: #ffffff;
   --cs-bubble-ai: #f3f4f6;
