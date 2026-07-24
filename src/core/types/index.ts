@@ -87,5 +87,5 @@ export interface AgentInfo {
   todos: { content: string; status: string }[]
   subagent: SubagentInfo
   /** verify 自检装载状态(默认未装载 → undefined) */
-  verify?: { enabled: boolean; maxAttempts: number }
+  verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean }
 }

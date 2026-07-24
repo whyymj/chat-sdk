@@ -33,6 +33,8 @@ export interface BeforeReturnContext {
   messages: BaseMessage[]
   state: HarnessState
   response: ModelResponse
+  /** 日志下沉:写主 debugLogs(verify 对抗审查等用它记录可观察日志) */
+  log?: (type: string, data: unknown) => void
 }
 
 /**

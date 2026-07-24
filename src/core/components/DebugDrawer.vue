@@ -299,6 +299,16 @@ function statusLabel(s: string) { return statusMeta[s]?.label ?? s }
                   </div>
                 </div>
 
+                <div v-if="agentInfo.verify" class="info-section">
+                  <div class="info-title">✅ Verify 自检</div>
+                  <div class="kv-grid">
+                    <div class="kv"><span class="k">启用</span><span class="v">{{ agentInfo.verify.enabled ? '是' : '否' }}</span></div>
+                    <div class="kv"><span class="k">自纠上限</span><span class="v">{{ agentInfo.verify.maxAttempts }}</span></div>
+                    <div class="kv"><span class="k">对抗验证</span><span class="v">{{ agentInfo.verify.adversarial ? '开启' : '关闭' }}</span></div>
+                    <div v-if="agentInfo.verify.adversarial" class="kv"><span class="k">对抗模型</span><span class="v" style="font-size: 11px">{{ agentInfo.model || '-' }}(同主)</span></div>
+                  </div>
+                </div>
+
                 <div v-if="agentInfo.todos.length" class="info-section">
                   <div class="info-title">📋 任务清单 ({{ agentInfo.todos.length }})</div>
                   <div v-for="(td, i) in agentInfo.todos" :key="i" class="info-todo">

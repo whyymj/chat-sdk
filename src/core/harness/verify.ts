@@ -59,12 +59,14 @@ export interface VerifyMiddlewareOptions {
 export function createVerifyMiddleware(opts: VerifyMiddlewareOptions): Middleware {
   return {
     name: 'verify',
-    async beforeReturn({ messages, state }) {
+    async beforeReturn({ messages, state, log }) {
       const res = await opts.check({ messages, state })
       if (!res.ok) return res.feedback ?? '结果未通过验证,请复查。'
       // check 通过 + 对抗验证开启:spawn 找茬子 agent(refute 姿态)再审,突破自审 confirmation bias
       if (opts.adversarial) {
-        const advFeedback = await runAdversarial(messages, opts.adversarial.llm)
+        log?.('middleware', { stage: 'adversarial_start', model: describeLlm(opts.adversarial.llm) })
+        const advFeedback = await runAdversarial(messages, opts.adversarial.llm, log)
+        log?.('middleware', { stage: 'adversarial_done', clean: advFeedback === null, feedback: advFeedback })
         if (advFeedback) return advFeedback
       }
       return null
@@ -175,6 +177,11 @@ function isChatModel(v: unknown): v is BaseChatModel {
   return !!v && typeof v === 'object' && typeof (v as any).invoke === 'function' && typeof (v as any).stream === 'function'
 }
 
+/** 描述 llm(供日志/调试面板显示对抗模型信息) */
+function describeLlm(llm: SubagentLlmConfig | BaseChatModel): string {
+  return isChatModel(llm) ? ((llm as any).model ?? (llm as any).modelName ?? '<实例>') : (llm.model ?? '<配置>')
+}
+
 /** 对抗审查"无问题"放行判定(verdict 命中 → 子 agent 未找出问题) */
 const ADVERSARIAL_CLEAN_RE = /无问题|没有问题|未发现问题|没有发现|没问题|未发现/
 
@@ -203,7 +210,11 @@ function extractLastTurn(messages: BaseMessage[]): { lastUser: string; lastReply
  * - verdict 表明无问题 → null(放行);否则返回子 agent 找出的问题
  * - 依赖 LLM,运行时行为(同 subagent/mcp 手动验证);isAdversarialClean 纯函数已自测
  */
-async function runAdversarial(messages: BaseMessage[], llm: SubagentLlmConfig | BaseChatModel): Promise<string | null> {
+async function runAdversarial(
+  messages: BaseMessage[],
+  llm: SubagentLlmConfig | BaseChatModel,
+  log?: (type: string, data: unknown) => void,
+): Promise<string | null> {
   const { lastUser, lastReply } = extractLastTurn(messages)
   if (!lastReply) return null // 无最终回复可审,放行
   const prompt = [
@@ -213,11 +224,14 @@ async function runAdversarial(messages: BaseMessage[], llm: SubagentLlmConfig | 
     '只报告具体、可验证的问题。若确实无问题,只回复"无问题"。',
   ].join('\n')
   const sys = '你是严格的对抗式审查者,只找问题不赞美。目标是反驳,不是改进。'
+  // 对抗子 agent 的日志经 onLog 转发到主 debugLogs(带 source:'adversarial' 标签,调试面板可区分)
+  const forwardLog = log ? (e: { type: string; data: unknown }) => log(e.type, { ...(e.data as object), source: 'adversarial' }) : undefined
   const child = createAgent(
     isChatModel(llm)
-      ? { llm, maxToolRounds: 1, systemPrompt: sys }
-      : { apiKey: llm.apiKey, baseUrl: llm.baseUrl, model: llm.model, temperature: 0, maxTokens: llm.maxTokens, maxToolRounds: 1, systemPrompt: sys },
+      ? { llm, maxToolRounds: 1, systemPrompt: sys, onLog: forwardLog }
+      : { apiKey: llm.apiKey, baseUrl: llm.baseUrl, model: llm.model, temperature: 0, maxTokens: llm.maxTokens, maxToolRounds: 1, systemPrompt: sys, onLog: forwardLog },
   )
   const verdict = await child.invoke([{ role: 'user', content: prompt, timestamp: Date.now() }])
+  log?.('middleware', { stage: 'adversarial_verdict', verdict, source: 'adversarial' })
   return isAdversarialClean(verdict) ? null : verdict.trim()
 }

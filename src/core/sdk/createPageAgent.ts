@@ -404,6 +404,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
         verify: {
           enabled: !!verifyMw,
           maxAttempts: useVerify ? verifyMaxAttempts : 0,
+          adversarial: useVerify && !!options.verify?.adversarial,
         },
       }
     },

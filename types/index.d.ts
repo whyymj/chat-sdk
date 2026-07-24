@@ -77,7 +77,7 @@ export interface AgentInfo {
   middleware: string[];
   todos: { content: string; status: string }[];
   subagent: SubagentInfo;
-  verify?: { enabled: boolean; maxAttempts: number };
+  verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
 }
 export interface Toolset { name: string; tools: unknown[]; }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }

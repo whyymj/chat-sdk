@@ -316,7 +316,7 @@ export function createAgent(options: CreateAgentOptions) {
         // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
         // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
         if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
-          const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response })
+          const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
           if (feedback) {
             lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
             state.verifyAttempts += 1

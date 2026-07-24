@@ -27,6 +27,7 @@
     "dev": "vite",
     "mcp:mock": "tsx scripts/mcp-mock-server.ts",
     "mcp:probe": "tsx scripts/mcp-probe.ts",
+    "verify:probe": "tsx scripts/verify-probe.ts",
     "build": "npm run build:lib && npm run build:iife",
     "build:lib": "vite build",
     "build:iife": "vite build --config vite.iife.config.ts",
