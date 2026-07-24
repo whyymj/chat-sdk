@@ -14,7 +14,7 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { offloadLargeResult } from '../utils/offload'
 import { createVfs, createVfsTools } from '../backends/vfs'
 import { createTodosMiddleware } from '../harness/todos'
-import { createSkillsMiddleware, defineSkill } from '../harness/skills'
+import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../harness/skills'
 import { createPermissionsMiddleware } from '../harness/permissions'
 import { createMemoryMiddleware } from '../harness/memory'
 import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../harness/middleware'
@@ -919,6 +919,43 @@ console.log('\n[usageHints middleware]')
   assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
   assert(mwFull.name === 'usageHints', '中间件 name=usageHints')
+}
+
+// ============ skills 文档源(doc:http 远程 / vfs 本地)============
+console.log('\n[skills 文档源]')
+{
+  // resolveDocKind 判定来源
+  assert(resolveDocKind('https://host/g.md') === 'http', 'resolveDocKind: https → http')
+  assert(resolveDocKind('http://host/g.md') === 'http', 'resolveDocKind: http → http')
+  assert(resolveDocKind('//host/g.md') === 'http', 'resolveDocKind: 协议相对 // → http')
+  assert(resolveDocKind('vfs://skills/g.md') === 'vfs', 'resolveDocKind: vfs:// → vfs')
+  assert(resolveDocKind('skills/g.md') === 'vfs', 'resolveDocKind: 裸路径 → vfs')
+  assert(resolveDocKind('/skills/g.md') === 'vfs', 'resolveDocKind: /abs 路径 → vfs')
+
+  // normalizeVfsPath 去前缀 + 规范化
+  assert(normalizeVfsPath('vfs://skills/g.md') === 'skills/g.md', 'normalizeVfsPath: 去 vfs:// 前缀')
+  assert(normalizeVfsPath('/skills/g.md') === 'skills/g.md', 'normalizeVfsPath: 去前导 /')
+  assert(normalizeVfsPath('skills//g.md') === 'skills/g.md', 'normalizeVfsPath: 合并重复斜杠')
+
+  // readSkillDoc vfs 分支(http 分支含 fetch,运行时手动验证)
+  const vfsOk = await readSkillDoc('vfs://skills/g.md', () => '# 指南\n正文')
+  assert(vfsOk.ok && vfsOk.content === '# 指南\n正文', 'readSkillDoc: vfs 文档存在 → 返回内容')
+
+  const vfsMiss = await readSkillDoc('vfs://skills/missing.md', () => undefined)
+  assert(!vfsMiss.ok && /未找到/.test(vfsMiss.error), 'readSkillDoc: vfs 文档不存在 → 未找到')
+
+  const vfsNoInst = await readSkillDoc('skills/g.md')
+  assert(!vfsNoInst.ok && /vfs 未启用/.test(vfsNoInst.error), 'readSkillDoc: vfs 路径但未注入 readVfs → 提示未启用')
+
+  // load_skill 整体:doc 优先于 getContent
+  const mw = createSkillsMiddleware([defineSkill({ name: 'doc-skill', description: 'd', doc: 'vfs://x.md' })], {
+    readVfs: () => '文档正文',
+  })
+  const loadTool = byName(mw.tools || [])
+  const r1 = await invoke(loadTool.load_skill, { name: 'doc-skill' })
+  assert(/文档正文/.test(r1), 'load_skill: doc 源 → 读取文档注入(优先于 getContent)')
+  const r2 = await invoke(loadTool.load_skill, { name: 'doc-skill' })
+  assert(/已在本轮加载/.test(r2), 'load_skill: 重复加载 → 提示无需重复')
 }
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)

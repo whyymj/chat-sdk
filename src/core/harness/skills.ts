@@ -6,6 +6,10 @@
  *  - 全文不预加载;LLM 调 load_skill(name) 按需加载到当轮 context
  *  - state 记已加载名(skillsLoaded)避免重复
  *
+ * skill 内容来源二选一(doc 优先):
+ *  - doc:文档源(http(s):// 远程 md,或 vfs://path / 裸路径 本地 vfs 文档)
+ *  - getContent:直接返回字符串的函数(原方式)
+ *
  * skill 来自运行时注入(非真实 FS),用 defineSkill 声明。
  */
 import { tool } from '@langchain/core/tools'
@@ -19,13 +23,72 @@ export interface SkillSpec {
   description: string
   /** 何时使用(可选,进索引帮助 Agent 判断) */
   whenToUse?: string
-  /** 获取 skill 全文指令(load_skill 时调用) */
-  getContent: () => string | Promise<string>
+  /**
+   * 文档源(与 getContent 二选一,doc 优先):load_skill 时读取文本注入。
+   *  - http(s):// 远程 md → fetch 读取(仅同源或已配 CORS)
+   *  - `vfs://path` 或裸路径 → 从 vfs 读取(需 vfs 启用,由 createChatSdk 注入 readVfs)
+   */
+  doc?: string
+  /** 获取 skill 全文指令(load_skill 时调用);有 doc 时 doc 优先 */
+  getContent?: () => string | Promise<string>
 }
 
 /** 声明一个 skill(运行时注入用) */
 export function defineSkill(spec: SkillSpec): SkillSpec {
   return spec
+}
+
+/** skill 文档读取结果:成功返回 content,失败返回 error 文案 */
+export type DocReadResult = { ok: true; content: string } | { ok: false; error: string }
+
+/** skill 文档长度上限(与 fetch_document 一致,防撑爆上下文) */
+const MAX_DOC_CHARS = 20000
+
+/** 远程 URL 命中(CORS 友好的 http/https + 协议相对 //) */
+const HTTP_RE = /^https?:\/\//i
+
+/** 判定 doc 来源:远程 http(s) 还是本地 vfs(纯函数,供测试) */
+export function resolveDocKind(doc: string): 'http' | 'vfs' {
+  return HTTP_RE.test(doc) || doc.startsWith('//') ? 'http' : 'vfs'
+}
+
+/** 去 vfs:// 前缀 + 规范化路径(与 vfs.ts normalize 同语义:去前导 /、合并重复斜杠) */
+export function normalizeVfsPath(p: string): string {
+  return p.replace(/^vfs:\/\//, '').replace(/^\/+/, '').replace(/\/+/g, '/')
+}
+
+/**
+ * 读取 skill 文档(http 远程 / vfs 本地)。
+ * - http:fetch 读取(浏览器 CORS 约束),超长截断
+ * - vfs:经 readVfs 回调读取(由 createChatSdk 在 vfs 启用时注入);未注入或未找到 → error
+ */
+export async function readSkillDoc(
+  doc: string,
+  readVfs?: (path: string) => string | undefined,
+): Promise<DocReadResult> {
+  if (resolveDocKind(doc) === 'http') {
+    try {
+      const res = await fetch(doc)
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status} ${res.statusText}(${doc})` }
+      const text = await res.text()
+      const body =
+        text.length > MAX_DOC_CHARS
+          ? text.slice(0, MAX_DOC_CHARS) + `\n…[已截断,原长度 ${text.length}]`
+          : text
+      return { ok: true, content: body }
+    } catch (e) {
+      const msg = (e as Error)?.message || String(e)
+      if (/Failed to fetch|NetworkError|CORS|blocked/i.test(msg)) {
+        return { ok: false, error: `CORS 跨域或网络错误(${msg});浏览器仅能 GET 同源或已配 CORS 的资源` }
+      }
+      return { ok: false, error: msg }
+    }
+  }
+  // vfs 文档
+  if (!readVfs) return { ok: false, error: `skill 文档 ${doc} 是 vfs 路径,但 vfs 未启用` }
+  const content = readVfs(normalizeVfsPath(doc))
+  if (content == null) return { ok: false, error: `未找到 vfs 文档 ${doc}(可用 vfs_ls 查看)` }
+  return { ok: true, content }
 }
 
 function renderSkillsIndex(skills: SkillSpec[]): string | undefined {
@@ -38,7 +101,15 @@ function renderSkillsIndex(skills: SkillSpec[]): string | undefined {
   ].join('\n')
 }
 
-export function createSkillsMiddleware(skills: SkillSpec[]): Middleware {
+export interface SkillsMiddlewareOptions {
+  /** 读 vfs 文档的函数(由 createChatSdk 在 vfs 启用时注入);未注入则 vfs 路径 doc 报错提示 */
+  readVfs?: (path: string) => string | undefined
+}
+
+export function createSkillsMiddleware(
+  skills: SkillSpec[],
+  opts?: SkillsMiddlewareOptions,
+): Middleware {
   const skillMap = new Map(skills.map((s) => [s.name, s]))
   const loaded = new Set<string>()
 
@@ -47,7 +118,16 @@ export function createSkillsMiddleware(skills: SkillSpec[]): Middleware {
       const s = skillMap.get(name)
       if (!s) return `未找到 skill "${name}"。`
       if (loaded.has(name)) return `skill "${name}" 已在本轮加载,无需重复。`
-      const content = await s.getContent()
+      let content: string
+      if (s.doc) {
+        const r = await readSkillDoc(s.doc, opts?.readVfs)
+        if (!r.ok) return `加载 skill "${name}" 文档失败:${r.error}`
+        content = r.content
+      } else if (s.getContent) {
+        content = await s.getContent()
+      } else {
+        return `skill "${name}" 未配置内容(doc 或 getContent 任选其一)。`
+      }
       loaded.add(name)
       return `skill "${name}" 完整指令:\n\n${content}`
     },

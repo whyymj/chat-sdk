@@ -310,7 +310,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(usePlanning ? [todosMw] : []),
-    ...(useSkills ? [createSkillsMiddleware(options.skills || [])] : []),
+    ...(useSkills
+      ? [
+          createSkillsMiddleware(options.skills || [], {
+            // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
+            readVfs: useVfs ? (p: string) => vfsStore.files[p]?.content : undefined,
+          }),
+        ]
+      : []),
     ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
     ...(useSummarization ? [createSummarizationMiddleware(options.contextOptions === false ? undefined : options.contextOptions)] : []),
     ...(useMemory ? [memoryMw] : []),

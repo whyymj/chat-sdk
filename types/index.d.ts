@@ -132,7 +132,9 @@ export interface SkillSpec {
   name: string;
   description: string;
   whenToUse?: string;
-  getContent: () => string | Promise<string>;
+  /** 文档源(http(s):// 远程 md,或 vfs://path / 裸路径 本地 vfs 文档);与 getContent 二选一,doc 优先 */
+  doc?: string;
+  getContent?: () => string | Promise<string>;
 }
 
 // ===== Verify 自检中间件 =====
