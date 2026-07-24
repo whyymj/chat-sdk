@@ -32,7 +32,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换,如 3001)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,330 项断言)
+npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,341 项断言)
 ```
 
 ## 环境配置
@@ -70,7 +70,7 @@ src/
     ├── components/             # ChatDialog / MessageContent / CodePreview / DebugDrawer(通用 UI,均从入口导出可复用)
     ├── types/index.ts
     ├── presets.ts              # 预设(pageBuilder / researcher / minimal)
-    ├── __tests__/selftest.ts   # 自测(330 项)
+    ├── __tests__/selftest.ts   # 自测(341 项)
     └── index.ts                # 库唯一入口(导出核心 + UI 模块:ChatDialog/MessageContent/CodePreview/useChat)
 examples/
 ├── _shared/                    # 开发期共享:DevNav(各 demo 页跳转胶囊,不进 SDK 产物)
@@ -209,7 +209,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(tsx 跑 `selftest.ts`,330 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints/context preset/压缩统计捕获/trim keep 自适应/approval+humanConfirm 中间件/checkpoint 会话级回滚),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
+`npm test`(tsx 跑 `selftest.ts`,341 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/selectBuiltinTools+usageHints/context preset/压缩统计捕获/trim keep 自适应/approval+humanConfirm 中间件/checkpoint 会话级回滚/trimMemoryMessages 旧摘要合并防逐级丢失),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时(依赖 LLM/server)手动验证。
 
 ## SDK 用法
 ```ts

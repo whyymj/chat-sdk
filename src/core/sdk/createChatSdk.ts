@@ -50,7 +50,7 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
-import { groupRounds, plainSummary } from '../utils/rounds'
+import { trimMemoryMessagesImpl } from '../utils/rounds'
 import type { AgentMessage, StreamHandler, AgentInfo } from '../types'
 
 export interface LLMConfig {
@@ -696,26 +696,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   /**
    * 内存对话轮数上限:超限把最旧轮次压缩为一条摘要 system 消息(原地 splice,保持共享响应式引用)。
    * storage:false 也生效 —— 纯内存历史累积的 OOM 兜底。
+   * 核心逻辑经纯函数 trimMemoryMessagesImpl(可单测):头部旧摘要并入新摘要,防更早摘要逐级丢失。
    */
   function trimMemoryMessages(): void {
-    if (maxMemoryRounds <= 0) return
-    const rounds = groupRounds(messages)
-    if (rounds.length <= maxMemoryRounds) return
-    const keepFromIdx = rounds[rounds.length - maxMemoryRounds].startIdx
-    const older = rounds.slice(0, rounds.length - maxMemoryRounds)
-    const summary = older
-      .map((r) => {
-        const q = plainSummary(r.userMsg.content, 60) || '(空)'
-        const a = r.assistantMsgs[0] ? plainSummary(r.assistantMsgs[0].content, 80) : '(无回复)'
-        return `- 第${r.round}轮:${q} → ${a}`
-      })
-      .join('\n')
-    const summaryMsg: AgentMessage = {
-      role: 'system',
-      content: `【更早对话摘要(${older.length} 轮)】\n${summary}`,
-      timestamp: older[0].userMsg.timestamp,
-    }
-    messages.splice(0, keepFromIdx, summaryMsg)
+    const r = trimMemoryMessagesImpl(messages, maxMemoryRounds)
+    if (r.trimmed) messages.splice(r.deleteFrom, r.deleteCount, r.summary)
   }
 
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */

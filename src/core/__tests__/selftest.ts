@@ -41,6 +41,7 @@ import { useContextManager } from '../composables/useContextManager'
 import { resolveContextOptions } from '../sdk/contextPreset'
 import { jpEval, searchJson } from '../tools/windowQuery'
 import { createAgent, trimContextIfNeededImpl } from '../harness/createAgent'
+import { trimMemoryMessagesImpl } from '../utils/rounds'
 import type { Middleware } from '../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
@@ -1706,6 +1707,47 @@ console.log('\n[harness loop: 收口综合 + afterAgent 兜底 + 逐轮 trim]')
   const bigKeep = trimContextIfNeededImpl(bigMsgs, 200000)
   assert(/保留首 400/.test(bigKeep[2].content as string), 'trim: keep 自适应(大阈值→400)')
 }
+
+// ============ trimMemoryMessagesImpl(内存轮数上限裁剪:旧摘要合并,防逐级丢失) ============
+console.log('\n[trimMemoryMessagesImpl]')
+{
+  // 造消息:每轮 = user + assistant。maxMemoryRounds=3,造 5 轮 → 触发裁剪保留最近 3 轮
+  const mk = (i: number): AgentMessage[] => [
+    { role: 'user', content: `问题${i}`, timestamp: i },
+    { role: 'assistant', content: `回复${i}`, timestamp: i + 1 },
+  ]
+  let msgs: AgentMessage[] = []
+  for (let i = 1; i <= 5; i++) msgs.push(...mk(i))
+
+  // 1. 首次裁剪:older=前2轮,生成摘要 system,保留最近3轮
+  const r1 = trimMemoryMessagesImpl(msgs, 3)
+  assert(r1.trimmed === true, '超 maxMemoryRounds → 触发裁剪')
+  assert(r1.deleteFrom === 0 && r1.deleteCount === 4, '删除前2轮(4条消息)')
+  assert(r1.summary.role === 'system' && /【更早对话摘要\(2 轮\)/.test(r1.summary.content), '生成摘要 system(2 轮)')
+  assert(/问题1/.test(r1.summary.content) && /问题2/.test(r1.summary.content), '摘要含 older 轮内容')
+
+  // 应用首次裁剪:头部摘要 + 最近3轮
+  msgs = [r1.summary, ...msgs.slice(r1.deleteCount)]
+
+  // 2. 再加2轮 → 6条+头部摘要,rounds=5轮(头部摘要被 groupRounds 跳过)→ 再次触发
+  for (let i = 6; i <= 7; i++) msgs.push(...mk(i))
+  const r2 = trimMemoryMessagesImpl(msgs, 3)
+  assert(r2.trimmed === true, '再次超限 → 再次触发')
+  // 关键:新摘要必须含旧摘要正文(累积),否则更早摘要被静默丢弃
+  assert(/问题1/.test(r2.summary.content) && /问题2/.test(r2.summary.content), '旧摘要(问题1/2)并入新摘要,不丢累积')
+  assert(/含累积/.test(r2.summary.content), '新摘要标注"含累积"')
+  assert(/【续】/.test(r2.summary.content), '旧摘要作"续"段追加')
+  assert(/问题3/.test(r2.summary.content) && /问题4/.test(r2.summary.content), '新 older(问题3/4)也并入')
+
+  // 3. 未超限不触发
+  const r3 = trimMemoryMessagesImpl([r1.summary, ...mk(1), ...mk(2), ...mk(3)], 3)
+  assert(r3.trimmed === false, '未超 maxMemoryRounds → 不触发')
+
+  // 4. maxMemoryRounds<=0 关闭
+  const r4 = trimMemoryMessagesImpl(msgs, 0)
+  assert(r4.trimmed === false, 'maxMemoryRounds<=0 → 关闭不裁剪')
+}
+
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)
 if (failed > 0) process.exit(1)
