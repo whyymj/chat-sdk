@@ -61,7 +61,7 @@ export interface ChatDialogProps {
 
 /** agent 检视信息（inspect() 返回，供 debug 窗口展示） */
 export interface ToolInfo { name: string; description: string; schema?: unknown; /** 来源:builtin / mcp:<name> / user */ source?: string }
-export interface SkillInfo { name: string; description: string; whenToUse?: string }
+export interface SkillInfo { name: string; description: string }
 export interface WindowPropInfo { path: string; description: string; schema?: unknown }
 
 /** 子 agent 配置(subagent 委派能力检视) */

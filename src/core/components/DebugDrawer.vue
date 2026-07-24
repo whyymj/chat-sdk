@@ -343,7 +343,6 @@ function flowNodeDetail(lg: DebugLog): string {
                   <div v-for="s in agentInfo.skills" :key="s.name" class="info-item">
                     <div class="info-name">{{ s.name }}</div>
                     <div class="info-desc">{{ s.description }}</div>
-                    <div v-if="s.whenToUse" class="info-desc muted">何时用:{{ s.whenToUse }}</div>
                   </div>
                 </div>
 

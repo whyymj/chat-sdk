@@ -425,7 +425,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         id: agentId,
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
-        skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description, whenToUse: s.whenToUse })),
+        skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
         windowProps: (options.windowProps ?? []).map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
         memory: options.memory ?? '',
         middleware: middlewares.map((m) => m.name),

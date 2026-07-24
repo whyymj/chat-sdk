@@ -19,17 +19,14 @@ import type { Middleware } from './middleware'
 export interface SkillSpec {
   /** skill 名(唯一标识) */
   name: string
-  /** 一句话说明(进 system prompt 索引) */
+  /** 一句话说明(进 system prompt 索引,帮 Agent 判断何时用 —— 兼顾「是什么」和「何时用」) */
   description: string
-  /** 何时使用(可选,进索引帮助 Agent 判断) */
-  whenToUse?: string
   /**
-   * 文档源(与 getContent 二选一,doc 优先):load_skill 时读取文本注入。
-   *  - http(s):// 远程 md → fetch 读取(仅同源或已配 CORS)
-   *  - `vfs://path` 或裸路径 → 从 vfs 读取(需 vfs 启用,由 createChatSdk 注入 readVfs)
+   * skill 全文内容来源(doc 与 getContent 二选一,doc 优先):
+   *  - doc:声明式文档源(http(s):// 远程 md,或 `vfs://path` / 裸路径)—— SDK 代劳 fetch(CORS/截断)+ vfs 读取,适合**静态文档**
+   *  - getContent:函数返回内容 —— 适合**动态生成 / 自定义逻辑**
    */
   doc?: string
-  /** 获取 skill 全文指令(load_skill 时调用);有 doc 时 doc 优先 */
   getContent?: () => string | Promise<string>
 }
 
@@ -93,7 +90,7 @@ export async function readSkillDoc(
 
 function renderSkillsIndex(skills: SkillSpec[]): string | undefined {
   if (!skills.length) return undefined
-  const lines = skills.map((s) => `- ${s.name}: ${s.whenToUse || s.description}`)
+  const lines = skills.map((s) => `- ${s.name}: ${s.description}`)
   return [
     '## 可用 Skills(渐进式披露)',
     lines.join('\n'),

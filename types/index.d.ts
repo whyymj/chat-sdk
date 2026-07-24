@@ -59,7 +59,7 @@ export interface ChatDialogProps {
 }
 
 export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
-export interface SkillInfo { name: string; description: string; whenToUse?: string }
+export interface SkillInfo { name: string; description: string }
 export interface WindowPropInfo { path: string; description: string; schema?: unknown }
 export interface SubagentInfo {
   enabled: boolean;
@@ -138,9 +138,9 @@ export interface PermissionRule {
 
 export interface SkillSpec {
   name: string;
+  /** 一句话说明(进索引,兼顾「是什么」+「何时用」) */
   description: string;
-  whenToUse?: string;
-  /** 文档源(http(s):// 远程 md,或 vfs://path / 裸路径 本地 vfs 文档);与 getContent 二选一,doc 优先 */
+  /** 文档源(http(s):// 远程 md,或 vfs://path / 裸路径;SDK 代劳 fetch+vfs);与 getContent 二选一,doc 优先 */
   doc?: string;
   getContent?: () => string | Promise<string>;
 }

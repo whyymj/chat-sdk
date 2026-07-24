@@ -73,8 +73,7 @@ onMounted(() => {
     skills: [
       defineSkill({
         name: 'page-builder',
-        description: '编辑由 JSON 驱动的响应式页面(window.page)',
-        whenToUse: '用户要求修改左侧页面(增删改组件 / 改标题 / 换主题)时',
+        description: '编辑 JSON 驱动的响应式页面(window.page)。用户要求改左侧页面(增删改组件 / 改标题 / 换主题)时使用',
         getContent: () => pageBuilderSkillContent,
       }),
     ],
