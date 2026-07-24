@@ -3,7 +3,7 @@
  *
  * 设计(design §4):
  *  - 克制:仅在该能力开启时注入对应提示,一行/能力;全部关闭时返回 undefined(不增上下文)。
- *  - 由 createPageAgent 构造(它知道 caps),非各能力中间件自注入(中间件不感知 caps)。
+ *  - 由 createChatSdk 构造(它知道 caps),非各能力中间件自注入(中间件不感知 caps)。
  *  - 装载栈最前 → 其 augmentPrompt 段紧跟 base systemPrompt。
  *  - 绝不覆盖集成方 systemPrompt(拼接在其后,由 buildSystemPrompt 组装)。
  */

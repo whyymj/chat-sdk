@@ -1,6 +1,6 @@
-# page-agent 进化设计规划书(Roadmap)
+# chat-sdk 进化设计规划书(Roadmap)
 
-> 目标:在保留「网页内嵌 + window 安全操作」差异化优势的前提下,把 page-agent 从「页面操作助手」升级为「可对标成熟 agent(Claude Code 等)的通用 harness」。
+> 目标:在保留「网页内嵌 + window 安全操作」差异化优势的前提下,把 chat-sdk 从「页面操作助手」升级为「可对标成熟 agent(Claude Code 等)的通用 harness」。
 >
 > 本文给出 6 个进化方向的**原理(对标成熟方案)+ 设计规划(在本仓库架构上的落地路径)+ 难点 + 工作量**,作为逐项实施的依据。本文只做设计,不含完整实现代码。
 
@@ -144,7 +144,7 @@ Agent 拿到任务直接执行(写 window、调工具),**无审批闸**;LLM 想�
 
 **配置**:
 ```ts
-createPageAgent({
+createChatSdk({
   mcp: [
     { transport: 'sse', url: 'https://mcp.example.com/sse' },
     { transport: 'websocket', url: 'wss://...' },
@@ -158,7 +158,7 @@ createPageAgent({
 
 **落地点**:
 - 新模块 `src/core/mcp/`(client + transport + 工具适配)。
-- `createPageAgent`:加 `mcp` 选项,mount 时连 server 并注册工具。
+- `createChatSdk`:加 `mcp` 选项,mount 时连 server 并注册工具。
 - 类型:`mcp?: McpServerConfig[]`。
 
 ### 难点
@@ -222,7 +222,7 @@ Claude Code:执行后跑测试确认、`code-reviewer` 子 agent 审查、loop-u
 - `check(state, messages) => Promise<{ ok: boolean; issues?: string[] }>`:由集成方定义领域检查。
 - 触发点:新增钩子或复用 `afterAgent` —— 执行完跑 `check`,不通过则把 `issues` 作为新 user 消息注入 → agent 自纠(限 N 轮)。
 
-**page-agent 典型 check**(领域适配):
+**chat-sdk 典型 check**(领域适配):
 - 「写后读回验证」:check 内调 `get_window_prop` 读回被改属性,对比预期。
 - 「schema 完整性」:校验 window 结构仍符合集成方不变量。
 
@@ -232,7 +232,7 @@ Claude Code:执行后跑测试确认、`code-reviewer` 子 agent 审查、loop-u
 **落地点**:
 - 新中间件 `harness/verify.ts`(`createVerifyMiddleware`)。
 - 可能需 `afterAgent` 之外的新钩子(或用 `wrapModelCall` 拦截 done)实现「自纠循环」。
-- `createPageAgent({ middleware: [createVerifyMiddleware({ check })] })`。
+- `createChatSdk({ middleware: [createVerifyMiddleware({ check })] })`。
 
 ### 难点
 - **通用 check 难定义**:高度领域相关 → 中间件只提供框架,check 由集成方写。

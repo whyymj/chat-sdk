@@ -12,9 +12,9 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { Middleware } from '../harness/middleware'
 import type { VfsFile } from '../harness/state'
 
-/** 持久化钩子(可选):由 createPageAgent 注入,工具层无感 */
+/** 持久化钩子(可选):由 createChatSdk 注入,工具层无感 */
 export interface VfsPersist {
-  /** 文件变更后回调(debounce 由 createPageAgent 控制落盘) */
+  /** 文件变更后回调(debounce 由 createChatSdk 控制落盘) */
   save?: (files: Record<string, VfsFile>) => void
 }
 

@@ -2,8 +2,8 @@
  * 内置工具集预设 —— 把内置工具打包成命名 Toolset,供集成方手动注入。
  *
  * 用法(「主要业务工具集单独引入、按需注入」,替代默认自动装配):
- *   import { defineWindowToolset, fetchTools } from 'page-agent'
- *   createPageAgent({
+ *   import { defineWindowToolset, fetchTools } from 'chat-sdk'
+ *   createChatSdk({
  *     toolsets: [defineWindowToolset(windowProps), fetchTools],
  *     capabilities: { windowOps: false, fetch: false }, // 关默认自动装配,改用手动注入
  *   })
@@ -21,13 +21,13 @@ export const fetchTools = defineToolset('fetch', fetchDocTools)
 
 /**
  * window 操作工具集工厂(依赖 windowProps 声明,故为工厂而非静态预设)。
- * 返回 Toolset,可直接放进 createPageAgent({ toolsets }) 或 subagent.toolsets。
+ * 返回 Toolset,可直接放进 createChatSdk({ toolsets }) 或 subagent.toolsets。
  */
 export function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions) {
   return defineToolset('window', createWindowOps(props, opts))
 }
 
-/** capabilities 子集(仅工具相关开关,避免与 createPageAgent 循环依赖) */
+/** capabilities 子集(仅工具相关开关,避免与 createChatSdk 循环依赖) */
 type ToolCapabilityFlags = { windowOps?: boolean; fetch?: boolean }
 
 /**

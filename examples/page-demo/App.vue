@@ -6,7 +6,7 @@
  * Agent 经 set_window_prop 改 page.* 属性 → 左侧 PageRenderer 响应式更新。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
-import { createPageAgent, type PageAgent } from '../../src/core'
+import { createChatSdk, type ChatSdk } from '../../src/core'
 import { defineSkill } from '../../src/core/harness/skills'
 import type { Middleware } from '../../src/core/harness/middleware'
 import { useAgentConfig } from './useAgentConfig'
@@ -24,7 +24,7 @@ const cfg = useAgentConfig()
 })
 
 const root = ref<HTMLElement>()
-let agent: PageAgent | null = null
+let agent: ChatSdk | null = null
 
 /**
  * 自定义中间件示例:对话埋点
@@ -55,7 +55,7 @@ const analyticsMiddleware: Middleware = {
 }
 
 onMounted(() => {
-  agent = createPageAgent({
+  agent = createChatSdk({
     container: root.value!,
     id: 'page-demo',                             // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
     storage: 'indexed',                          // ← 开启持久化(默认关闭);可选 'session'/'local'/'memory'
@@ -113,7 +113,8 @@ onUnmounted(() => agent?.unmount())
   padding: 24px;
 }
 .pane-right {
-  flex: 0 0 460px;
+  width: 50%;
+  flex: 1;
   border-left: 1px solid #e5e7eb;
   background: #fff;
 }

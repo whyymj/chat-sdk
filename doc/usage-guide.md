@@ -1,4 +1,4 @@
-# page-agent 使用手册
+# chat-sdk 使用手册
 
 > 框架无关的页面 Agent SDK:一行挂载,给任意网页装上一个能**读写宿主页面、调用工具、规划任务**的 AI 对话框。
 
@@ -30,7 +30,7 @@
 
 ## 1. 它是什么
 
-`page-agent` 是一个 **JS SDK**,把一个基于 ReAct 的 Tool-Calling Agent 以**对话框形态**挂载到任意网页。Agent 能:
+`chat-sdk` 是一个 **JS SDK**,把一个基于 ReAct 的 Tool-Calling Agent 以**对话框形态**挂载到任意网页。Agent 能:
 
 - **读写宿主页面** `window` 上声明的属性(带 schema 校验 + 快照回退)→ 直接驱动你的页面 UI
 - **调用工具**:抓取文档、读写虚拟工作区、以及你自定义的任意工具
@@ -45,29 +45,29 @@
 **方式一:npm**(推荐,模块化项目)
 
 ```bash
-npm install page-agent
+npm install chat-sdk
 # 同时装 peer 依赖
 npm install zod @langchain/openai @langchain/core
 ```
 
 ```ts
-import { createPageAgent, z } from 'page-agent'
+import { createChatSdk, z } from 'chat-sdk'
 ```
 
 **方式二:CDN · ESM**(esm.sh 自动解析 peer,体积小)
 
 ```html
 <script type="module">
-  import { createPageAgent, z } from 'https://esm.sh/page-agent'
+  import { createChatSdk, z } from 'https://esm.sh/chat-sdk'
 </script>
 ```
 
 **方式三:CDN · IIFE 全量**(一行引入零配置,依赖全打包,适合无构建链路)
 
 ```html
-<script src="https://unpkg.com/page-agent"></script>
+<script src="https://unpkg.com/chat-sdk"></script>
 <script>
-  const { createPageAgent, z } = window.PageAgent
+  const { createChatSdk, z } = window.ChatSdk
 </script>
 ```
 
@@ -76,13 +76,13 @@ import { createPageAgent, z } from 'page-agent'
 最小可用例子 —— 让 Agent 能读写页面上的 `window.app`:
 
 ```ts
-import { createPageAgent, z } from 'page-agent'
+import { createChatSdk, z } from 'chat-sdk'
 
 // 1. 你的页面状态(任意结构)
 window.app = { title: '你好', theme: 'light' }
 
 // 2. 挂载 Agent
-createPageAgent({
+createChatSdk({
   container: '#agent',                    // 挂载点(选择器或 DOM 元素)
   id: 'my-app',                           // 稳定 id(刷新后恢复对话)
   storage: 'indexed',                     // 开启持久化
@@ -116,7 +116,7 @@ createPageAgent({
 ## 5. 配置项参考
 
 ```ts
-createPageAgent({
+createChatSdk({
   /* ===== 必填 ===== */
   container: '#agent',          // 挂载点(选择器字符串 或 HTMLElement)
   llm: {
@@ -208,7 +208,7 @@ Agent 自主调用这些内置工具(无需你写):
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):
 
 ```ts
-import { defineTool, z } from 'page-agent'
+import { defineTool, z } from 'chat-sdk'
 
 const getWeather = defineTool({
   name: 'get_weather',
@@ -220,7 +220,7 @@ const getWeather = defineTool({
   },
 })
 
-createPageAgent({ /* ... */ tools: [getWeather] })
+createChatSdk({ /* ... */ tools: [getWeather] })
 ```
 
 `handler` 里 `this`/全局 `window` 就是宿主页面,可直接操作 DOM 或调用页面已有方法。
@@ -230,9 +230,9 @@ createPageAgent({ /* ... */ tools: [getWeather] })
 把**大段上下文**(如组件库文档、操作指南)做成 skill,Agent 按需加载,避免一次性塞满 prompt:
 
 ```ts
-import { defineSkill } from 'page-agent'
+import { defineSkill } from 'chat-sdk'
 
-createPageAgent({
+createChatSdk({
   skills: [
     defineSkill({
       name: 'component-lib',
@@ -251,7 +251,7 @@ Agent 会在需要时调用 `load_skill('component-lib')` 把内容载入上下�
 写入 AGENTS.md 风格的持久指令(项目规范、固定约束),**每次对话都生效**,且会持久化:
 
 ```ts
-createPageAgent({
+createChatSdk({
   memory: `
 ## 项目规范
 - 所有金额单位为分(整数)
@@ -299,7 +299,7 @@ storage: false                              // 显式关闭
 **会话切换(命令式)**:
 
 ```ts
-const agent = createPageAgent({ id: 'my-app', storage: 'indexed', /* ... */ })
+const agent = createChatSdk({ id: 'my-app', storage: 'indexed', /* ... */ })
 await agent.mount()
 
 await agent.switchSession()              // 新建会话
@@ -314,8 +314,8 @@ await agent.switchSession('session-xyz') // 切到指定会话(不存在则以�
 模型调用遇到网络错误 / 429 / 5xx 自动指数退避重试(默认 `maxRetries: 2` = 最多 3 次尝试)。4xx(参数错误)不重试。调 `maxRetries` 可改:
 
 ```ts
-createPageAgent({ maxRetries: 4 })   // 更激进,适合网络不稳
-createPageAgent({ maxRetries: 0 })   // 关闭自动重试
+createChatSdk({ maxRetries: 4 })   // 更激进,适合网络不稳
+createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 ```
 
 **② 停止生成**
@@ -344,7 +344,7 @@ createPageAgent({ maxRetries: 0 })   // 关闭自动重试
 **适用**:分治大任务、多路调研、多视角审查、批量处理。
 
 ```ts
-createPageAgent({
+createChatSdk({
   // ...
   tools: [myResearchTool],
   subagent: {
@@ -380,7 +380,7 @@ createPageAgent({
 Agent 给出最终答**之前**,自动跑一次 `check` 验证结果;不通过则把 feedback 回灌给 Agent,驱动它修正后再答(限 `maxAttempts` 次,防死循环)。**默认关闭**(烧 token),需显式开启。
 
 ```ts
-createPageAgent({
+createChatSdk({
   capabilities: { verify: true },      // 开启(默认关)
   verify: {
     maxAttempts: 2,                     // 自纠上限(默认 2)
@@ -419,7 +419,7 @@ verify: {
 连远程 MCP server,动态把其 tools 注入 agent(标准化扩展工具生态):
 
 ```ts
-createPageAgent({
+createChatSdk({
   mcp: [
     { transport: 'http', url: 'https://mcp.example.com/mcp' },  // StreamableHTTP(推荐,fetch)
     { transport: 'websocket', url: 'wss://mcp.example.com/ws' },
@@ -455,7 +455,7 @@ createPageAgent({
 **例子 1:埋点/审计**(最常用)
 
 ```ts
-import { createPageAgent, type Middleware } from 'page-agent'
+import { createChatSdk, type Middleware } from 'chat-sdk'
 
 const analytics: Middleware = {
   name: 'analytics',
@@ -471,7 +471,7 @@ const analytics: Middleware = {
   afterAgent: () => console.log('[埋点] 对话结束'),
 }
 
-createPageAgent({ /* ... */ middleware: [analytics] })
+createChatSdk({ /* ... */ middleware: [analytics] })
 ```
 
 **例子 2:Prompt 增强**(注入运行时上下文)
@@ -501,10 +501,10 @@ const guard: Middleware = {
 
 ## 8. 命令式 API
 
-`createPageAgent()` 返回一个 `PageAgent` 实例:
+`createChatSdk()` 返回一个 `ChatSdk` 实例:
 
 ```ts
-const agent = createPageAgent({ /* ... */ })
+const agent = createChatSdk({ /* ... */ })
 
 await agent.mount()                          // 渲染对话框(异步:含持久化恢复)
 await agent.send('把标题改成 Hello')          // 命令式发送,返回 AI 回复
@@ -517,7 +517,7 @@ agent.unmount()                              // 卸载
 
 **headless 模式**(自建 UI):`ui: false` 不渲染内置对话框,`agent.messages` 暴露**响应式消息数组**,集成方自行渲染 + 用 `send`/`stream` 驱动。适合 React/原生/自定义 UI。
 ```ts
-const agent = createPageAgent({ llm, ui: false, id, storage })
+const agent = createChatSdk({ llm, ui: false, id, storage })
 await agent.mount()
 agent.messages                // 响应式数组,自建 UI 据此渲染
 await agent.send('...')       // 发送(数组自动更新)
@@ -526,17 +526,17 @@ agent.unmount()
 
 **复用内置 UI 模块**:headless 模式下也可 `import { ChatDialog, useChat }` 复用内置对话框组件与流式/重试/停止/重新生成逻辑(`ChatDialog` 接 `fetchStream`/`getInfo` 等 props),而不必从零实现 UI。
 
-**主题定制**:`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(`--pa-primary` 等,默认中性主题)与 props(`showAvatar`/`showTyping` 关头像/打字动画)。覆盖变量即可换主题:
+**主题定制**:`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(`--cs-primary` 等,默认中性主题)与 props(`showAvatar`/`showTyping` 关头像/打字动画)。覆盖变量即可换主题:
 ```css
-.pa-chat { --pa-primary: #0ea5e9; }  /* 改主色(类名按实际容器) */
+.pa-chat { --cs-primary: #0ea5e9; }  /* 改主色(类名按实际容器) */
 ```
 
 **预设**(常见场景一键装载):
 ```ts
-import { createPageAgent, presets } from 'page-agent'
-createPageAgent({ ...presets.pageBuilder, container: '#root', llm, windowProps })  // 页面构建助手
-createPageAgent({ ...presets.researcher, container, llm })                         // 并行调研
-createPageAgent({ ...presets.minimal, container, llm, windowProps })               // 极简(关高级能力)
+import { createChatSdk, presets } from 'chat-sdk'
+createChatSdk({ ...presets.pageBuilder, container: '#root', llm, windowProps })  // 页面构建助手
+createChatSdk({ ...presets.researcher, container, llm })                         // 并行调研
+createChatSdk({ ...presets.minimal, container, llm, windowProps })               // 极简(关高级能力)
 ```
 可用预设:`pageBuilder`(读写 window 驱动页面)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
 
@@ -549,11 +549,11 @@ createPageAgent({ ...presets.minimal, container, llm, windowProps })            
 <html>
 <body>
   <div id="agent"></div>
-  <script src="https://unpkg.com/page-agent"></script>
+  <script src="https://unpkg.com/chat-sdk"></script>
   <script>
-    const { createPageAgent, z } = window.PageAgent
+    const { createChatSdk, z } = window.ChatSdk
     window.app = { count: 0 }
-    createPageAgent({
+    createChatSdk({
       container: '#agent',
       llm: { apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
       windowProps: [{ path: 'app.count', description: '计数', schema: z.number() }],
@@ -580,7 +580,7 @@ createPageAgent({ ...presets.minimal, container, llm, windowProps })            
 | `VITE_DEBUG` | 调试日志(生产 false) |
 | `VITE_CONTEXT_*` | 上下文压缩配置 |
 
-> 生产环境(库模式)由集成方在 `createPageAgent({ llm })` 显式传入,不依赖 `.env`。
+> 生产环境(库模式)由集成方在 `createChatSdk({ llm })` 显式传入,不依赖 `.env`。
 
 ## 11. 常见问题与坑
 

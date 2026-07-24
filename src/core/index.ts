@@ -1,14 +1,14 @@
 /**
- * page-agent 通用 SDK 入口(框架无关)
+ * chat-sdk 通用 SDK 入口(框架无关)
  *
- * 只导出通用核心 —— createPageAgent(命令式入口)/ createAgent(harness)/ 中间件契约类型 /
+ * 只导出通用核心 —— createChatSdk(命令式入口)/ createAgent(harness)/ 中间件契约类型 /
  * window 操作类型 / vfs / 通用消息类型。不含任何业务定制或旧链路,可整体迁移到任意项目复用。
  */
-// zod:随 SDK 暴露(IIFE 全量模式下消费者从 PageAgent.z 取用,构造 windowProps schema)
+// zod:随 SDK 暴露(IIFE 全量模式下消费者从 ChatSdk.z 取用,构造 windowProps schema)
 export { z } from 'zod'
 // SDK 命令式入口
-export { createPageAgent } from './sdk/createPageAgent'
-export type { PageAgentOptions, PageAgent, LLMConfig } from './sdk/createPageAgent'
+export { createChatSdk } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig } from './sdk/createChatSdk'
 export { defineTool, defineToolset } from './sdk/defineTool'
 export { presets } from './presets'
 export { connectMcp, extractText } from './mcp/client'

@@ -1,4 +1,4 @@
-# page-agent 架构与文件全览(Review 版)
+# chat-sdk 架构与文件全览(Review 版)
 
 > 本文与 [`architecture.md`](./architecture.md) 互补:后者偏运行控制流(ReAct + 中间件、window 操作安全流);本文偏**文件级职责清单、模块依赖关系、以及人工 review 关注点**。
 > 最后更新:2026-07-23
@@ -16,7 +16,7 @@
 | Markdown | `marked` + `highlight.js` | **打包进库** |
 | 持久化 | 原生 IndexedDB / WebStorage / Memory | **零依赖**,可注入后端 |
 
-**三种产物**:`dist/page-agent.js`(ESM)、`dist/page-agent.umd.cjs`(UMD)、`dist/page-agent.iife.js`(IIFE 全量 ~1.4MB,供 CDN `<script>`)、`dist/page-agent.css`。`types/index.d.ts` 手动维护(构建不自动生成)。
+**三种产物**:`dist/chat-sdk.js`(ESM)、`dist/chat-sdk.umd.cjs`(UMD)、`dist/chat-sdk.iife.js`(IIFE 全量 ~1.4MB,供 CDN `<script>`)、`dist/chat-sdk.css`。`types/index.d.ts` 手动维护(构建不自动生成)。
 
 ---
 
@@ -27,9 +27,9 @@
 │  集成层 / Demo                                               │
 │  examples/page-demo/*  ·  demo/plain.html(CDN)              │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ createPageAgent(options).mount()
+                            │ createChatSdk(options).mount()
 ┌───────────────────────────▼─────────────────────────────────┐
-│  SDK 命令式入口  sdk/createPageAgent.ts                      │
+│  SDK 命令式入口  sdk/createChatSdk.ts                      │
 │  总装:harness + 中间件 + 工具 + 后端 + UI + 持久化            │
 │  共享响应式 messages · resolveStorage · 异步 mount 恢复       │
 └───┬───────────────┬───────────────┬──────────────┬──────────┘
@@ -72,7 +72,7 @@ src/core/                         # 通用 SDK 核心(框架无关,可整体迁�
 │   ├── permissions.ts            #   scope 白名单中间件(可选)
 │   ├── summarization.ts          #   context 压缩中间件(复用 useContextManager)
 ├── sdk/                          # 命令式入口 + 工具 helper
-│   ├── createPageAgent.ts        #   ★ 总装(改动最大、最核心的文件)
+│   ├── createChatSdk.ts        #   ★ 总装(改动最大、最核心的文件)
 │   └── defineTool.ts             #   声明式自定义工具 helper
 ├── tools/                        # 内置工具
 │   ├── windowOps.ts              #   ★ window 操作(10 工具:注册表+校验+增量编辑+快照)
@@ -106,35 +106,35 @@ demo/plain.html                   # 框架无关集成示例(importmap/CDN)
 
 | 文件 | 职责(做什么) | 依赖(imports) | 被谁用 |
 |---|---|---|---|
-| **createAgent.ts** | ReAct 循环:`beforeAgent → while{ beforeModel→wrapModelCall→afterModel→(有 tool_calls 则)wrapToolCall } → afterAgent`。组装 system prompt(各中间件 augmentPrompt)、转 LangChain 消息、流式聚合 chunk、工具结果统一经 offload 外存。返回 `{invoke, stream, getState, allTools, debugLogs}` | vue(shallowRef)、`@langchain/openai`、`@langchain/core/messages`、`@langchain/core/tools`、`types`、`utils/offload`、`./state`、`./middleware` | `sdk/createPageAgent` |
+| **createAgent.ts** | ReAct 循环:`beforeAgent → while{ beforeModel→wrapModelCall→afterModel→(有 tool_calls 则)wrapToolCall } → afterAgent`。组装 system prompt(各中间件 augmentPrompt)、转 LangChain 消息、流式聚合 chunk、工具结果统一经 offload 外存。返回 `{invoke, stream, getState, allTools, debugLogs}` | vue(shallowRef)、`@langchain/openai`、`@langchain/core/messages`、`@langchain/core/tools`、`types`、`utils/offload`、`./state`、`./middleware` | `sdk/createChatSdk` |
 | **middleware.ts** | `Middleware` 接口(8 钩子 + tools/augmentPrompt/compressInput);执行器:`runBeforeAgent/runBeforeModel`(正序)、`runAfterModel/runAfterAgent`(逆序)、`composeModelCall/composeToolCall`(洋葱 reduceRight);`applyUpdate` last-writer 合并 | `@langchain/core/messages`、`@langchain/core/tools`、`./state`、`../types` | `createAgent` |
 | **state.ts** | `HarnessState`(messages/todos/files/skillsMetadata/skillsLoaded/memory/summarization)及子类型(Todo/VfsFile/SkillMeta/SummarizationEvent);`createInitialState` | `../types` | 所有 harness 文件 + createAgent |
-| **todos.ts** | planning:`write_todos`(整表替换)+ augmentPrompt 注入清单 + wrapToolCall 拒一轮内并行多次;支持 `reset`(持久化恢复注入) | `@langchain/core/tools`、zod、`./middleware`、`./state` | createPageAgent |
-| **skills.ts** | 渐进式披露:`load_skill` 按需加载全文 + augmentPrompt 注入索引 + afterModel 同步 skillsLoaded;`defineSkill` | `@langchain/core/tools`、zod、`./middleware` | createPageAgent、index.ts |
-| **memory.ts** | AGENTS.md 风格指令:beforeAgent 注入 state + augmentPrompt 渲染;`reset` | `./middleware` | createPageAgent |
-| **permissions.ts** | scope 白名单(first-match-wins,默认 allow):wrapToolCall 拦 window/vfs 工具的 path;glob 匹配 | `./middleware` | createPageAgent(可选) |
-| **summarization.ts** | context 压缩:经 `compressInput` 钩子复用 `useContextManager.compress` | `../types`、`../composables/useContextManager`、`./middleware` | createPageAgent |
+| **todos.ts** | planning:`write_todos`(整表替换)+ augmentPrompt 注入清单 + wrapToolCall 拒一轮内并行多次;支持 `reset`(持久化恢复注入) | `@langchain/core/tools`、zod、`./middleware`、`./state` | createChatSdk |
+| **skills.ts** | 渐进式披露:`load_skill` 按需加载全文 + augmentPrompt 注入索引 + afterModel 同步 skillsLoaded;`defineSkill` | `@langchain/core/tools`、zod、`./middleware` | createChatSdk、index.ts |
+| **memory.ts** | AGENTS.md 风格指令:beforeAgent 注入 state + augmentPrompt 渲染;`reset` | `./middleware` | createChatSdk |
+| **permissions.ts** | scope 白名单(first-match-wins,默认 allow):wrapToolCall 拦 window/vfs 工具的 path;glob 匹配 | `./middleware` | createChatSdk(可选) |
+| **summarization.ts** | context 压缩:经 `compressInput` 钩子复用 `useContextManager.compress` | `../types`、`../composables/useContextManager`、`./middleware` | createChatSdk |
 
 ### sdk/(入口)
 
 | 文件 | 职责 | 依赖 | 被谁用 |
 |---|---|---|---|
-| **createPageAgent.ts** | ★ 总装:核心上下文抽成 `AgentCore`(`buildCore` 构造 store/messages/vfsStore/todosMw/memoryMw/agent/sessionId/initDone + send/switchSession/stream/afterRound/release);`shareContext:true` 时同 id 经 `sharedCores` 注册表 + 引用计数复用(同页多对话框=同一 agent);`mount`/`unmount` 各自渲染;解析 `agentId`/`storage`/`session`/`streaming`;vfs 持久化 wiring;`switchSession`/flush 兜底 | vue、`@langchain/core/tools`、`components/ChatDialog`、`harness/*`、`backends/vfs`+`storage`、`tools/windowOps`+`fetchDoc`、`utils/id`+`rounds`、`types` | 集成方 / demo |
+| **createChatSdk.ts** | ★ 总装:核心上下文抽成 `AgentCore`(`buildCore` 构造 store/messages/vfsStore/todosMw/memoryMw/agent/sessionId/initDone + send/switchSession/stream/afterRound/release);`shareContext:true` 时同 id 经 `sharedCores` 注册表 + 引用计数复用(同页多对话框=同一 agent);`mount`/`unmount` 各自渲染;解析 `agentId`/`storage`/`session`/`streaming`;vfs 持久化 wiring;`switchSession`/flush 兜底 | vue、`@langchain/core/tools`、`components/ChatDialog`、`harness/*`、`backends/vfs`+`storage`、`tools/windowOps`+`fetchDoc`、`utils/id`+`rounds`、`types` | 集成方 / demo |
 | **defineTool.ts** | 包装 `@langchain/core/tools` 的 `tool()`,对象式声明(`name/description/schema/handler`),返回 `StructuredToolInterface`;非 string 返回 JSON.stringify | `@langchain/core/tools`、zod | 集成方、index.ts |
 
 ### tools/(内置工具)
 
 | 文件 | 职责 | 依赖 | 被谁用 |
 |---|---|---|---|
-| **windowOps.ts** | ★ 10 工具:`list/describe/get/get_paths/set/edit/delete_window_prop` + `snapshot/list/restore_window_snapshot`。属性注册表(范围控制)+ schema 校验(副本校验、不合法不写)+ 增量 edit(set/remove/merge/append)+ per-path 快照栈(默认 20,FIFO)+ 就地写回(不替换 reactive 根引用)+ 安全序列化(函数/DOM/循环引用摘要)+ 审计回调 | `@langchain/core/tools`、zod | createPageAgent |
-| **fetchDoc.ts** | `fetch_document`:GET 抓文档,同源/CORS 限制,超 2 万字截断 | `@langchain/core/tools`、zod | createPageAgent |
+| **windowOps.ts** | ★ 10 工具:`list/describe/get/get_paths/set/edit/delete_window_prop` + `snapshot/list/restore_window_snapshot`。属性注册表(范围控制)+ schema 校验(副本校验、不合法不写)+ 增量 edit(set/remove/merge/append)+ per-path 快照栈(默认 20,FIFO)+ 就地写回(不替换 reactive 根引用)+ 安全序列化(函数/DOM/循环引用摘要)+ 审计回调 | `@langchain/core/tools`、zod | createChatSdk |
+| **fetchDoc.ts** | `fetch_document`:GET 抓文档,同源/CORS 限制,超 2 万字截断 | `@langchain/core/tools`、zod | createChatSdk |
 
 ### backends/(存储后端)
 
 | 文件 | 职责 | 依赖 | 被谁用 |
 |---|---|---|---|
-| **vfs.ts** | 内存虚拟工作区:6 工具(read/write/edit/ls/glob/grep)+ 中间件(beforeAgent 注入 `store.files` 共享引用)。`createVfs` 可选 `persist` → Proxy 捕获 set/deleteProperty → 800ms debounce save;暴露 `hydrate/flush/clear`。`Object.create(null)` 防原型污染 | `@langchain/core/tools`、zod、`./middleware`、`./state` | createPageAgent、selftest |
-| **storage.ts** | ★ 持久化:可注入后端(`IdbBackend`/`WebStorageBackend`/`MemoryBackend`)+ `SessionStore` 编排(key 编码 `v:1::{db}::{agentId}::{sid}::{kind}` / 字节估算 / 500ms debounce / per-session 串行 commit 防丢失更新 / 单会话 10MB 软上限 / 全局 50MB + 整会话 LRU 淘汰到 0.9 水位 / 降级内存永不冒泡)。纯函数 `encodeKey/estimateBytes/selectForEviction` 可单测 | `../types`、`./state`、`../utils/id` | createPageAgent、selftest、index.ts |
+| **vfs.ts** | 内存虚拟工作区:6 工具(read/write/edit/ls/glob/grep)+ 中间件(beforeAgent 注入 `store.files` 共享引用)。`createVfs` 可选 `persist` → Proxy 捕获 set/deleteProperty → 800ms debounce save;暴露 `hydrate/flush/clear`。`Object.create(null)` 防原型污染 | `@langchain/core/tools`、zod、`./middleware`、`./state` | createChatSdk、selftest |
+| **storage.ts** | ★ 持久化:可注入后端(`IdbBackend`/`WebStorageBackend`/`MemoryBackend`)+ `SessionStore` 编排(key 编码 `v:1::{db}::{agentId}::{sid}::{kind}` / 字节估算 / 500ms debounce / per-session 串行 commit 防丢失更新 / 单会话 10MB 软上限 / 全局 50MB + 整会话 LRU 淘汰到 0.9 水位 / 降级内存永不冒泡)。纯函数 `encodeKey/estimateBytes/selectForEviction` 可单测 | `../types`、`./state`、`../utils/id` | createChatSdk、selftest、index.ts |
 
 ### composables/(组合式逻辑)
 
@@ -148,7 +148,7 @@ demo/plain.html                   # 框架无关集成示例(importmap/CDN)
 
 | 文件 | 职责 | 依赖 | 被谁用 |
 |---|---|---|---|
-| **ChatDialog.vue** | 对话框主壳:消息列表(头像/气泡/思考过程折叠/工具步骤)、流式光标、日志按钮、清空、折叠;透传 `initialMessages/onPersist/onClear` 给 useChat | vue、`useChat`、`MessageContent`、`DebugDrawer`、`types`、`createAgent(DebugLog)` | createPageAgent(经 h 渲染) |
+| **ChatDialog.vue** | 对话框主壳:消息列表(头像/气泡/思考过程折叠/工具步骤)、流式光标、日志按钮、清空、折叠;透传 `initialMessages/onPersist/onClear` 给 useChat | vue、`useChat`、`MessageContent`、`DebugDrawer`、`types`、`createAgent(DebugLog)` | createChatSdk(经 h 渲染) |
 | **MessageContent.vue** | markdown 渲染 + 代码块 DOM 增强(复制/下载/运行预览按钮);Teleport 弹 CodePreview | vue、`useMarkdown`、`CodePreview` | ChatDialog |
 | **CodePreview.vue** | 代码沙箱预览:iframe `srcdoc`(sandbox allow-scripts);支持 html/js/css/简易 Vue SFC;预览/源码切换 | vue | MessageContent |
 | **DebugDrawer.vue** | 调试日志抽屉:按类型筛选(context/llm_request/llm_response/tool_call/tool_result/error/middleware)、卡片+原始 JSON 视图 | vue、`createAgent(DebugLog)` | ChatDialog |
@@ -159,9 +159,9 @@ demo/plain.html                   # 框架无关集成示例(importmap/CDN)
 |---|---|---|---|
 | **offload.ts** | 大结果外存:>6000 字符且 vfs 可用 → 写 vfs 留预览+`vfs_read` 引用;否则硬截断。**唯一收口于 createAgent 的 coreExecTool** | `./state(VfsFile)` | createAgent |
 | **rounds.ts** | `groupRounds`(按 user 消息切轮)+ `plainSummary`(去 md 符号)+ `roundToolNames` | `../types` | useContextManager |
-| **id.ts** | `makeId`:crypto.randomUUID 降级时间+随机 | — | createPageAgent、storage |
+| **id.ts** | `makeId`:crypto.randomUUID 降级时间+随机 | — | createChatSdk、storage |
 | **types/index.ts** | 通用类型:ToolStep/AgentMessage/AgentState/StreamEvent/StreamHandler/ChatDialogProps | — | 全局 |
-| **index.ts** | 库唯一入口:导出 createPageAgent/createAgent/defineTool/defineSkill/createVfs/createSessionStore/createMemoryBackend/createWebStorageBackend + `z` + 各类型 | 聚合各模块 | 外部消费者 |
+| **index.ts** | 库唯一入口:导出 createChatSdk/createAgent/defineTool/defineSkill/createVfs/createSessionStore/createMemoryBackend/createWebStorageBackend + `z` + 各类型 | 聚合各模块 | 外部消费者 |
 | **__tests__/selftest.ts** | tsx 直跑自测:windowOps/edit+快照/offload/vfs/todos/skills/permissions/memory/middleware 执行器/storage(隔离/save-load/配额/LRU/降级/并发) | 核心各模块 | `npm test` |
 
 ---
@@ -169,7 +169,7 @@ demo/plain.html                   # 框架无关集成示例(importmap/CDN)
 ## 五、核心依赖关系(import 图)
 
 ```
-createPageAgent ──┬─► createAgent ──┬─► middleware(执行器)
+createChatSdk ──┬─► createAgent ──┬─► middleware(执行器)
                   │                 ├─► state
                   │                 ├─► offload
                   │                 └─► @langchain/openai + core
@@ -243,7 +243,7 @@ todos 运行期有**三个位置**,职责分离:
 ### 7.2 跨会话生命周期时序
 
 ```
-createPageAgent → buildCore:
+createChatSdk → buildCore:
   todosMw = createTodosMiddleware()                 [闭包 todos = []]
   initDone = resolveAndLoad():
     await store.ready → 解析 sessionId(id / autoResume 最近 / 新建)
@@ -293,7 +293,7 @@ pagehide / visibilitychange(hidden):vfsStore.flush() + store.flush()
 
 ### 7.4 行为细节与修复点
 
-1. **落盘恒同步(本次修复)**:`persistRuntime`(`createPageAgent.ts:327`)原仅 `if (todos?.length)` 才 save,导致会话内 todos 由有变空(`write_todos([])`)后 storage 残留旧清单、刷新恢复出遗留已完成项。**已改为始终 `store.save({todos})`**(含空数组覆写);代价是未用过 todos 的会话多写一条空记录(可忽略)。
+1. **落盘恒同步(本次修复)**:`persistRuntime`(`createChatSdk.ts:327`)原仅 `if (todos?.length)` 才 save,导致会话内 todos 由有变空(`write_todos([])`)后 storage 残留旧清单、刷新恢复出遗留已完成项。**已改为始终 `store.save({todos})`**(含空数组覆写);代价是未用过 todos 的会话多写一条空记录(可忽略)。
 2. **`getState().todos` 可靠**:`write_todos` 必在 done 前某轮触发,之后至少一次 `beforeModel` 同步,故 afterRound 读到的镜像恒等于闭包最新值。
 3. **刷新兜底依赖 afterRound**:`flush()` 不主动 save todos,仅落盘 debounce 窗口(debounceMs=500)内已入队的写;只要最后一轮 afterRound 跑过即不丢。
 
@@ -337,6 +337,6 @@ pagehide / visibilitychange(hidden):vfsStore.flush() + store.flush()
 
 - todos 工作流程(三处存放 / 跨会话生命周期 / write_todos 样例)见**第七节专题**;改 `todos.ts` 或 `persistRuntime` 的 todos 落盘逻辑后请同步该节。
 
-- 本文件为**人工 review 辅助**,会随代码演进过时。改动文件职责/依赖后,请同步更新第四节表格与第五节依赖图;若新增中间件,记得补到第二节中间件栈顺序与 createPageAgent 装配说明。
+- 本文件为**人工 review 辅助**,会随代码演进过时。改动文件职责/依赖后,请同步更新第四节表格与第五节依赖图;若新增中间件,记得补到第二节中间件栈顺序与 createChatSdk 装配说明。
 - 类型导出有**双份真相源**:`src/core/index.ts`(运行时导出)与 `types/index.d.ts`(手动镜像声明)—— 新增导出时两处都要改(CLAUDE.md 已约定)。
 - 新增工具/能力优先做成**中间件或工具注入**,勿硬编码进 `createAgent`(保持 harness 与具体能力解耦)。

@@ -42,7 +42,7 @@ export interface VerifyMiddlewareOptions {
   /**
    * 对抗式验证:check 通过后 spawn 一个"找茬"子 agent(refute 姿态)审查 agent 回复找错误,
    * 突破自审 confirmation bias;verdict 表明无问题 → 放行,否则回灌。
-   * tools:只读工具集(由 createPageAgent 从 allTools 白名单筛选注入),让子 agent 能实证读回 window 检查而非臆测;
+   * tools:只读工具集(由 createChatSdk 从 allTools 白名单筛选注入),让子 agent 能实证读回 window 检查而非臆测;
    *        省略/为空则退化为单轮纯文本审查(复查 window 交 createWriteBackCheck)。
    */
   adversarial?: { llm: SubagentLlmConfig | BaseChatModel; tools?: unknown[] }
@@ -126,9 +126,9 @@ function readByPath(root: unknown, path: string): unknown {
 }
 
 export interface WriteBackCheckOptions {
-  /** path → zod schema(由 createPageAgent 从 windowProps 构造注入);省略则只校验「读回非空」不校验 schema */
+  /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」不校验 schema */
   schemas?: Record<string, ZodType>
-  /** 读 window 的根对象(默认 globalThis.window;page-agent 零桥接 = 宿主 window) */
+  /** 读 window 的根对象(默认 globalThis.window;chat-sdk 零桥接 = 宿主 window) */
   window?: unknown
 }
 
@@ -141,7 +141,7 @@ export interface WriteBackCheckOptions {
  * - delete 后读回仍有值 → 未删干净(读回空 = 删除成功,放行)
  *
  * 注:windowOps 写入(setByPath)同步更新值,readByPath 读底层值即可见新值,无需 nextTick。
- * @example createPageAgent({ capabilities:{verify:true}, verify:{ maxAttempts:1 } })  // check 省略 → 默认用本函数
+ * @example createChatSdk({ capabilities:{verify:true}, verify:{ maxAttempts:1 } })  // check 省略 → 默认用本函数
  */
 export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCheck {
   const root = opts.window ?? (globalThis as any).window
@@ -174,7 +174,7 @@ export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCh
 
 // ===== 对抗式验证(期四:spawn 找茬子 agent,refute 姿态)=====
 
-/** 判定 llm 是模型实例(BaseChatModel)还是配置对象(与 subagent/createPageAgent 同逻辑) */
+/** 判定 llm 是模型实例(BaseChatModel)还是配置对象(与 subagent/createChatSdk 同逻辑) */
 function isChatModel(v: unknown): v is BaseChatModel {
   return !!v && typeof v === 'object' && typeof (v as any).invoke === 'function' && typeof (v as any).stream === 'function'
 }

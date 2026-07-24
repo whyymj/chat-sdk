@@ -9,7 +9,7 @@
  * 运行:npm run dev → 访问 /subagent.html
  */
 import { onMounted, onUnmounted, ref } from 'vue'
-import { createPageAgent, defineTool, z, type PageAgent } from '../../src/core'
+import { createChatSdk, defineTool, z, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
 // 模拟三个「方案」(子 agent 并行调研的对象;真实场景可换成 API/数据库/文档源)
@@ -28,10 +28,10 @@ const getSource = defineTool({
 })
 
 const root = ref<HTMLElement>()
-let agent: PageAgent | null = null
+let agent: ChatSdk | null = null
 
 onMounted(() => {
-  agent = createPageAgent({
+  agent = createChatSdk({
     container: root.value!,
     id: 'subagent-demo',
     storage: 'memory',

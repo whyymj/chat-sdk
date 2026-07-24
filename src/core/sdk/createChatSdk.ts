@@ -1,5 +1,5 @@
 /**
- * 框架无关 SDK 入口 —— createPageAgent
+ * 框架无关 SDK 入口 —— createChatSdk
  *
  * 组装:harness(createAgent)+ 内置中间件(todos/skills/vfs/memory/permissions)
  *   + 内置工具(window 操作/fetch 文档)+ 用户工具/skills/memory/windowProps
@@ -11,7 +11,7 @@
  *   - send() 与 mount()(经 useChat)共享同一响应式 messages 数组(唯一来源)。
  *   - mount 异步:await 持久化恢复 → 构造 agent → 渲染。
  *
- * 共享上下文(shareContext):同 agentId 的多个 createPageAgent 实例可复用同一 AgentCore
+ * 共享上下文(shareContext):同 agentId 的多个 createChatSdk 实例可复用同一 AgentCore
  *   (messages/agent/vfsStore/store/todos/memory 全共享 = 「同一 agent 的多个对话框视图」)。
  *   模块级 sharedCores 注册表 + 引用计数;mount/unmount 各自渲染到不同 container。
  */
@@ -59,7 +59,7 @@ export interface SessionOptions {
   title?: string
 }
 
-export interface PageAgentOptions {
+export interface ChatSdkOptions {
   /** 挂载点(选择器或元素;headless 模式 ui:false 时可不传) */
   container?: string | HTMLElement
   /** UI:'default'(默认,渲染内置 ChatDialog)/ false(headless 不渲染,只返回 agent 核心,集成方自建 UI) */
@@ -141,7 +141,7 @@ export interface PageAgentOptions {
   placeholder?: string
 }
 
-export interface PageAgent {
+export interface ChatSdk {
   /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless) */
   mount(): Promise<void>
   /** 响应式消息数组(headless 模式下供集成方自建 UI 读取;与内部共享同一引用) */
@@ -211,11 +211,11 @@ interface AgentCore {
 const sharedCores = new Map<string, AgentCore>()
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
-function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
+function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // ===== 持久化(默认关闭;赋值后端字符串或配置对象开启)=====
   const store = resolveStorage(options.storage)
   if (options.debug && store) {
-    store.onEvent((e) => console.log('[page-agent][storage]', e))
+    store.onEvent((e) => console.log('[chat-sdk][storage]', e))
   }
 
   // ===== 共享 messages(send/mount 唯一来源)=====
@@ -242,7 +242,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   // windowOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
   const windowOps = useWindowOps
     ? createWindowOps(options.windowProps || [], {
-        onAudit: options.debug ? (e) => console.log('[page-agent][window audit]', e) : undefined,
+        onAudit: options.debug ? (e) => console.log('[chat-sdk][window audit]', e) : undefined,
         maxSnapshots: options.maxSnapshots,
       })
     : []
@@ -269,7 +269,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   const useVerify = caps?.verify === true && options.verify?.enabled !== false && verifyMaxAttempts > 0
   // 诊断:常见误用 warn(与 options.id/mcp 的 warn 惯例一致),避免"以为开了实际没开"
   if (options.verify?.check && caps?.verify !== true) {
-    console.warn('[page-agent][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
+    console.warn('[chat-sdk][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
   }
 
   // 子 agent 中间件(capabilities.subagent 或 subagent.enabled 为 false 则关闭)
@@ -364,7 +364,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     /** 切换会话:flush 当前 → 载入/新建目标 → 清内存态并灌入快照(替换语义)→ 返回新会话 id */
     async switchSession(sessionId?: string): Promise<string> {
       await core.initDone
-      if (!store) throw new Error('page-agent: storage 未开启,无法切换会话(请传 storage 选项)')
+      if (!store) throw new Error('chat-sdk: storage 未开启,无法切换会话(请传 storage 选项)')
       vfsStore.flush?.()
       await store.flush()
       let target = sessionId ?? ''
@@ -388,7 +388,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     },
 
     stream: (msgs, onEvent, signal) => {
-      if (!core.agent) throw new Error('page-agent: agent 尚未初始化完成,请先 await mount()')
+      if (!core.agent) throw new Error('chat-sdk: agent 尚未初始化完成,请先 await mount()')
       return core.agent.stream(msgs, onEvent, signal)
     },
 
@@ -445,19 +445,19 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
       else await store.createSession(agentId, sessOpts.title, core.sessionId)
     } else if (sessOpts.autoResume !== false) {
       const sessions = await store.listSessions(agentId)
-      if (options.debug) console.log('[page-agent][restore] listSessions', agentId, sessions.length, sessions.map((s) => s.sessionId))
+      if (options.debug) console.log('[chat-sdk][restore] listSessions', agentId, sessions.length, sessions.map((s) => s.sessionId))
       if (sessions.length) {
         core.sessionId = sessions[0].sessionId
         const snap = await store.load(agentId, core.sessionId)
         if (snap) {
           core.applySnapshot(snap)
-          if (options.debug) console.log('[page-agent][restore] 恢复会话', core.sessionId, `${snap.messages?.length ?? 0} msgs`)
+          if (options.debug) console.log('[chat-sdk][restore] 恢复会话', core.sessionId, `${snap.messages?.length ?? 0} msgs`)
         } else if (options.debug) {
-          console.log('[page-agent][restore] 会话 meta 存在但快照为空', core.sessionId)
+          console.log('[chat-sdk][restore] 会话 meta 存在但快照为空', core.sessionId)
         }
       } else {
         core.sessionId = await store.createSession(agentId, sessOpts.title)
-        if (options.debug) console.log('[page-agent][restore] 新建会话(无历史)', core.sessionId)
+        if (options.debug) console.log('[chat-sdk][restore] 新建会话(无历史)', core.sessionId)
       }
     } else {
       core.sessionId = await store.createSession(agentId, sessOpts.title)
@@ -502,7 +502,7 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
     void store.save(agentId, core.sessionId, { todos })
-    if (options.debug) console.log('[page-agent][persist] save', core.sessionId, `${messages.length} msgs`)
+    if (options.debug) console.log('[chat-sdk][persist] save', core.sessionId, `${messages.length} msgs`)
   }
 
   // 初始化:解析会话 + 恢复 + 构造 agent(异步,不阻塞 buildCore 返回)
@@ -522,11 +522,11 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
           r.value.tools.forEach((t) => toolSources.set(t.name, `mcp:${label}`))
           mcpTools.push(...r.value.tools)
         } else {
-          console.warn(`[page-agent][mcp] server ${label} 连接失败:`, r.reason)
+          console.warn(`[chat-sdk][mcp] server ${label} 连接失败:`, r.reason)
         }
       })
       allTools.push(...mcpTools)
-      if (options.debug) console.log(`[page-agent][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
+      if (options.debug) console.log(`[chat-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
     }
     core.agent = createAgent({
       // provider 抽离:llm 为模型实例则注入,否则按配置构造 ChatOpenAI
@@ -554,12 +554,12 @@ function buildCore(options: PageAgentOptions, agentId: string): AgentCore {
   return core
 }
 
-export function createPageAgent(options: PageAgentOptions): PageAgent {
+export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   // ===== agent 实例 id(多共存隔离)=====
   const agentId: string = options.id ?? makeId()
   if (!options.id) {
     console.warn(
-      `[page-agent] 未传 options.id,已生成随机 id "${agentId}"。刷新后持久化数据无法恢复,请传稳定 id。`,
+      `[chat-sdk] 未传 options.id,已生成随机 id "${agentId}"。刷新后持久化数据无法恢复,请传稳定 id。`,
     )
   }
   // 流式输出(默认 true 逐字);false 时 ChatDialog 走非流式 fetchResponse(等整段)
@@ -601,7 +601,7 @@ export function createPageAgent(options: PageAgentOptions): PageAgent {
     }
     const el =
       typeof options.container === 'string' ? document.querySelector(options.container) : options.container
-    if (!el) throw new Error(`createPageAgent: 挂载点未找到(${options.container})`)
+    if (!el) throw new Error(`createChatSdk: 挂载点未找到(${options.container})`)
     const debugLogsRef = core.agent!.debugLogs
     const Wrapper = defineComponent({
       setup() {

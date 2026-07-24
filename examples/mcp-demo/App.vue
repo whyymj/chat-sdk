@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * MCP 集成示例 —— page-agent 连本地 mock MCP server,调用其工具。
+ * MCP 集成示例 —— chat-sdk 连本地 mock MCP server,调用其工具。
  *
  * 运行(两个进程):
  *   1. npm run mcp:mock          → mock MCP server @ http://localhost:3001/mcp
@@ -10,14 +10,14 @@
  * 打开「日志」→「🧬 Agent 信息」tab 可见 MCP 注入的 3 个工具(get_weather/search/calc)。
  */
 import { onMounted, onUnmounted, ref } from 'vue'
-import { createPageAgent, type PageAgent } from '../../src/core'
+import { createChatSdk, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
 const root = ref<HTMLElement>()
-let agent: PageAgent | null = null
+let agent: ChatSdk | null = null
 
 onMounted(() => {
-  agent = createPageAgent({
+  agent = createChatSdk({
     container: root.value!,
     id: 'mcp-demo',
     storage: 'memory',
@@ -45,7 +45,7 @@ onUnmounted(() => agent?.unmount())
     <aside class="pane pane-left">
       <h2>🔌 MCP 集成示例</h2>
       <p class="hint">
-        page-agent 连本地 mock MCP server,动态注入其工具(<code>get_weather</code> / <code>search</code> /
+        chat-sdk 连本地 mock MCP server,动态注入其工具(<code>get_weather</code> / <code>search</code> /
         <code>calc</code>),Agent 按需调用。
       </p>
       <div class="steps">

@@ -22,7 +22,7 @@ const rawExpanded = ref<Set<number>>(new Set())
 const bodyExpanded = ref<Set<number>>(new Set())
 
 const typeMeta: Record<string, { label: string; color: string; icon: string }> = {
-  context: { label: '上下文', color: 'var(--pa-primary)', icon: '🧩' },
+  context: { label: '上下文', color: 'var(--cs-primary)', icon: '🧩' },
   llm_request: { label: 'LLM请求', color: '#059669', icon: '➡️' },
   llm_response: { label: 'LLM响应', color: '#d97706', icon: '⬅️' },
   tool_call: { label: '工具调用', color: '#7c3aed', icon: '🔧' },
@@ -69,8 +69,8 @@ function copyText(text: string) {
 
 const roleMeta: Record<string, { label: string; color: string }> = {
   system: { label: 'SYSTEM', color: '#6b7280' },
-  human: { label: 'USER', color: 'var(--pa-primary)' },
-  user: { label: 'USER', color: 'var(--pa-primary)' },
+  human: { label: 'USER', color: 'var(--cs-primary)' },
+  user: { label: 'USER', color: 'var(--cs-primary)' },
   ai: { label: 'AI', color: '#059669' },
   assistant: { label: 'AI', color: '#059669' },
   tool: { label: 'TOOL', color: '#2563eb' },
@@ -351,8 +351,8 @@ function srcClass(s?: string) {
 .drawer-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.25); pointer-events: auto; }
 .drawer-panel {
   /* 主题变量(与 ChatDialog 一致;DebugDrawer 经 Teleport 独立于 body,需自定义) */
-  --pa-primary: #4f46e5;
-  --pa-primary-rgb: 79, 70, 229;
+  --cs-primary: #4f46e5;
+  --cs-primary-rgb: 79, 70, 229;
   position: absolute; top: 0; right: 0; bottom: 0;
   width: 520px; max-width: 90vw; background: #fff;
   display: flex; flex-direction: column;
@@ -388,8 +388,8 @@ function srcClass(s?: string) {
 .hd-btn:hover { background: rgba(255,255,255,0.25); }
 .drawer-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; border-bottom: 1px solid #f3f4f6; background: #fafafa; }
 .filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; color: #6b7280; font-size: 12px; cursor: pointer; transition: all 0.2s; }
-.filter-chip:hover { border-color: var(--chip-color, var(--pa-primary)); }
-.filter-chip.active { background: var(--chip-color, var(--pa-primary)); border-color: var(--chip-color, var(--pa-primary)); color: #fff; }
+.filter-chip:hover { border-color: var(--chip-color, var(--cs-primary)); }
+.filter-chip.active { background: var(--chip-color, var(--cs-primary)); border-color: var(--chip-color, var(--cs-primary)); color: #fff; }
 .chip-count { background: rgba(0,0,0,0.08); border-radius: 8px; padding: 0 5px; font-size: 11px; }
 .filter-chip.active .chip-count { background: rgba(255,255,255,0.25); }
 .drawer-body { flex: 1; overflow-y: auto; padding: 12px; }
@@ -401,7 +401,7 @@ function srcClass(s?: string) {
 .log-time { font-size: 11px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .log-body { padding: 10px 12px; }
 .log-footer { display: flex; gap: 8px; padding: 6px 12px; border-top: 1px dashed #f3f4f6; }
-.raw-toggle { border: none; background: none; color: var(--pa-primary); font-size: 11px; cursor: pointer; padding: 2px 4px; }
+.raw-toggle { border: none; background: none; color: var(--cs-primary); font-size: 11px; cursor: pointer; padding: 2px 4px; }
 .raw-toggle:hover { text-decoration: underline; }
 .log-raw { margin: 0; padding: 10px 12px; border-top: 1px solid #f3f4f6; background: #1f2937; color: #e5e7eb; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 11px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow-y: auto; }
 .kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }

@@ -17,7 +17,7 @@ import type { VfsFile, Todo } from '../harness/state'
 import { makeId } from '../utils/id'
 
 // ===== 默认值 =====
-const DEFAULT_DB_NAME = 'page-agent'
+const DEFAULT_DB_NAME = 'chat-sdk'
 const DEFAULT_MAX_BYTES = 50 * 1024 * 1024 // indexed/memory 默认全局总配额 50MB
 const DEFAULT_WEB_STORAGE_MAX_BYTES = 4 * 1024 * 1024 // local/session 默认配额 4MB(浏览器 WebStorage ~5MB,留余量给宿主页)
 const DEFAULT_MAX_BYTES_PER_SESSION = 10 * 1024 * 1024 // 单会话软上限 10MB
@@ -57,7 +57,7 @@ export interface StorageConfig {
   backend?: StorageBackendType
   /** 是否启用(默认 true;false 等同 storage:false 关闭) */
   enabled?: boolean
-  /** DB 命名空间,默认 'page-agent'(作为 key 前缀段) */
+  /** DB 命名空间,默认 'chat-sdk'(作为 key 前缀段) */
   dbName?: string
   /** 全局总配额(字节),默认 50MB */
   maxBytes?: number

@@ -4,7 +4,7 @@
  * 管理消息列表、loading 状态、错误信息,并提供发送消息的入口。
  * 支持流式(fetchStream)与非流式(fetchResponse)两种模式。纯状态管理,不耦合任何业务工具。
  *
- * messages/onPersist/onClear 为持久化集成预留(由 createPageAgent 注入):
+ * messages/onPersist/onClear 为持久化集成预留(由 createChatSdk 注入):
  *  - messages:外部共享响应式数组,与父级共用同一引用(刷新恢复时灌入)
  *  - onPersist:一轮完成后回调(落盘)
  *  - onClear:清空时回调(新建会话)

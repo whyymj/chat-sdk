@@ -74,7 +74,7 @@ export function createTodosMiddleware(
       }
       return next(ctx)
     },
-    // 运行期重置(持久化恢复时由 createPageAgent 注入 snap.todos)
+    // 运行期重置(持久化恢复时由 createChatSdk 注入 snap.todos)
     reset: (next: Todo[]) => {
       todos = next.map((t) => ({ ...t }))
     },

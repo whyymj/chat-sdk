@@ -1,4 +1,4 @@
-# page-agent 文档
+# chat-sdk 文档
 
 | 文档 | 内容 |
 |---|---|
@@ -10,7 +10,7 @@
 ## 其他信息源(仓库内)
 - **规范真相源**(Requirements):[`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
 - **变更记录**(proposal / design / tasks):[`../openspec/changes/archive/`](../openspec/changes/archive/)
-- **进行中的 change**:[`../openspec/changes/generalize-page-agent/`](../openspec/changes/generalize-page-agent/)(通用化抽离:provider / headless / capabilities / MCP)
+- **进行中的 change**:[`../openspec/changes/generalize-chat-sdk/`](../openspec/changes/generalize-chat-sdk/)(通用化抽离:provider / headless / capabilities / MCP)
 - **项目指引 / 约定与坑**:[`../CLAUDE.md`](../CLAUDE.md)
 - **框架无关集成示例**:[`../demo/plain.html`](../demo/plain.html)
 - **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,103 项)
@@ -23,10 +23,10 @@ npm test       # 核心逻辑自测
 ```
 
 ```ts
-import { createPageAgent } from 'page-agent'
+import { createChatSdk } from 'chat-sdk'
 import { z } from 'zod'
 
-createPageAgent({
+createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
   systemPrompt: '你是页面操作助手…',

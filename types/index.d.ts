@@ -155,7 +155,7 @@ export interface VerifyMiddlewareOptions {
 }
 /** createWriteBackCheck 选项 */
 export interface WriteBackCheckOptions {
-  /** path → zod schema(由 createPageAgent 从 windowProps 构造注入);省略则只校验「读回非空」 */
+  /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」 */
   schemas?: Record<string, any>;
   /** 读 window 的根对象(默认 globalThis.window) */
   window?: unknown;
@@ -215,7 +215,7 @@ export interface SessionOptions {
   title?: string;
 }
 
-export interface PageAgentOptions {
+export interface ChatSdkOptions {
   container?: string | HTMLElement;
   /** UI:'default'(内置 ChatDialog)/ false(headless 不渲染,自建 UI) */
   ui?: boolean | 'default';
@@ -262,7 +262,7 @@ export interface PageAgentOptions {
   placeholder?: string;
 }
 
-export interface PageAgent {
+export interface ChatSdk {
   mount(): Promise<void>;
   /** 响应式消息数组(headless 模式自建 UI 读) */
   messages: AgentMessage[];
@@ -274,7 +274,7 @@ export interface PageAgent {
   inspect(): AgentInfo;
 }
 
-export declare function createPageAgent(options: PageAgentOptions): PageAgent;
+export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
 export declare function defineTool(opts: {
   name: string;
   description: string;

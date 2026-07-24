@@ -2,7 +2,7 @@
  * Permissions 中间件 —— 声明式 scope 白名单(first-match-wins,默认 allow)
  *
  * 对齐 Deep Agents 的 permissions/enforce.ts。本期默认不启用(全 window 无审批),
- * 保留 createPageAgent({ permissions }) 收紧口子。
+ * 保留 createChatSdk({ permissions }) 收紧口子。
  *
  * 仅对 window/vfs 工具生效:按工具的 path 参数作为 scope,匹配 glob 规则。
  */

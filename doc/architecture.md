@@ -1,4 +1,4 @@
-# page-agent 功能架构
+# chat-sdk 功能架构
 
 > 框架无关的「页面内 Agent」JS SDK。Agent 通过自定义 tool 读写宿主页面 `window` 对象(属性注册表 + schema 校验),并具备 planning / skills / 内存工作区 / context 管理能力。
 > 核心为**自研 Deep Agents 风格 harness**(ReAct + 可插拔中间件),不引入 LangGraph/langchain 整包(规避 [`deepagentsjs#292`](https://github.com/langchain-ai/deepagentsjs/issues/292) 浏览器打包阻塞)。
@@ -15,8 +15,8 @@ flowchart TD
     WP["window.page = reactive({...})<br/>响应式数据(测试模块)"]
   end
 
-  subgraph SDK["📦 page-agent SDK — 框架无关,Vue 打包进,使用者无需装 Vue"]
-    Entry["<b>对外入口</b><br/>createPageAgent(container, llm, windowProps, tools, skills, memory)<br/>.mount() / .unmount() / .send()"]
+  subgraph SDK["📦 chat-sdk SDK — 框架无关,Vue 打包进,使用者无需装 Vue"]
+    Entry["<b>对外入口</b><br/>createChatSdk(container, llm, windowProps, tools, skills, memory)<br/>.mount() / .unmount() / .send()"]
     Core["<b>harness 核心</b> createAgent<br/>ReAct 循环 + 中间件契约(before/wrap/after)"]
     MW["<b>中间件栈(可插拔)</b><br/>todos → skills → vfs → summarization → memory → permissions"]
     Tools["<b>工具层</b><br/>内置: windowOps · fetchDoc · vfs_*<br/>用户: defineTool(...) / defineSkill(...)"]
@@ -32,7 +32,7 @@ flowchart TD
 
 | 层 | 职责 | 关键源文件 |
 |---|---|---|
-| **对外入口** | 命令式 API,组装 harness + 内置工具/中间件,挂载 UI | `src/core/sdk/createPageAgent.ts`、`src/core/sdk/defineTool.ts` |
+| **对外入口** | 命令式 API,组装 harness + 内置工具/中间件,挂载 UI | `src/core/sdk/createChatSdk.ts`、`src/core/sdk/defineTool.ts` |
 | **harness 核心** | ReAct 循环 + 中间件生命周期驱动 | `src/core/harness/createAgent.ts`、`middleware.ts`、`state.ts` |
 | **中间件栈** | 可插拔能力(planning/skills/工作区/压缩/记忆/权限) | `src/core/harness/{todos,skills,summarization,memory,permissions}.ts` |
 | **工具层** | Agent 可调用的能力(window 操作/抓文档/工作区/自定义) | `src/core/tools/{windowOps,fetchDoc}.ts`、`src/core/backends/vfs.ts`、`src/core/utils/offload.ts` |
@@ -103,6 +103,6 @@ flowchart TD
 
 ## 相关文档
 - 规范真相源(Requirements):[`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
-- 变更记录(proposal/design/tasks):[`../openspec/changes/archive/refactor-to-page-agent-sdk/`](../openspec/changes/archive/refactor-to-page-agent-sdk/)
+- 变更记录(proposal/design/tasks):[`../openspec/changes/archive/refactor-to-chat-sdk-sdk/`](../openspec/changes/archive/refactor-to-chat-sdk-sdk/)
 - 项目指引 / 约定与坑:[`../CLAUDE.md`](../CLAUDE.md)
 - 框架无关集成示例:[`../demo/plain.html`](../demo/plain.html)

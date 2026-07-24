@@ -1,15 +1,15 @@
 # Specification: page-agent-core
 
-本文件为「页面内 Agent」SDK 的**系统规范真相源**(由 change `refactor-to-page-agent-sdk` 实现并归档合入)。实现须满足全部 Requirement。
+本文件为「页面内 Agent」SDK 的**系统规范真相源**(由 change `refactor-to-chat-sdk-sdk` 实现并归档合入)。实现须满足全部 Requirement。
 
 ## Requirement: 框架无关的命令式 SDK 入口
-SDK 以 `createPageAgent(options)` 命令式 API 对外暴露,返回带 `mount(container)`/`unmount()` 的实例。使用者无需安装或了解 Vue。
+SDK 以 `createChatSdk(options)` 命令式 API 对外暴露,返回带 `mount(container)`/`unmount()` 的实例。使用者无需安装或了解 Vue。
 
 ## Requirement: Agent 执行可插拔中间件的 ReAct 循环
 系统以 ReAct 循环(最多 `MAX_TOOL_ROUNDS = 10`)驱动 LLM,并在 `beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent` 生命周期点执行注册中间件。before 类钩子按注册顺序执行,after 类按逆序执行,wrap 类按洋葱(reduceRight)执行。
 
 ## Requirement: window 操作基于属性注册表
-系统维护一个属性注册表,集成方通过 `createPageAgent` 配置声明可操作属性(`{ path, description, schema }`)。所有 window 的读写仅通过工具执行(不暴露任意 window 访问)。
+系统维护一个属性注册表,集成方通过 `createChatSdk` 配置声明可操作属性(`{ path, description, schema }`)。所有 window 的读写仅通过工具执行(不暴露任意 window 访问)。
 
 ## Requirement: 写操作的范围控制
 `set_window_prop` 与 `delete_window_prop` 仅允许操作注册表内声明过的 path;对未注册 path 拒绝并提示用 `list_window_props` 查询可用属性。
@@ -39,7 +39,7 @@ window 工具直接作用于宿主页面主 `window`(无需 postMessage);`get_wi
 context 压缩以 token 估算(字符数/4)或轮数阈值触发(复用 useContextManager);通过 `compressInput` 中间件钩子在构建上下文前压缩跨轮历史(滑动窗口 + 摘要 + 关键词召回)。
 
 ## Requirement: Memory 注入
-`createPageAgent` 的 `memory` 参数作为持久指令注入 system prompt 前段。
+`createChatSdk` 的 `memory` 参数作为持久指令注入 system prompt 前段。
 
 ## Requirement: window 增量编辑(edit_window_prop)
 `edit_window_prop` 对「对象/数组」注册属性按 `op`(set/remove/merge/append)+ `jsonPath` 发增量 patch,无需重传整个大对象;系统在深拷贝副本上应用并整体 schema 校验,通过后才就地写回(改子属性,不替换注册属性根引用,兼容响应式);校验失败不写入。
@@ -66,7 +66,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: Verify 自检中间件
 
-系统提供 `createVerifyMiddleware({ check, adversarial? })` 中间件模板,把领域校验函数(`check: ({ messages, state }) => { ok, feedback? }`)包装为 `beforeReturn` 钩子:`ok=true` 放行,`ok=false` 将 `feedback` 回灌驱动自纠。自纠上限 `maxAttempts` 经 `createPageAgent` 透传 `createAgent` 的 `maxVerifyAttempts`(非中间件字段,中间件不自己计数)。`createPageAgent({ capabilities:{verify:true}, verify:{ check?, maxAttempts?, adversarial? } })` 控制;verify **默认关**(烧 token),误用 warn(传 check 忘 caps.verify 等),`check` 省略时默认 `createWriteBackCheck`。
+系统提供 `createVerifyMiddleware({ check, adversarial? })` 中间件模板,把领域校验函数(`check: ({ messages, state }) => { ok, feedback? }`)包装为 `beforeReturn` 钩子:`ok=true` 放行,`ok=false` 将 `feedback` 回灌驱动自纠。自纠上限 `maxAttempts` 经 `createChatSdk` 透传 `createAgent` 的 `maxVerifyAttempts`(非中间件字段,中间件不自己计数)。`createChatSdk({ capabilities:{verify:true}, verify:{ check?, maxAttempts?, adversarial? } })` 控制;verify **默认关**(烧 token),误用 warn(传 check 忘 caps.verify 等),`check` 省略时默认 `createWriteBackCheck`。
 
 ## Requirement: 写后读回验证(domain 辅助)
 
@@ -74,11 +74,11 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: 对抗式验证(可选)
 
-`verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**配只读工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复。子 agent 配备只读工具(读 window 的 `get_window_prop`/`get_window_paths`/`list_window_props`/`describe_window_prop` + `fetch_document`,由 `createPageAgent` 从 `allTools` 白名单筛选注入)与多轮工具调用预算(`maxToolRounds` 提升至 4),可实证读回被改属性检查而非臆测;审查聚焦 window 修改的典型错误(属性路径 / 值类型 / 语义)。无只读工具可装时(如 `capabilities.windowOps:false`)退化为单轮文本审查。verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个多轮子 agent token),`createPageAgent` 透传主 `llm` 与筛选后的只读工具构造子 agent。
+`verify.adversarial: true` 时,verify 中间件在 check 通过后 spawn 一个**配只读工具**的「找茬」子 agent(refute 姿态,目标是证明回复有问题,突破自审 confirmation bias),审查 agent 最新回复。子 agent 配备只读工具(读 window 的 `get_window_prop`/`get_window_paths`/`list_window_props`/`describe_window_prop` + `fetch_document`,由 `createChatSdk` 从 `allTools` 白名单筛选注入)与多轮工具调用预算(`maxToolRounds` 提升至 4),可实证读回被改属性检查而非臆测;审查聚焦 window 修改的典型错误(属性路径 / 值类型 / 语义)。无只读工具可装时(如 `capabilities.windowOps:false`)退化为单轮文本审查。verdict 表明无问题则放行,否则作为反馈回灌。默认关闭(每次烧一个多轮子 agent token),`createChatSdk` 透传主 `llm` 与筛选后的只读工具构造子 agent。
 
 ## Requirement: 内置工具按需装载
 
-`createPageAgent` 默认装配 window 操作工具集(`windowOps`)与文档抓取工具(`fetchDoc`)。两者可分别经 `capabilities.windowOps` / `capabilities.fetch` 关闭(默认均 `true`,保持零配置体验)。关闭后对应工具不进入主 agent 工具池,从而省 token 与上下文噪音(如纯调研场景)。子 agent 的只读工具白名单从主工具池筛选,故关闭某类工具时子 agent 同步不具备该类工具(符合「本 agent 不做此类操作」的语义)。子 agent 的隔离与递归切断机制本身不受影响。
+`createChatSdk` 默认装配 window 操作工具集(`windowOps`)与文档抓取工具(`fetchDoc`)。两者可分别经 `capabilities.windowOps` / `capabilities.fetch` 关闭(默认均 `true`,保持零配置体验)。关闭后对应工具不进入主 agent 工具池,从而省 token 与上下文噪音(如纯调研场景)。子 agent 的只读工具白名单从主工具池筛选,故关闭某类工具时子 agent 同步不具备该类工具(符合「本 agent 不做此类操作」的语义)。子 agent 的隔离与递归切断机制本身不受影响。
 
 ## Requirement: 内置工具集可独立导出与注入
 
@@ -86,7 +86,7 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: 能力用法默认提示(克制注入)
 
-各内置能力(planning / window 快照回退 / subagent)在**该能力开启**时,由 `createPageAgent` 统一经 `usageHints` 中间件向 system prompt 注入一行简短用法提示(如「多步任务先 `write_todos` 拆解」「误改可用 `restore_window_snapshot` 回退」「独立子任务可 `spawn_agent` 委派」)。提示仅在该能力开启时注入,全部关闭时不注入(返回 `undefined`,不增加上下文);绝不覆盖集成方自定义 `systemPrompt`(拼接在其后)。子 agent 的默认 systemPrompt 明示其只具备只读工具、应给出简洁结论。
+各内置能力(planning / window 快照回退 / subagent)在**该能力开启**时,由 `createChatSdk` 统一经 `usageHints` 中间件向 system prompt 注入一行简短用法提示(如「多步任务先 `write_todos` 拆解」「误改可用 `restore_window_snapshot` 回退」「独立子任务可 `spawn_agent` 委派」)。提示仅在该能力开启时注入,全部关闭时不注入(返回 `undefined`,不增加上下文);绝不覆盖集成方自定义 `systemPrompt`(拼接在其后)。子 agent 的默认 systemPrompt 明示其只具备只读工具、应给出简洁结论。
 
 ## Requirement: Agent 信息含 MCP 与工具来源
 
@@ -102,4 +102,4 @@ agent 主循环在「模型本轮无工具调用、即将返回最终结果」�
 
 ## Requirement: UI 样式可配
 
-`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(主色 `--pa-primary`、背景、圆角等,提供默认值)与 props(头像显示 `showAvatar`、打字动画 `showTyping`);默认采用中性主题(去渐变、单色主色)。集成方可经 CSS 变量覆盖主题或经 props 关闭装饰,无需改组件代码。
+`ChatDialog`/`DebugDrawer` 暴露 CSS 变量(主色 `--cs-primary`、背景、圆角等,提供默认值)与 props(头像显示 `showAvatar`、打字动画 `showTyping`);默认采用中性主题(去渐变、单色主色)。集成方可经 CSS 变量覆盖主题或经 props 关闭装饰,无需改组件代码。

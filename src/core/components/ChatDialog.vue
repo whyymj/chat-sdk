@@ -265,18 +265,18 @@ function copyText(text: string) {
 <style scoped>
 .chat-dialog {
   /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变) */
-  --pa-primary: var(--pa-primary);
-  --pa-primary-rgb: 79, 70, 229;
-  --pa-bg: #ffffff;
-  --pa-bubble-ai: #f3f4f6;
-  --pa-radius: 12px;
+  --cs-primary: var(--cs-primary);
+  --cs-primary-rgb: 79, 70, 229;
+  --cs-bg: #ffffff;
+  --cs-bubble-ai: #f3f4f6;
+  --cs-radius: 12px;
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  border-radius: var(--pa-radius);
+  border-radius: var(--cs-radius);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
-  background: var(--pa-bg);
+  background: var(--cs-bg);
   overflow: hidden;
   transition: all 0.3s ease;
 }
@@ -285,7 +285,7 @@ function copyText(text: string) {
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px;
-  background: var(--pa-primary);
+  background: var(--cs-primary);
   color: #fff; cursor: pointer; user-select: none;
 }
 .header-left { display: flex; align-items: center; gap: 8px; }
@@ -334,7 +334,7 @@ function copyText(text: string) {
   word-break: break-word; white-space: pre-wrap;
 }
 .message-row.assistant .message-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; }
-.message-row.user .message-bubble { background: var(--pa-primary); color: #fff; border-bottom-right-radius: 4px; }
+.message-row.user .message-bubble { background: var(--cs-primary); color: #fff; border-bottom-right-radius: 4px; }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 .message-time { font-size: 11px; color: #9ca3af; margin-top: 4px; padding: 0 4px; }
 
@@ -361,7 +361,7 @@ function copyText(text: string) {
 .step-children { padding-left: 12px; border-left: 2px solid #c7d2fe; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
 .step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 8px; background: #f8fafc; font-size: 10px; color: #64748b; }
 
-.stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--pa-primary); animation: blink 1s steps(2) infinite; }
+.stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--cs-primary); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
 .error-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
@@ -375,11 +375,11 @@ function copyText(text: string) {
   padding: 10px 12px; font-size: 14px; font-family: inherit; line-height: 1.4;
   outline: none; transition: border-color 0.2s; max-height: 100px; overflow-y: auto;
 }
-.chat-input:focus { border-color: var(--pa-primary); box-shadow: 0 0 0 2px rgba(var(--pa-primary-rgb), 0.1); }
+.chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
 .send-btn {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; border: none; border-radius: 8px;
-  background: var(--pa-primary); color: #fff; cursor: pointer;
+  background: var(--cs-primary); color: #fff; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s; flex-shrink: 0;
 }
 .send-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.05); }
@@ -390,11 +390,11 @@ function copyText(text: string) {
 
 /* 能力徽标(footer 左,MCP/工具数,点击开 Agent 信息) */
 .cap-badge { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-.cap-badge:hover { border-color: var(--pa-primary); color: var(--pa-primary); }
+.cap-badge:hover { border-color: var(--cs-primary); color: var(--cs-primary); }
 
 /* 最后一条 assistant 操作(复制/重新生成,hover 显示) */
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }
 .message-row.assistant:hover .msg-actions { opacity: 1; }
 .msg-action-btn { padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
-.msg-action-btn:hover { border-color: var(--pa-primary); color: var(--pa-primary); background: #f5f3ff; }
+.msg-action-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f5f3ff; }
 </style>

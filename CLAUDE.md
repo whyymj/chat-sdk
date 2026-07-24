@@ -4,17 +4,17 @@
 
 ## 项目概述
 
-`page-agent`(npm 包名 `page-agent`,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
+`chat-sdk`(npm 包名 `chat-sdk`,仓库目录仍名 `zhuanti-agent`)是一个**框架无关的 JS SDK**:以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
 
 由原 `zhuanti-agent`(Vue3 库、绑定"什么值得买专题"业务)重构而来,采用**自研 Deep Agents 风格 harness**(规避 `deepagentsjs#292` 浏览器打包阻塞,不引入 LangGraph/langchain 整包)。
 
-- 构建产物:`dist/page-agent.js`(ESM,peer 外置)、`dist/page-agent.umd.cjs`(UMD)、`dist/page-agent.iife.js`(IIFE 全量,供 CDN `<script>` 直引)、`dist/page-agent.css`
+- 构建产物:`dist/chat-sdk.js`(ESM,peer 外置)、`dist/chat-sdk.umd.cjs`(UMD)、`dist/chat-sdk.iife.js`(IIFE 全量,供 CDN `<script>` 直引)、`dist/chat-sdk.css`
 - 类型声明:`types/index.d.ts`(手动维护,构建不自动生成)
 - 入口:`src/index.ts`
 
 ## Agent 身份
 
-通用「页面操作助手」。systemPrompt 由 `createPageAgent({ systemPrompt })` 注入,不再硬编码业务身份。修改身份只传 systemPrompt,无需改代码。
+通用「页面操作助手」。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不再硬编码业务身份。修改身份只传 systemPrompt,无需改代码。
 
 ## 技术栈
 
@@ -59,7 +59,7 @@ src/
     │   ├── subagent.ts         # 子 agent 中间件(spawn_agent/spawn_agents,过程隔离 + 进度转发)
     │   ├── verify.ts           # 自检中间件(createVerifyMiddleware + createWriteBackCheck + 对抗验证)
     │   └── usageHints.ts       # 能力用法默认提示中间件(按 caps 注入 write_todos/restore/spawn 用法)
-    ├── sdk/                    # createPageAgent(命令式入口)/ defineTool
+    ├── sdk/                    # createChatSdk(命令式入口)/ defineTool
     ├── tools/                  # windowOps(属性注册表+增量编辑+快照)/ fetchDoc(可经 capabilities.windowOps/fetch 关闭)
     ├── toolsets.ts             # 内置工具集预设(fetchTools 静态 / defineWindowToolset 工厂 / selectBuiltinTools 筛选)
     ├── backends/vfs.ts         # 内存虚拟工作区(read/write/edit/ls/glob/grep)
@@ -90,7 +90,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - `createAgent(options)`:ReAct 循环 + 可插拔中间件,不绑定具体工具/能力
 - **中间件契约**(`Middleware`):`beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent`/`beforeReturn` + `augmentPrompt`/`compressInput`/`tools`。**before 类正序、after 类逆序、wrap 类洋葱(reduceRight)**;`beforeReturn`(before 类正序)在 agent 返回最终结果前触发,可回灌 feedback 驱动自纠(verify 中间件用)
 - 内置中间件顺序(装载序):`usageHints(最前,能力用法提示) → todos → skills → vfs → summarization → memory → permissions(可选) → verify(可选) → subagent(可选) → 用户自定义(末尾)`
-- `createPageAgent` 组装:harness + 内置工具(`windowOps`/`fetchDoc` 默认装,可经 `capabilities.windowOps`/`capabilities.fetch` 关闭;`vfs` 工具随 vfs 中间件)+ 用户 `tools`/`toolsets`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
+- `createChatSdk` 组装:harness + 内置工具(`windowOps`/`fetchDoc` 默认装,可经 `capabilities.windowOps`/`capabilities.fetch` 关闭;`vfs` 工具随 vfs 中间件)+ 用户 `tools`/`toolsets`/`skills`/`memory`/`windowProps`/`middleware`(自定义中间件拼到内置栈末尾)
 
 ### window 操作(属性注册表 + schema 校验 + 增量编辑 + 快照回退 + 大结果外存)
 - 集成方声明 `windowProps: [{ path, description, schema }]`
@@ -114,22 +114,22 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 
 ### 持久化存储(多后端 + 多 agent 隔离 + 全局配额/LRU 淘汰)
 - **默认关闭,赋值开启**:`storage` 不传 / `false` / `{ enabled: false }` → 关闭(纯内存);赋值后端字符串 `'indexed'`/`'session'`/`'local'`/`'memory'` 或配置对象 → 开启。例:`storage: 'session'`、`storage: { backend: 'local', maxBytes: 2*1024*1024 }`
-- **三层命名空间**:`DB(page-agent)→ agentId → sessionId`,单 DB + 单 `kv` objectStore,复合 key `v:1::{dbName}::{agentId}::{sessionId}::{kind}`(kind ∈ messages/vfs/todos/memory/__meta__)
+- **三层命名空间**:`DB(chat-sdk)→ agentId → sessionId`,单 DB + 单 `kv` objectStore,复合 key `v:1::{dbName}::{agentId}::{sessionId}::{kind}`(kind ∈ messages/vfs/todos/memory/__meta__)
 - **id 必传稳定值**:多 agent 共存靠 `options.id` 隔离;不传则随机生成 + `console.warn`(刷新后无法恢复)
 - **可注入后端**(`backends/storage.ts`):`StorageBackend` 实现 = `IdbBackend`(原生 IndexedDB)/ `WebStorageBackend`(localStorage·sessionStorage)/ `MemoryBackend`(测试+降级);指定后端不可用(隐私模式/QuotaExceeded)自动降级内存,不崩溃
 - **配额与淘汰(各后端达上限均淘汰老旧数据)**:全局总配额**按后端类型给默认**(indexed/memory 50MB;local/session 4MB,贴合浏览器 WebStorage ~5MB 留余量;均可 `maxBytes` 覆盖)+ 单会话软上限(默认 10MB);超限按 `lastAccessed` **整会话 LRU 淘汰**到 0.9 水位线;**运行时撞浏览器真实配额**(`QuotaExceededError`,导出的 `isQuotaError` 判定)→ 先淘汰最旧会话腾空间 → 仍失败则**降级内存重写**(数据不丢)+ `emit degraded`;`SessionStore.onEvent` 收 degraded/quota/evicted/flush
-- **切换上下文**:`PageAgent.switchSession(sessionId?)`(传 id 载入/不存在则以该 id 新建;不传则新建)→ flush 当前 → 清内存态 + 灌入目标快照(替换语义)→ 返回新 id。**storage 未开启时抛错**。同实例切上下文用此 API;换 agentId(切命名空间)需重建实例
-- **共享上下文(同页)**:`shareContext: true` 时同 `id` 的多个 createPageAgent 复用同一 `AgentCore`(messages/agent/vfs/store/todos/memory 全共享 = 同一 agent 的多个对话框视图);模块级 `sharedCores` 注册表 + 引用计数,`unmount` 归零才真销毁。默认 `false`(每实例独立)
+- **切换上下文**:`ChatSdk.switchSession(sessionId?)`(传 id 载入/不存在则以该 id 新建;不传则新建)→ flush 当前 → 清内存态 + 灌入目标快照(替换语义)→ 返回新 id。**storage 未开启时抛错**。同实例切上下文用此 API;换 agentId(切命名空间)需重建实例
+- **共享上下文(同页)**:`shareContext: true` 时同 `id` 的多个 createChatSdk 复用同一 `AgentCore`(messages/agent/vfs/store/todos/memory 全共享 = 同一 agent 的多个对话框视图);模块级 `sharedCores` 注册表 + 引用计数,`unmount` 归零才真销毁。默认 `false`(每实例独立)
 - **流式输出**:`streaming`(默认 `true` 逐字流式);`false` 时 ChatDialog 走 `fetchResponse`(等整段回复,底层仍 stream 聚合)
 - **持久化数据**:对话历史 / vfs 工作区 / todos / memory;**window 快照栈不持久化**(刷新后宿主值已变)
 - **集成**:vfs 经 Proxy 捕获 `store.files` 变更 → debounce save(工具层无感);`mount()` 异步 init(await ready → 解析 sessionId → load 恢复 → 构造 agent);`send()` 与 UI 共享同一响应式 `messages` 数组(唯一来源);`pagehide`/`visibilitychange` → `flush()` 兜底
 - **自测**:`selftest.ts` 用 `createMemoryBackend` + 纯函数(encodeKey/estimateBytes/selectForEviction)覆盖隔离/save-load/配额/淘汰/降级(IdbBackend 仅手动验证)
 
 ### 对话鲁棒性(重试 / 停止 / 重试)+ 中间件外接
-- **模型调用自动重试**(`harness/retry.ts`):`coreModelCall` 经 `withRetry` 对网络/429/5xx 指数退避重试(默认 `maxRetries`=2,即最多 3 次);4xx 与 abort 不重试。`createPageAgent({ maxRetries })` 可配
+- **模型调用自动重试**(`harness/retry.ts`):`coreModelCall` 经 `withRetry` 对网络/429/5xx 指数退避重试(默认 `maxRetries`=2,即最多 3 次);4xx 与 abort 不重试。`createChatSdk({ maxRetries })` 可配
 - **停止生成(abort)**:`useChat` 每轮建 `AbortController` → signal 穿透 `fetchStream → agent.stream → coreModelCall → llm.stream({signal})`;UI 发送按钮 loading 时切「■ 停止」。abort 时 `coreModelCall` **不抛**、返回 `{aborted:true, content:已生成 partial}`(保留半截内容,等同 ChatGPT);**AbortError 不计入 error**
 - **出错重试(UI)**:`useChat.retry()` 移除失败回复、重发最后一条 user;error-bar「重试」按钮触发
-- **自定义中间件外接**:`createPageAgent({ middleware: [...] })` 把用户中间件拼到内置栈末尾(todos/skills/vfs/summarization/memory/permissions 之后);`Middleware` 类型已从入口导出,8 钩子可拦截/观察/增强(见架构要点)。page-demo `App.vue` 有埋点示例中间件
+- **自定义中间件外接**:`createChatSdk({ middleware: [...] })` 把用户中间件拼到内置栈末尾(todos/skills/vfs/summarization/memory/permissions 之后);`Middleware` 类型已从入口导出,8 钩子可拦截/观察/增强(见架构要点)。page-demo `App.vue` 有埋点示例中间件
 - ⚠️ 错误判定**先排除 abort 再判 status**(AbortError 的 status 也是 undefined,否则被误判为网络错误无限重试)
 
 ### 子 agent 与并行编排(spawn_agent / spawn_agents)
@@ -141,7 +141,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **示例**:`examples/subagent-demo/`(`npm run dev` → `/subagent.html`)
 
 ### MCP(外部工具标准接入)
-- `createPageAgent({ mcp: [{ transport: 'http'|'sse'|'websocket', url, name?, requestInit? }] })` 连远程 MCP server,动态把其 tools 注入 agent(`Promise.allSettled` 故障隔离)
+- `createChatSdk({ mcp: [{ transport: 'http'|'sse'|'websocket', url, name?, requestInit? }] })` 连远程 MCP server,动态把其 tools 注入 agent(`Promise.allSettled` 故障隔离)
 - **动态 import** `@modelcontextprotocol/sdk`(optional peerDep,仅用时加载);子路径:`/client`(Client)+ `/client/<transport>.js`(按需 transport)
 - **浏览器仅远程 transport**:`http`(StreamableHTTP/fetch)/ `websocket`(原生)/ `sse`(需 eventsource);不支持 stdio
 - **零转换**:MCP `inputSchema`(JSON Schema)直传 LangChain `tool()`;工具注入在 `initDone` 内 `createAgent` 前(`bindTools` 固化)
@@ -149,7 +149,7 @@ demo/plain.html                 # 框架无关集成示例(importmap + esm.sh)
 - **dev 预构建坑**:`vite.config.ts` 的 `optimizeDeps.include` 已预声明 SDK 4 个子路径(`/client` + `streamableHttp.js`/`sse.js`/`websocket.js`)。否则 dev **冷启动首次**访问 MCP 页时,动态 import 的深子路径未被预声明 → 首次注入失败(「注入 0 个工具」,reload 后才正常)。排查:`npm run mcp:probe`(node 侧验证 `connectMcp` 连通性)
 
 ### Verify 自检中间件(agent 返回前自纠)
-- `createPageAgent({ capabilities:{verify:true}, verify:{ check?, maxAttempts? } })`:agent 给最终答前跑 `check`,不通过则 feedback 回灌 user 消息驱动自纠(限 `maxAttempts`,默认 2,防死循环)
+- `createChatSdk({ capabilities:{verify:true}, verify:{ check?, maxAttempts? } })`:agent 给最终答前跑 `check`,不通过则 feedback 回灌 user 消息驱动自纠(限 `maxAttempts`,默认 2,防死循环)
 - **机制**:`beforeReturn` 钩子点(`createAgent` 主循环「无 tool_calls 即将 return」收口处,**纯增量插入不重构循环**);预算检查前置(`verifyAttempts < maxVerifyAttempts`),耗尽则根本不跑钩子;自纠耗尽 rounds 预算时返回缓存的有效最终答(非误导性「请简化问题」)
 - **内置 check**:`createWriteBackCheck()`(check 省略时默认)——扫描会话**所有**写操作(`set/edit/delete_window_prop`),读回 + schema 校验;**跳过被合法拒绝的写**(校验失败/范围拒绝);delete 读回空=成功。windowOps 写入(`setByPath`)同步,无需 await
 - **自定义 check**:`verify:{ check: async ({messages,state}) => ({ok, feedback?}) }`;好 check 返回**具体可操作**的 feedback(非「结果不对」)
@@ -180,8 +180,8 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 ## SDK 用法
 ```ts
-import { createPageAgent, defineTool, defineSkill, type Middleware } from 'page-agent'
-createPageAgent({
+import { createChatSdk, defineTool, defineSkill, type Middleware } from 'chat-sdk'
+createChatSdk({
   container: '#root', llm: { apiKey, baseUrl, model },
   systemPrompt: '...', windowProps: [{ path, description, schema }],
   tools: [...], skills: [...], memory: '...',
@@ -197,7 +197,7 @@ createPageAgent({
 
 **能力开关**(`capabilities`):关掉无用内置能力(`{ windowOps/fetch/planning/skills/vfs/summarization/memory/subagent: false }`,默认全开),省 token/体积。`windowOps:false` → 不装 10 个 window 工具(纯调研场景);`fetch:false` → 不装 `fetch_document`(⚠️ 关 windowOps 后子 agent 的只读 window 白名单同步筛除,子 agent 也无 window 工具——符合「本 agent 不做 window 操作」语义)。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。`verify` 反向(默认关,需 `capabilities.verify:true` 显式开,见「Verify 自检中间件」)。
 
-**预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createPageAgent`。
+**预设**(`presets`):常见场景配置包(`presets.pageBuilder` / `researcher` / `minimal`),spread 进 `createChatSdk`。
 
 **内置工具集手动注入**(高级):`createWindowOps` / `fetchDocTools` 已从入口导出;另有 `fetchTools`(静态)/ `defineWindowToolset(props)`(工厂)toolset 预设。配合 `capabilities:{windowOps:false,fetch:false}` 关闭默认自动装配,改用 `toolsets:[defineWindowToolset(props), fetchTools]` 手动注入(主要业务工具集单独引入、按需注入)。
 
@@ -205,7 +205,7 @@ createPageAgent({
 
 **UI 模块可复用**(headless 进阶):`ChatDialog` / `MessageContent` / `CodePreview` 组件 + `useChat` composable 均从入口导出。headless(`ui:false`)自建 UI 时可 `import { ChatDialog, useChat }` 复用对话框组件与流式/重试/停止/重生成逻辑。`inspect()` 的 `AgentInfo` 含 `mcp.servers`(已连 MCP 列表)与每个工具的 `source`(`builtin`/`mcp:<name>`/`user`),DebugDrawer「Agent 信息」展示。
 
-**主题定制**:ChatDialog/DebugDrawer 暴露 CSS 变量(`--pa-primary`/`--pa-bg`/`--pa-radius` 等,默认中性主题,去 AI 风格化渐变)+ props(`showAvatar`/`showTyping`)。集成方可覆盖变量换主题或经 props 关装饰,无需改组件代码。
+**主题定制**:ChatDialog/DebugDrawer 暴露 CSS 变量(`--cs-primary`/`--cs-bg`/`--cs-radius` 等,默认中性主题,去 AI 风格化渐变)+ props(`showAvatar`/`showTyping`)。集成方可覆盖变量换主题或经 props 关装饰,无需改组件代码。
 
 ## 编码规范
 - `<script setup lang="ts">`,Composition API;注释用中文,只解释非显而易见处
@@ -214,10 +214,10 @@ createPageAgent({
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
 ## 发布与引入
-包名 `page-agent`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`/`sideEffects`)。`vue` 打包进库(非 peer);`zod`/`@langchain/*` 为 peer(npm 安装时由消费者装)。三种引入方式:
+包名 `chat-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`/`sideEffects`)。`vue` 打包进库(非 peer);`zod`/`@langchain/*` 为 peer(npm 安装时由消费者装)。三种引入方式:
 
-- **npm**:`npm install page-agent` → `import { createPageAgent, z } from 'page-agent'`(同时装 peer:`zod`、`@langchain/openai`、`@langchain/core`)。
-- **CDN · ESM(esm.sh)**:`import { createPageAgent, z } from 'https://esm.sh/page-agent'`(peer 由 esm.sh 自动解析,体积小,推荐模块化场景)。
-- **CDN · IIFE 全量**:`<script src="https://unpkg.com/page-agent"></script>` → 全局 `window.PageAgent`(`PageAgent.createPageAgent` / `PageAgent.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
+- **npm**:`npm install chat-sdk` → `import { createChatSdk, z } from 'chat-sdk'`(同时装 peer:`zod`、`@langchain/openai`、`@langchain/core`)。
+- **CDN · ESM(esm.sh)**:`import { createChatSdk, z } from 'https://esm.sh/chat-sdk'`(peer 由 esm.sh 自动解析,体积小,推荐模块化场景)。
+- **CDN · IIFE 全量**:`<script src="https://unpkg.com/chat-sdk"></script>` → 全局 `window.ChatSdk`(`ChatSdk.createChatSdk` / `ChatSdk.z`),依赖全打包进单文件,一行引入零配置,体积 ~1.4MB。示例见 `demo/plain.html`。
 
 构建:`npm run build` = `build:lib`(ESM + UMD,peer 外置)+ `build:iife`(IIFE 全量,配置 `vite.iife.config.ts`)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。

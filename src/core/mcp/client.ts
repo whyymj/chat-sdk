@@ -1,5 +1,5 @@
 /**
- * MCP(Model Context Protocol)client —— 连远程 MCP server,动态把其 tools 转为 page-agent 工具。
+ * MCP(Model Context Protocol)client —— 连远程 MCP server,动态把其 tools 转为 chat-sdk 工具。
  *
  * - **动态 import**:仅 options.mcp 提供时加载 @modelcontextprotocol/sdk(不用 MCP 不拉 SDK,不强求所有用户装)。
  * - **浏览器仅远程 transport**:`http`(StreamableHTTP,fetch)/ `websocket`(原生 WebSocket)/ `sse`(需 eventsource,浏览器可能要 polyfill)。不支持 stdio(无 node:child_process)。
@@ -94,7 +94,7 @@ function toLangChainTool(
 export async function connectMcp(config: McpServerConfig): Promise<McpConnection> {
   const { Client } = await import('@modelcontextprotocol/sdk/client')
   const transport = await buildTransport(config)
-  const client = new Client({ name: 'page-agent', version: '1.0' }, { capabilities: {} })
+  const client = new Client({ name: 'chat-sdk', version: '1.0' }, { capabilities: {} })
   await client.connect(transport as Parameters<Client['connect']>[0])
   const { tools } = await client.listTools()
   const lcTools = tools.map((t) => toLangChainTool(t, client))

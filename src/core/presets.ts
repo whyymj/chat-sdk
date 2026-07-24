@@ -1,16 +1,16 @@
 /**
- * 预设 —— 常见场景的推荐配置包,集成方 spread 进 createPageAgent,降低上手门槛。
+ * 预设 —— 常见场景的推荐配置包,集成方 spread 进 createChatSdk,降低上手门槛。
  *
  * 用法:
- *   createPageAgent({ ...presets.pageBuilder, container: '#root', llm, windowProps })
- *   createPageAgent({ ...presets.minimal, container, llm, windowProps })  // 极简,省 token
+ *   createChatSdk({ ...presets.pageBuilder, container: '#root', llm, windowProps })
+ *   createChatSdk({ ...presets.minimal, container, llm, windowProps })  // 极简,省 token
  *
  * 预设只给场景化配置(systemPrompt / capabilities / subagent 等);
  * container / llm / windowProps 等依赖集成方环境的选项仍由调用方提供。
  */
-import type { PageAgentOptions } from './sdk/createPageAgent'
+import type { ChatSdkOptions } from './sdk/createChatSdk'
 
-export const presets: Record<string, Partial<PageAgentOptions>> = {
+export const presets: Record<string, Partial<ChatSdkOptions>> = {
   /**
    * 页面构建助手 —— Agent 读写 window 驱动页面(配合 windowProps 声明可操作属性)。
    */

@@ -1,7 +1,7 @@
 /**
  * window 操作工具 —— 属性注册表 + schema 校验 + 增量编辑 + 快照回退(无人工审批)
  *
- * 设计(见 specs/page-agent-core.md):
+ * 设计(见 specs/chat-sdk-core.md):
  *  - 属性注册表:集成方声明 { path, description, schema };所有读写只经工具 → 范围(仅注册表内)+ 校验(按 schema)
  *  - 属性说明文档:list_window_props / describe_window_prop
  *  - 增量编辑 edit_window_prop:按 op(set/remove/merge/append)+ jsonPath 改局部,避免 LLM 重传整个大 JSON
