@@ -409,6 +409,24 @@ createChatSdk({
 
 > Add this test dir to `.gitignore` (local only, not in repo) to avoid committing `.env` with real keys to remotes.
 
+## Bundle size & tree-shaking
+
+The package ships three builds — pick by integration scenario:
+
+| Build | File | When to use | Approx. size |
+|---|---|---|---|
+| ESM (bundled, peer external) | `dist/page-agent-sdk.js` | `import` via npm or esm.sh — recommended for module hosts | ~620 KB |
+| UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~560 KB |
+| IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~1.4 MB |
+
+`sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
+
+- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`).
+- **Disable unused capabilities**: `capabilities:{ windowOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
+- **CDN via esm.sh**: `import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` — peer deps (`zod`, `@langchain/*`) are resolved and deduped by esm.sh automatically; smallest for module scenarios.
+- **IIFE only for zero-config**: the all-inlined single file is convenient but heaviest; prefer ESM when the host supports modules.
+- **MCP is an optional peer**: `@modelcontextprotocol/sdk` is dynamically imported only when `options.mcp` is passed — omit it to avoid loading the MCP runtime entirely.
+
 ## Development
 
 ```bash

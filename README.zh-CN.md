@@ -354,6 +354,24 @@ createChatSdk({
 
 > 建议此测试目录加入 `.gitignore`（纯本地，不进仓库），避免把含真实 key 的 `.env` 提交到远程。
 
+## 体积与按需引入
+
+包提供三种构建产物,按集成场景选择:
+
+| 产物 | 文件 | 适用场景 | 大小 |
+|---|---|---|---|
+| ESM(peer 外置) | `dist/page-agent-sdk.js` | npm 或 esm.sh `import`,模块化宿主推荐 | ~620 KB |
+| UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~560 KB |
+| IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~1.4 MB |
+
+`sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
+
+- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。
+- **关闭无用能力**:`capabilities:{ windowOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
+- **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
+- **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。
+- **MCP 为可选 peer**:`@modelcontextprotocol/sdk` 仅在传 `options.mcp` 时动态 import —— 不用 MCP 完全不加载该运行时。
+
 ## 开发
 
 ```bash
