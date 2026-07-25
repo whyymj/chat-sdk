@@ -200,6 +200,29 @@ doc/                            # usage-guide / architecture / context-managemen
 CLAUDE.md                       # 架构要点 + 约定坑 + 编码规范（agent 必读）
 ```
 
+## 给 AI 工具使用者的 Skills（集成方安装）
+
+内置两个开箱即用的 Agent Skill，供使用 Claude Code / Cursor（或任何加载 `.claude/skills/` / `~/.claude/skills/` 的 agent 工具）的集成方使用。它们教 AI 如何在**你的项目**中使用本 SDK：
+
+| Skill | 触发场景 |
+|---|---|
+| `page-agent-sdk-integrate` | 集成 SDK —— 选引入方式、声明 `windowProps` + zod schema、配 LLM、挂载、订阅事件（`onEvent` / `sdk.hook`）、跑 headless、排查常见坑 |
+| `page-agent-sdk-release` | 发布新版本（bump → 构建 → 测试 → 推 gitee/github → 发 npm → 验证）—— 面向维护者 |
+
+**安装**（任选其一）：
+
+```bash
+# 方式 A —— 从已安装的 npm 包复制
+npm i page-agent-sdk
+cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-* ~/.claude/skills/
+
+# 方式 B —— 从仓库下载（无需安装）
+curl -L https://github.com/whyymj/chat-sdk/tarball/master | tar xz --strip-components=1 --wildcards '*/skills/page-agent-sdk-*'
+mv skills/page-agent-sdk-* ~/.claude/skills/
+```
+
+安装后重启 AI 工具；当你说「把 page-agent-sdk 加到我的页面」「发布新版本」等时 skill 自动触发。
+
 ## 架构
 
 ```mermaid

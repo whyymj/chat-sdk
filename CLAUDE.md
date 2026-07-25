@@ -60,6 +60,7 @@ examples/                       # 各 demo(page-demo/subagent-demo/mcp-demo/nest
                                 # 每个 demo 目录自带 index.html(dev 入口)+ main.ts;根目录仅 index.html(主入口→page-demo)
 doc/                            # architecture.md + README.md(索引)
 demo/plain.html                 # 框架无关集成示例
+skills/                         # 分发给使用者的 Agent Skill(integrate/release),含入 npm 包 files
 ```
 
 ## 架构要点
@@ -171,16 +172,19 @@ createChatSdk({
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
-## 项目 Skills(协助 AI 工具使用本项目)
+## 项目 Skills(分发给使用者,协助 AI 工具使用本 SDK)
 
-`.claude/skills/` 下提供两个针对本项目的 skill,供 Claude Code / Cursor 等 AI 工具触发使用:
+`skills/` 下提供两个面向**集成方/使用者**的 Agent Skill,供他们安装到自己的 Claude Code / Cursor(或任何加载 `.claude/skills/` 的工具)中,教 AI 如何使用本 SDK:
 
 | Skill | 触发场景 | 内容 |
 |---|---|---|
 | `page-agent-sdk-integrate` | 把 SDK 集成进网页(选引入方式/声明 windowProps+schema/配 llm/挂载/订阅事件/headless/排坑) | 集成工作流 + 常见坑(DeepSeek 400 tool_call_id / MCP 注入 0 工具 / 服务端) |
 | `page-agent-sdk-release` | 发布新版本到 npm + 推两个 git | 完整发布 checklist + 双远程职责 + npm 2FA 凭据 |
 
-二者均引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程。
+- **位置**:`skills/page-agent-sdk-integrate/`、`skills/page-agent-sdk-release/`(已含入 npm 包 `files`)
+- **安装方式**:使用者 `cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-* ~/.claude/skills/` 或从 github 下载
+- 二者引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程
+- ⚠️ 注意区分:本仓库 `.claude/skills/openspec-*` 是**本仓库 agent 自用**(开发本项目);`skills/page-agent-sdk-*` 是**分发给使用者**(用本 SDK)
 
 ## 发布与引入
 
