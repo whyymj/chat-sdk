@@ -90,6 +90,7 @@ demo/plain.html                 # 框架无关集成示例
 - 模型调用自动重试(`harness/retry.ts`):网络/429/5xx 指数退避(默认 `maxRetries`=2);4xx 与 abort 不重试
 - 停止生成(abort):signal 穿透到 `llm.stream`;abort 时保留已生成 partial
 - 自定义中间件外接:`createChatSdk({ middleware: [...] })` 拼到内置栈末尾;`Middleware` 类型已导出
+- **onEvent 事件回调**:`createChatSdk({ onEvent })` 订阅常用时机(`window_prop_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`error`),供外部联动替代轮询;`approval_request` 不外发;流式事件仅 stream 模式(UI 默认 stream;`send` 走 invoke 无流式事件,但 window/message/error 仍发)。内部由 `sdk-events` 中间件 + `core.stream` 包装实现
 - ⚠️ 错误判定**先排除 abort 再判 status**
 
 ### 子 agent 与并行编排

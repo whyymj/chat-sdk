@@ -22,6 +22,7 @@
   - [6.6 持久化与会话管理](#66-持久化与会话管理)
   - [6.7 对话鲁棒性(重试 / 停止 / 重试)](#67-对话鲁棒性重试--停止--重试)
   - [6.8 上下文与内存上限](#68-上下文与内存上限)
+  - [6.9 onEvent 事件回调(订阅常用时机)](#69-onevent-事件回调订阅常用时机)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -593,7 +594,48 @@ createChatSdk({
 - **故障隔离**:单 server 连接失败跳过 + `console.warn`,不影响主 agent 与其他 server。
 - MCP 工具自动出现在 `agent.inspect()` 与 DebugDrawer「Agent 信息」tab。
 
-## 7. 高级:自定义中间件
+### 6.9 onEvent 事件回调(订阅常用时机)
+
+`createChatSdk({ onEvent })` 提供一个轻量事件回调,订阅 Agent 运行中的常用时机,用于**外部联动**(宿主页面响应式刷新、埋点、日志、自建 UI 同步),替代轮询。UI 与 headless 模式均生效。
+
+**事件类型**(`SdkEvent`):
+
+| 事件 | 时机 | 字段 |
+|---|---|---|
+| `window_prop_change` | Agent 调 `set`/`edit`/`delete`/`restore_window_*` 后 | `path` / `operation` / `value`(改后值) |
+| `message_update` | 每轮 Agent 结束 | `count`(消息数) |
+| `tool_call` | 工具调用前(stream 模式) | `name` / `args` |
+| `tool_result` | 工具返回后(stream 模式) | `name` / `result` / `status` |
+| `text` / `reasoning` | 流式文本/思考增量(stream 模式) | `delta` |
+| `round_start` | 每轮模型调用开始 | `round` |
+| `subagent` | 子 agent 工具进度 | `taskId`/`label`/`kind`/`name`/... |
+| `done` | 一轮回复完成(stream 模式) | `content` |
+| `error` | 模型调用/工具抛错 | `message` |
+
+> ⚠️ `approval_request` 不外发(UI 已处理,避免集成方误调 `resolve` 双重收口)。
+> ⚠️ `tool_call`/`tool_result`/`text`/`done` 等流式事件仅在 **stream 模式**触发(UI 默认走 stream;命令式 `sdk.send` 走 invoke 无流式事件,但 `window_prop_change`/`message_update`/`error` 仍会发)。
+
+**示例**(宿主页面响应式刷新,替代 `setInterval` 轮询):
+
+```ts
+createChatSdk({
+  /* ... */
+  onEvent(event) {
+    if (event.type === 'window_prop_change') {
+      // Agent 改了 window 属性 → 实时刷新你的 UI 镜像
+      renderState()
+    } else if (event.type === 'tool_call') {
+      analytics.track('agent_tool_call', { name: event.name })
+    } else if (event.type === 'error') {
+      console.error('agent error', event.message)
+    }
+  },
+}).mount()
+```
+
+> 更深度的拦截/增强(改 messages、包裹模型调用、贡献工具)用**自定义中间件**(见下节);`onEvent` 适合只读观察。
+
+## 8. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。
 

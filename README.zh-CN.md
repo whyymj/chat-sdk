@@ -234,6 +234,9 @@ createChatSdk({
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* 自定义中间件 */],
+  onEvent(e) {                 // SDK 事件回调:订阅常用时机(window 属性变化/消息更新/工具调用/错误),替代轮询
+    if (e.type === 'window_prop_change') refreshUI()
+  },
 }).mount()
 ```
 

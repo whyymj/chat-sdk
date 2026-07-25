@@ -45,6 +45,26 @@ export type StreamEvent =
 /** 流式回调函数签名 */
 export type StreamHandler = (event: StreamEvent) => void
 
+/**
+ * SDK 事件(供 createChatSdk({ onEvent }) 订阅常用时机)。
+ * 复用 StreamEvent(round_start/reasoning/text/tool_call/tool_result/subagent/done;approval_request 不外发,UI 已处理)
+ * + 额外时机:window_prop_change / message_update / error。
+ */
+export type SdkEvent =
+  | { type: 'round_start'; round: number }
+  | { type: 'reasoning'; delta: string }
+  | { type: 'text'; delta: string }
+  | { type: 'tool_call'; name: string; args: any }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'done'; content: string }
+  | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
+  | { type: 'message_update'; count: number }
+  | { type: 'error'; message: string }
+
+/** SDK 事件回调签名 */
+export type SdkEventHandler = (event: SdkEvent) => void
+
 export interface ChatDialogProps {
   /** 非流式 AI 请求函数（与 fetchStream 二选一） */
   fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>

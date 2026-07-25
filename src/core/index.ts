@@ -47,7 +47,7 @@ export { createVfs } from './backends/vfs'
 export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 // 通用消息 / 上下文类型
-export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, ToolStep } from './types'
+export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, ToolStep } from './types'
 export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from './utils/modelCaps'

@@ -42,6 +42,25 @@ export type StreamEvent =
 
 export type StreamHandler = (event: StreamEvent) => void;
 
+/**
+ * SDK 事件(供 createChatSdk({ onEvent }) 订阅常用时机)。
+ * 复用 StreamEvent(round_start/reasoning/text/tool_call/tool_result/subagent/done;approval_request 不外发)
+ * + 额外时机:window_prop_change / message_update / error。
+ */
+export type SdkEvent =
+  | { type: 'round_start'; round: number }
+  | { type: 'reasoning'; delta: string }
+  | { type: 'text'; delta: string }
+  | { type: 'tool_call'; name: string; args: any }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'done'; content: string }
+  | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
+  | { type: 'message_update'; count: number }
+  | { type: 'error'; message: string };
+
+export type SdkEventHandler = (event: SdkEvent) => void;
+
 /** 调试日志(与 harness/createAgent 的 DebugLog 一致) */
 export interface DebugLog {
   timestamp: number;
@@ -336,6 +355,12 @@ export interface ChatSdkOptions {
   summaryMaxTokens?: number;
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退索引摘要) */
   summaryTimeoutMs?: number;
+  /**
+   * SDK 事件回调:订阅常用时机(window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * UI 与 headless 模式均生效;用于外部联动(宿主页面响应式刷新、埋点、日志),替代轮询。
+   * approval_request 不外发(UI 已处理)。
+   */
+  onEvent?: SdkEventHandler;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;
   title?: string;

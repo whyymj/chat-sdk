@@ -289,6 +289,9 @@ createChatSdk({
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* custom middleware */],
+  onEvent(e) {                 // SDK event callback: subscribe to common moments (window prop change / message update / tool call / error), replaces polling
+    if (e.type === 'window_prop_change') refreshUI()
+  },
 }).mount()
 ```
 

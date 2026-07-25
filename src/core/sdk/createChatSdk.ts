@@ -51,7 +51,8 @@ import { createSessionStore, type SessionStore, type StorageConfig, type Storage
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../utils/rounds'
-import type { AgentMessage, StreamHandler, AgentInfo } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler } from '../types'
+import type { ToolCallContext } from '../harness/middleware'
 
 export interface LLMConfig {
   apiKey: string
@@ -195,6 +196,12 @@ export interface ChatSdkOptions {
   summaryMaxTokens?: number
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退零成本索引摘要,不阻塞用户) */
   summaryTimeoutMs?: number
+  /**
+   * SDK 事件回调:订阅常用时机(window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * UI 与 headless 模式均生效;用于外部联动(如宿主页面响应式刷新、埋点、日志),替代轮询。
+   * 注意:approval_request 不外发(UI 已处理,避免双重 resolve)。
+   */
+  onEvent?: SdkEventHandler
   /** 流式输出(默认 true 逐字流式);false 时等整段回复再显示(底层仍 stream 聚合) */
   streaming?: boolean
   /** 对话框 UI 文案 */
@@ -338,6 +345,53 @@ function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Pr
     } finally {
       clearTimeout(timer)
     }
+  }
+}
+
+/**
+ * window 写工具名 → operation 映射(供 onEvent 的 window_prop_change 推断操作类型)。
+ * 非 window 写工具返回 null。
+ */
+function matchWindowOp(name: string): 'set' | 'edit' | 'delete' | 'restore' | null {
+  if (name === 'set_window_prop') return 'set'
+  if (name === 'edit_window_prop') return 'edit'
+  if (name === 'delete_window_prop') return 'delete'
+  if (name === 'restore_window_snapshot') return 'restore'
+  return null
+}
+
+/** 按点分路径从 window 读值(如 'app.theme' → window.app.theme);读不到返回 undefined */
+function readWindowPath(path: string): unknown {
+  const parts = path.split('.')
+  let cur: any = (globalThis as any).window
+  for (const p of parts) {
+    if (cur == null) return undefined
+    cur = cur[p]
+  }
+  return cur
+}
+
+/**
+ * 内部事件中间件:把常用时机经 onEvent 外发给集成方。
+ * - wrapToolCall:window 写工具(set/edit/delete/restore)执行后发 window_prop_change(path/operation/value)
+ * - afterAgent:每轮 agent 结束发 message_update(消息数)
+ * stream 事件(round_start/text/tool_call/done 等)由 core.stream 包装层转发(见下)。
+ */
+function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[]): Middleware {
+  return {
+    name: 'sdk-events',
+    wrapToolCall: async (ctx: ToolCallContext, next) => {
+      const result = await next(ctx)
+      const op = matchWindowOp(ctx.name)
+      if (op) {
+        const path = String(ctx.args?.path ?? '')
+        emit({ type: 'window_prop_change', path, operation: op, value: path ? readWindowPath(path) : undefined })
+      }
+      return result
+    },
+    afterAgent: async () => {
+      emit({ type: 'message_update', count: messages.length })
+    },
   }
 }
 
@@ -517,6 +571,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     },
     useWindowOps && !!(options.windowProps?.length),
   )
+  // SDK 事件回调:把常用时机外发给集成方(window 属性变化 / 消息更新 / 流式事件 / 错误)
+  const userOnEvent = options.onEvent
+  const emit: SdkEventHandler = (event) => {
+    if (!userOnEvent) return
+    // approval_request 不外发(UI 已处理,避免集成方误调 resolve 双重收口)
+    if ((event as any).type === 'approval_request') return
+    try { userOnEvent(event) } catch { /* 回调抛错不影响 agent 循环 */ }
+  }
+
   const middlewares = [
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
@@ -553,6 +616,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
     ...(options.middleware || []),
+    // SDK 事件中间件(最末,最后观察):window 写后发 window_prop_change;每轮结束发 message_update
+    ...(userOnEvent ? [createSdkEventMiddleware(emit, messages)] : []),
   ]
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
@@ -590,11 +655,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     async send(message: string): Promise<string> {
       await core.initDone
       messages.push({ role: 'user', content: message, timestamp: Date.now() })
-      const reply = await core.agent!.invoke(messages)
-      messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
-      core.afterRound()
-      if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
-      return reply
+      try {
+        const reply = await core.agent!.invoke(messages)
+        messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
+        core.afterRound()
+        if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
+        return reply
+      } catch (err: any) {
+        emit({ type: 'error', message: err?.message || String(err) })
+        throw err
+      }
     },
 
     /** 切换会话:flush 当前 → 载入/新建目标 → 清内存态并灌入快照(替换语义)→ 返回新会话 id */
@@ -627,7 +697,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     stream: (msgs, onEvent, signal) => {
       if (!core.agent) throw new Error('page-agent-sdk: agent 尚未初始化完成,请先 await mount()')
-      return core.agent.stream(msgs, onEvent, signal)
+      // 包装:把 stream 事件同时转发给集成方 onEvent(approval_request 已由 emit 过滤)
+      const wrappedHandler: StreamHandler = userOnEvent
+        ? (event) => { onEvent?.(event); emit(event as SdkEvent) }
+        : onEvent
+      return core.agent.stream(msgs, wrappedHandler, signal)
     },
 
     release(): void {

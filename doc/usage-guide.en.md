@@ -236,6 +236,47 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 - 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive)
 - vfs `maxBytes` (default 4MB) LRU evict; dialog `maxMemoryRounds` (default 50) trim
 
+### 6.9 onEvent callback (subscribe to common moments)
+
+`createChatSdk({ onEvent })` provides a lightweight event callback to subscribe to common moments during Agent runs, for **external integration** (host page reactive refresh, analytics, logging, custom UI sync) — replacing polling. Works in both UI and headless modes.
+
+**Event types** (`SdkEvent`):
+
+| Event | When | Fields |
+|---|---|---|
+| `window_prop_change` | After Agent calls `set`/`edit`/`delete`/`restore_window_*` | `path` / `operation` / `value` (post-change value) |
+| `message_update` | After each Agent round | `count` (message count) |
+| `tool_call` | Before tool call (stream mode) | `name` / `args` |
+| `tool_result` | After tool returns (stream mode) | `name` / `result` / `status` |
+| `text` / `reasoning` | Streaming text/reasoning delta (stream mode) | `delta` |
+| `round_start` | Each model call round start | `round` |
+| `subagent` | Subagent tool progress | `taskId`/`label`/`kind`/`name`/... |
+| `done` | Round reply complete (stream mode) | `content` |
+| `error` | Model call / tool throws | `message` |
+
+> ⚠️ `approval_request` is NOT forwarded (UI already handles it, to avoid double `resolve`).
+> ⚠️ `tool_call`/`tool_result`/`text`/`done` etc. fire only in **stream mode** (UI defaults to stream; imperative `sdk.send` uses invoke — no stream events, but `window_prop_change`/`message_update`/`error` still fire).
+
+**Example** (host page reactive refresh, replacing `setInterval` polling):
+
+```ts
+createChatSdk({
+  /* ... */
+  onEvent(event) {
+    if (event.type === 'window_prop_change') {
+      // Agent changed a window prop → refresh your UI mirror in real time
+      renderState()
+    } else if (event.type === 'tool_call') {
+      analytics.track('agent_tool_call', { name: event.name })
+    } else if (event.type === 'error') {
+      console.error('agent error', event.message)
+    }
+  },
+}).mount()
+```
+
+> For deeper interception/enhancement (mutating messages, wrapping model calls, contributing tools) use **custom middleware** (next section); `onEvent` is for read-only observation.
+
 ## 7. Custom middleware
 
 ```ts
