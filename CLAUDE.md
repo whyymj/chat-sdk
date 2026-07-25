@@ -285,6 +285,8 @@ createChatSdk({
 
 每次发布按此顺序,缺一不可:
 
+> ⚠️ **发布触发约定**:不要在修 bug / 加功能后自动发布。每次 `git commit` 后**停下来询问用户「是否发布」**,由用户决定是否 bump + push + publish。仅在用户明确说「发布」/「publish」/「推上去」等时才执行本 checklist。
+
 1. **改代码**:`src/` 改实现 → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
 2. **更新中英文文档**(同步,勿漏单边):
    - `README.md`(英)/ `README.zh-CN.md`(中):特性、用法、场景、本地 npm 测试
