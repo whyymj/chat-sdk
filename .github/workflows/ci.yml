@@ -35,6 +35,9 @@ jobs:
       - name: E2E integration (120 assertions,用 dist 产物,无 LLM 依赖)
         run: npm run test:e2e
 
+      - name: Exports consistency (核对 types/index.d.ts 与 src/core/index.ts 导出对齐)
+        run: npm run test:exports
+
       - name: Pack dry-run (核对 tarball 不含 .env/src/examples/tests/笔记)
         run: npm pack --dry-run
 

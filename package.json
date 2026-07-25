@@ -34,7 +34,8 @@
     "build:iife": "vite build --config vite.iife.config.ts",
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts",
-    "test:e2e": "node tests/e2e-integration.mjs"
+    "test:e2e": "node tests/e2e-integration.mjs",
+    "test:exports": "node tests/exports-consistency.mjs"
   },
   "keywords": [
     "ai",

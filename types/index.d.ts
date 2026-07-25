@@ -488,3 +488,48 @@ export declare function zodError(path: string, issues: unknown[]): string;
 export declare function jsonParseError(path: string | undefined, raw: string, err: unknown): string;
 /** 提取 zod issues 为结构化 details(每条 path/expected/received/message) */
 export declare function formatZodIssues(issues: unknown[]): unknown[];
+
+// === 与 src/core/index.ts 导出对齐(消费者类型完整;复杂内部类型用宽松声明,消费者主要消费工厂返回值) ===
+// 上下文压缩预设
+export declare function resolveContextOptions(options: any, modelContextWindow: number): any;
+export type ContextPreset = 'auto' | 'conservative' | 'aggressive';
+export declare const CONTEXT_PRESETS: Record<string, any>;
+
+// MCP
+export declare function connectMcp(config: any): Promise<any>;
+export declare function extractText(result: any): string;
+export type McpTransport = 'http' | 'sse' | 'websocket';
+export interface McpConnection { [k: string]: any }
+
+// harness / 中间件
+export interface CreateAgentOptions { [k: string]: any }
+export interface Middleware { name: string; [k: string]: any }
+export interface ModelRequest { [k: string]: any }
+export interface ModelResponse { [k: string]: any }
+export interface ToolCallContext { [k: string]: any }
+export interface StateUpdate { [k: string]: any }
+
+// 子 agent
+export declare function createSubagentsMiddleware(opts: any): any;
+export interface SubagentOptions { [k: string]: any }
+export interface SubagentLlmConfig { [k: string]: any }
+
+// checkpoint / windowOps / permissions
+export interface CheckpointDeps { [k: string]: any }
+export interface WindowAuditEntry { [k: string]: any }
+export interface WindowSnapshotEntry { [k: string]: any }
+export type PermissionOp = string;
+
+// vfs
+export declare function createVfs(opts?: any): any;
+
+// 上下文管理
+export interface ContextManagerOptions { [k: string]: any }
+export interface CompressionStats { [k: string]: any }
+
+// 模型能力 / token 估算 / offload 阈值
+export declare function resolveModelCaps(model: string): any;
+export declare function estimateTokens(text: string): number;
+export declare function offloadThresholdChars(contextWindow: number): number;
+export declare function offloadPassThroughChars(contextWindow: number): number;
+export interface ModelCaps { [k: string]: any }
