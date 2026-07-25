@@ -324,6 +324,44 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 npm test   # 341 assertions, no LLM dependency
 ```
 
+## Local npm package test
+
+Verify the **published npm package** actually works (distinct from `src/` local code and `dist/*.iife.js` local build): set up a standalone vite app in an isolated directory, install `page-agent-sdk` from the npm registry, and run it.
+
+**Scenario**: after publishing a new version, confirm the package from `npm install page-agent-sdk` imports + mounts + calls tools correctly; or reproduce an integrator's issue in a clean environment (ruling out local `node_modules` cache / stale `dist` artifacts).
+
+**Minimal steps**:
+
+```bash
+mkdir npm-pkg-test && cd npm-pkg-test
+npm init -y
+npm install page-agent-sdk zod @langchain/openai @langchain/core
+npm install -D vite typescript
+```
+
+`index.html` (mount point) + `main.ts`:
+
+```ts
+import { createChatSdk, z } from 'page-agent-sdk'
+import 'page-agent-sdk/style.css'
+
+window.app = { title: 'Demo', theme: 'light' }
+
+createChatSdk({
+  container: '#root',
+  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  systemPrompt: 'You are a page assistant; read/write window.app via tools.',
+  windowProps: [
+    { path: 'app.title', description: 'Title', schema: z.string() },
+    { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
+  ],
+}).mount()
+```
+
+`npx vite` → type "change app.theme to dark" in the dialog → AI calls `set_window_prop` → `window.app.theme` becomes `dark` → verified.
+
+> Add this test dir to `.gitignore` (local only, not in repo) to avoid committing `.env` with real keys to remotes.
+
 ## Development
 
 ```bash
