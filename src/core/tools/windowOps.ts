@@ -17,6 +17,7 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
+import { watch, isReactive } from 'vue'
 import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './windowQuery'
 import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 
@@ -165,6 +166,21 @@ function safeStringify(value: unknown, maxLen = Infinity): string {
     result = result.slice(0, maxLen) + `\n…[已截断,原长度 ${result.length}]`
   }
   return result
+}
+
+/**
+ * 乐观锁 hash:对值做稳定序列化 + djb2 哈希,返回短 hash 字符串(如 "a3f9b2")。
+ * 用于 set/edit/delete 的 expectedHash 校验:agent get 时拿到 hash,写入时回传,
+ * 工具对比当前值 hash 与 expectedHash,不一致 → 属性已被改(外部代码/其他 agent/用户手动)→ CONFLICT。
+ * 不依赖响应式,通用(服务端/普通 JSON/reactive 都行);碰撞概率极低(djb2 32 位)。
+ */
+function hashValue(value: unknown): string {
+  const s = safeStringify(value)
+  let h = 5381
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0
+  }
+  return h.toString(36)
 }
 
 // ============ patch helper(校验用副本 + 落地用就地,语义对称) ============
@@ -361,18 +377,18 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       }
       const val = getByPath(window, path)
       if (val === undefined) return `${path} = (undefined)`
-      return `${path} = ${safeStringify(val)}`
+      return `${path} = ${safeStringify(val)} (hash=${hashValue(val)})`
     },
     {
       name: 'get_window_prop',
       description:
-        '读取一个已注册 window 属性的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。字段白名单读模式(默认)下仅可读注册 path 自身/后代;未注册祖先(整体大 JSON)不可读,避免大 JSON 拉进上下文。',
+        '读取一个已注册 window 属性的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改属性前先 get 拿 hash,写入时(set/edit/delete)传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"(外部代码/其他 agent/用户手动改过会 CONFLICT,需重新 get 再改)。字段白名单读模式(默认)下仅可读注册 path 自身/后代;未注册祖先(整体大 JSON)不可读,避免大 JSON 拉进上下文。',
       schema: z.object({ path: z.string().describe('已注册的属性路径或其后代') }),
     },
   )
 
   const setWindowProp = tool(
-    async ({ path, value }) => {
+    async ({ path, value, expectedHash }) => {
       const spec = registry.get(path)
       if (!spec) {
         return toolError({
@@ -381,6 +397,19 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           message: `属性 "${path}" 未在注册表中声明,不可写`,
           hint: '用 list_window_props 查看可用属性;集成方需先在 windowProps 声明该 path',
         })
+      }
+      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 属性已被外部/其他操作改过 → 拒绝,让 agent 重新 get 再改
+      if (expectedHash !== undefined && expectedHash !== '') {
+        const cur = getByPath(window, path)
+        const curHash = hashValue(cur)
+        if (curHash !== expectedHash) {
+          return toolError({
+            code: 'VERSION_CONFLICT',
+            path,
+            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)`,
+            hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(cur, 400)}`,
+          })
+        }
       }
       let parsed: unknown
       try {
@@ -401,21 +430,22 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
         setByPath(window, path, res.data)
       }
       audit({ op: 'set', path, value: res.data, timestamp: Date.now() })
-      return `已设置 ${path} = ${safeStringify(res.data, 600)}${pathsHint()}`
+      return `已设置 ${path} = ${safeStringify(res.data, 600)} (新 hash=${hashValue(getByPath(window, path))})${pathsHint()}`
     },
     {
       name: 'set_window_prop',
       description:
-        '设置一个已注册 window 属性的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。大对象/数组强烈建议改用 edit_window_prop 增量 patch —— 整体重传大 JSON 时输出可能被 max_tokens 截断,导致 JSON 不完整而校验失败,且浪费 token。',
+        '设置一个已注册 window 属性的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 get_window_prop 返回的 hash,传入则启用乐观锁——若属性已被改过(外部代码/其他 agent/用户手动)则返回 VERSION_CONFLICT 不写入,需重新 get 再改,防"基于过期值覆盖"。大对象/数组强烈建议改用 edit_window_prop 增量 patch。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
         value: z.string().describe('JSON 字符串形式的值,需符合该属性 schema'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
       }),
     },
   )
 
   const editWindowProp = tool(
-    async ({ path, op, jsonPath, value }) => {
+    async ({ path, op, jsonPath, value, expectedHash }) => {
       const spec = registry.get(path)
       if (!spec) {
         return toolError({
@@ -435,6 +465,27 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           hint: '使用正常的属性路径,如 components.0.text(数组索引用数字)',
         })
       }
+      const current = getByPath(window, path)
+      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 已被改过 → 拒绝
+      if (expectedHash !== undefined && expectedHash !== '') {
+        const curHash = hashValue(current)
+        if (curHash !== expectedHash) {
+          return toolError({
+            code: 'VERSION_CONFLICT',
+            path,
+            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)`,
+            hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再 edit(传新的 expectedHash)。当前值:${safeStringify(current, 400)}`,
+          })
+        }
+      }
+      if (current == null || typeof current !== 'object') {
+        return toolError({
+          code: 'NOT_OBJECT',
+          path,
+          message: `edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}`,
+          hint: '叶子属性(原始类型)请用 set_window_prop 整体设置',
+        })
+      }
       // value 解析(set/merge/append 必填)
       let parsed: unknown
       if (op !== 'remove') {
@@ -451,15 +502,6 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
         } catch (e) {
           return jsonParseError(path, value, e)
         }
-      }
-      const current = getByPath(window, path)
-      if (current == null || typeof current !== 'object') {
-        return toolError({
-          code: 'NOT_OBJECT',
-          path,
-          message: `edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}`,
-          hint: '叶子属性(原始类型)请用 set_window_prop 整体设置',
-        })
       }
       // ① 在深拷贝副本上应用 patch → 整体 schema 校验(不写入)
       const clone = deepClone(current)
@@ -480,23 +522,24 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       pushSnapshot(path, 'edit')
       applyPatchToLive(path, op, jp, parsed)
       audit({ op: 'edit', path, detail: `${op}${jp ? '@' + jp : ''}`, value: parsed, timestamp: Date.now() })
-      return `已 edit ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(getByPath(window, path), 600)}${pathsHint()}`
+      return `已 edit ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(getByPath(window, path), 600)} (新 hash=${hashValue(getByPath(window, path))})${pathsHint()}`
     },
     {
       name: 'edit_window_prop',
       description:
-        '增量编辑一个已注册的「对象/数组」window 属性,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 字符串。整体仍经 schema 校验,失败不写入。',
+        '增量编辑一个已注册的「对象/数组」window 属性,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 get_window_prop 返回的 hash,传入启用乐观锁防"基于过期值覆盖"。',
       schema: z.object({
         path: z.string().describe('已注册的对象/数组属性路径'),
         op: z.enum(['set', 'remove', 'merge', 'append']),
         jsonPath: z.string().optional().describe('相对属性根的点号路径(数组索引用数字,如 components.0.text)。set/remove 必填;merge/append 不填则作用于根'),
         value: z.string().optional().describe('JSON 字符串(set/merge/append 必填)'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
       }),
     },
   )
 
   const deleteWindowProp = tool(
-    async ({ path }) => {
+    async ({ path, expectedHash }) => {
       if (!registry.has(path)) {
         return toolError({
           code: 'NOT_REGISTERED',
@@ -505,6 +548,19 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           hint: '用 list_window_props 查看可用属性',
         })
       }
+      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 已被改过 → 拒绝
+      if (expectedHash !== undefined && expectedHash !== '') {
+        const cur = getByPath(window, path)
+        const curHash = hashValue(cur)
+        if (curHash !== expectedHash) {
+          return toolError({
+            code: 'VERSION_CONFLICT',
+            path,
+            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改`,
+            hint: `重新 get_window_prop("${path}") 拿最新值与 hash 再决定是否删除。当前值:${safeStringify(cur, 400)}`,
+          })
+        }
+      }
       pushSnapshot(path, 'delete')
       const ok = deleteByPath(window, path)
       audit({ op: 'delete', path, timestamp: Date.now() })
@@ -512,8 +568,11 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
     {
       name: 'delete_window_prop',
-      description: '删除一个已注册 window 属性。',
-      schema: z.object({ path: z.string().describe('已注册的属性路径') }),
+      description: '删除一个已注册 window 属性。expectedHash(可选):改前 get_window_prop 返回的 hash,传入启用乐观锁防"基于过期值删除"。',
+      schema: z.object({
+        path: z.string().describe('已注册的属性路径'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝删除防覆盖'),
+      }),
     },
   )
 
