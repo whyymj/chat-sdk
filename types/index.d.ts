@@ -122,7 +122,6 @@ export interface AgentInfo {
   /** 会话级 checkpoint 装载状态(未开启 → undefined) */
   checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
 }
-}
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;

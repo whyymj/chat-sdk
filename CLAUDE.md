@@ -203,7 +203,7 @@ rg -o "createChatSdk|addWindowProp|systemPromptHelpers|reliableWriteRules" /tmp/
 | 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(364 全过) → `npm run test:e2e`(120 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(364 全过) → `npm run test:e2e`(120 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -293,7 +293,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 364 全过 → `npm run test:e2e` 120 全过 → `npm run test:exports` 导出对齐 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 364 全过 → `npm run test:e2e` 120 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

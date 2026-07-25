@@ -38,6 +38,12 @@ jobs:
       - name: Exports consistency (核对 types/index.d.ts 与 src/core/index.ts 导出对齐)
         run: npm run test:exports
 
+      - name: Types check (tsc --noEmit 验证 types/index.d.ts 类型正确)
+        run: npm run test:types
+
+      - name: Size check (核对 dist 产物体积不超阈值,防膨胀)
+        run: npm run test:size
+
       - name: Pack dry-run (核对 tarball 不含 .env/src/examples/tests/笔记)
         run: npm pack --dry-run
 

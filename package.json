@@ -35,7 +35,9 @@
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts",
     "test:e2e": "node tests/e2e-integration.mjs",
-    "test:exports": "node tests/exports-consistency.mjs"
+    "test:exports": "node tests/exports-consistency.mjs",
+    "test:types": "tsc --noEmit -p tsconfig.test.json",
+    "test:size": "node tests/size-check.mjs"
   },
   "keywords": [
     "ai",

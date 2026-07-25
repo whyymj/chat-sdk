@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["types/index.d.ts", "tests/types.test-d.ts"]
+}
