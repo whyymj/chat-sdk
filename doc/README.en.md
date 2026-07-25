@@ -10,6 +10,7 @@
 | [Architecture](./architecture.md) *(Chinese)* | Layering / assembly & mount / ReAct loop (format self-correction + verify self-correction) / window-op & optimistic lock / **conflict human-in-the-loop (state machine + abort linkage)** / context compression & persistence (6 mermaid diagrams) |
 | [Context & Compression](./context-management.md) *(Chinese)* | Context 3-part composition / 4-layer compression / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
 | [Capability Plugin Architecture](./plugin-architecture.md) *(Chinese, design draft)* | **Draft for review** · extract business capabilities into pluggable plugins / interface / assembly pipeline / dataSlotOps migration example / gradual steps |
+| [IO Usability Refactor](./io-design.md) *(Chinese, design draft)* | **Draft for review** · JSON pass-through / auto optimistic lock / layered tools (read+write) / interceptors / top-level IO contract / reactive binding / L1-L3 phases |
 
 ## Other info sources (in repo)
 - **Specs source of truth** (Requirements): [`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)

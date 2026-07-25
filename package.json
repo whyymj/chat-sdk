@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "description": "框架无关的页面内 Agent JS SDK —— 以对话框形态挂载到任意网页,通过自定义 tool 读写宿主预注册的数据槽(经 schema 校验 + jsonPath 增量 patch + 快照回退;GET 抓文档),具备 planning/skills/虚拟工作区/context 管理能力。Vue 打包进库,使用者无需安装 Vue。",
   "main": "./dist/page-agent-sdk.umd.cjs",

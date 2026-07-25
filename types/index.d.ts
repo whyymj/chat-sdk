@@ -156,7 +156,7 @@ export interface DataSlotSpec {
   /** 值的 zod schema(写入时校验) */
   schema: any;
 }
-/** createDataSlotOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读) */
+/** createDataSlotOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读 / 乐观锁) */
 export interface DataSlotOpsOptions {
   onAudit?: (entry: { op: string; path: string; value?: any; detail?: string; timestamp: number }) => void;
   allowRawRead?: boolean;
@@ -168,6 +168,14 @@ export interface DataSlotOpsOptions {
    * 设 false 回退原行为(允许读注册 path 的祖先,即整体读)。
    */
   whitelist?: boolean;
+  /** 乐观锁冲突人工介入回调(详见 ConflictInfo/ConflictResolution);不传则冲突时返回 VERSION_CONFLICT 错误 */
+  onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>;
+  /**
+   * 自动乐观锁(默认 true):写入时若 LLM 未显式传 expectedHash,自动用「LLM 最后一次 get_data_slot 读到的 hash」作基准比对。
+   * LLM 无需手动传 expectedHash 即可享受乐观锁保护;冲突走 onConflict(无 onConflict 则返回 VERSION_CONFLICT)。
+   * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
+   */
+  autoLock?: boolean;
 }
 
 /** 数据槽注册表控制器(运行时动态增删;createDataSlotOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -332,6 +340,8 @@ export interface ChatSdkOptions {
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
   /** 每个 数据槽最多保留快照数(默认 20) */
   maxSnapshots?: number;
+  /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
+  autoLock?: boolean;
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;

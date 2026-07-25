@@ -2,6 +2,21 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.1.0] - 2026-07-26
+
+### Added(L1:JSON 直传 + 自动乐观锁,零缩水,向后兼容)
+- **JSON 直传**:`set_data_slot`/`edit_data_slot` 的 `value` 现接受 JSON 对象直传(推荐,如 `{title:"x"}`),无需 stringify;仍兼容 JSON 字符串(向后兼容)。LLM 出错率显著下降
+- **自动乐观锁 `autoLock`**(默认 `true`):写入时若 LLM 未显式传 `expectedHash`,自动用「LLM 最后一次 `get_data_slot` 读到的 hash」作基准比对,冲突走 `onConflict`(无则返回 `VERSION_CONFLICT`)。LLM 无需手动传 hash 即享乐观锁保护;设 `autoLock:false` 回退「不传 = 不校验」旧行为
+- `DataSlotOpsOptions`/`ChatSdkOptions` 新增 `autoLock?: boolean` 字段
+
+### Changed
+- `get_data_slot` 内部记录 LLM 最后读到的 hash(供 autoLock 比对),返回格式不变
+
+### Migration
+- 旧调用传 JSON 字符串仍工作(向后兼容)
+- 若依赖「不传 expectedHash = 不校验」的旧行为,显式设 `autoLock:false`
+- 推荐新代码直接传 object + 依赖 autoLock,不再手动管理 hash
+
 ## [2.0.0] - 2026-07-26
 
 ### Changed (breaking — major)

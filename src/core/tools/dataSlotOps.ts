@@ -84,6 +84,12 @@ export interface DataSlotOpsOptions {
    * 不传此回调 → 冲突时直接返回 VERSION_CONFLICT 错误(向后兼容,agent 自行重新 get)。
    */
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>
+  /**
+   * 自动乐观锁(默认 true):写入时若 LLM 未显式传 expectedHash,自动用「LLM 最后一次 get_data_slot 读到的 hash」作基准比对。
+   * LLM 无需手动传 expectedHash 即可享受乐观锁保护;冲突走 onConflict(无 onConflict 则返回 VERSION_CONFLICT)。
+   * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
+   */
+  autoLock?: boolean
 }
 
 /** 快照条目(per-path 栈) */
@@ -311,6 +317,10 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
   const snapshots = new Map<string, DataSlotSnapshotEntry[]>()
   const maxSnapshots = opts.maxSnapshots ?? 20
 
+  // 自动乐观锁:记录 LLM 最后一次 get 读到的 hash(path → hash),write 时若未传 expectedHash 且 autoLock=true 用此比对
+  const lastReadHash = new Map<string, string>()
+  const autoLock = opts.autoLock !== false
+
   // 运行时动态注册控制器(操作同一 registry/snapshots 闭包,工具运行时即时生效,无需重 bind)
   const controller: DataSlotOpsController = {
     add: (spec) => { registry.set(spec.path, spec) },
@@ -463,7 +473,9 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
       }
       const val = getByPath(window, path)
       if (val === undefined) return `${path} = (undefined)`
-      return `${path} = ${safeStringify(val)} (hash=${hashValue(val)})`
+      const h = hashValue(val)
+      lastReadHash.set(path, h)   // 自动乐观锁:记录 LLM 最后读到的 hash
+      return `${path} = ${safeStringify(val)} (hash=${h})`
     },
     {
       name: 'get_data_slot',
@@ -484,14 +496,20 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
           hint: '用 list_data_slots 查看可用属性;集成方需先在 dataSlots 声明该 path',
         })
       }
+      // 自动乐观锁:未显式传 expectedHash 且 autoLock 开启 → 用 LLM 最后读到的 hash 作基准
+      const effHash = expectedHash || (autoLock ? lastReadHash.get(path) : undefined)
       // 乐观锁冲突检测 + 人工介入(若 onConflict 存在则挂起等用户决定;overwrite 时 fall through 继续写入)
-      const conflict = await handleConflict(path, 'set', expectedHash)
+      const conflict = await handleConflict(path, 'set', effHash)
       if (conflict !== null) return conflict
       let parsed: unknown
-      try {
-        parsed = JSON.parse(value)
-      } catch (e) {
-        return jsonParseError(path, value, e)
+      if (typeof value === 'string') {
+        try {
+          parsed = JSON.parse(value)
+        } catch (e) {
+          return jsonParseError(path, value, e)
+        }
+      } else {
+        parsed = value   // JSON 直传:LLM 直接传 object,无需 stringify
       }
       const res = spec.schema.safeParse(parsed)
       if (!res.success) {
@@ -511,11 +529,11 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
     {
       name: 'set_data_slot',
       description:
-        '设置一个已注册 数据槽的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 get_data_slot 返回的 hash,传入则启用乐观锁——若属性已被改过(外部代码/其他 agent/用户手动)则返回 VERSION_CONFLICT 不写入,需重新 get 再改,防"基于过期值覆盖"。大对象/数组强烈建议改用 edit_data_slot 增量 patch。',
+        '设置一个已注册 数据槽的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 对象(或 JSON 字符串),需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 get_data_slot 返回的 hash,传入则启用乐观锁;不传时系统自动用你最后一次 get 读到的 hash 比对(autoLock,默认开)——若属性已被改过(外部代码/其他 agent/用户手动)则返回 VERSION_CONFLICT 不写入,需重新 get 再改,防"基于过期值覆盖"。大对象/数组强烈建议改用 edit_data_slot 增量 patch。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
-        value: z.string().describe('JSON 字符串形式的值,需符合该属性 schema'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
+        value: z.unknown().describe('JSON 对象(推荐直传,如 {title:"x"}),或 JSON 字符串;需符合该属性 schema'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后 get 到的 hash(autoLock)'),
       }),
     },
   )
@@ -542,8 +560,10 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
         })
       }
       const current = getByPath(window, path)
+      // 自动乐观锁:未显式传 expectedHash 且 autoLock 开启 → 用 LLM 最后读到的 hash
+      const effHash = expectedHash || (autoLock ? lastReadHash.get(path) : undefined)
       // 乐观锁冲突检测 + 人工介入(overwrite 时 fall through 继续 patch)
-      const conflict = await handleConflict(path, 'edit', expectedHash)
+      const conflict = await handleConflict(path, 'edit', effHash)
       if (conflict !== null) return conflict
       if (current == null || typeof current !== 'object') {
         return toolError({
@@ -553,21 +573,25 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
           hint: '叶子属性(原始类型)请用 set_data_slot 整体设置',
         })
       }
-      // value 解析(set/merge/append 必填)
+      // value 解析(set/merge/append 必填;支持 JSON 直传 object 或 JSON 字符串)
       let parsed: unknown
       if (op !== 'remove') {
         if (value === undefined || value === '') {
           return toolError({
             code: 'MISSING_VALUE',
             path,
-            message: `${op} 操作需要 value(JSON 字符串)`,
+            message: `${op} 操作需要 value(JSON 对象或字符串)`,
             hint: `op 为 ${op} 时 value 必填;若想删除请用 op:'remove'`,
           })
         }
-        try {
-          parsed = JSON.parse(value)
-        } catch (e) {
-          return jsonParseError(path, value, e)
+        if (typeof value === 'string') {
+          try {
+            parsed = JSON.parse(value)
+          } catch (e) {
+            return jsonParseError(path, value, e)
+          }
+        } else {
+          parsed = value   // JSON 直传
         }
       }
       // ① 在深拷贝副本上应用 patch → 整体 schema 校验(不写入)
@@ -594,13 +618,13 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
     {
       name: 'edit_data_slot',
       description:
-        '增量编辑一个已注册的「对象/数组」数据槽,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 get_data_slot 返回的 hash,传入启用乐观锁防"基于过期值覆盖"。',
+        '增量编辑一个已注册的「对象/数组」数据槽,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 对象(推荐直传)或 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 get_data_slot 返回的 hash;不传时自动用你最后 get 到的 hash(autoLock,默认开)防"基于过期值覆盖"。',
       schema: z.object({
         path: z.string().describe('已注册的对象/数组属性路径'),
         op: z.enum(['set', 'remove', 'merge', 'append']),
         jsonPath: z.string().optional().describe('相对属性根的点号路径(数组索引用数字,如 components.0.text)。set/remove 必填;merge/append 不填则作用于根'),
-        value: z.string().optional().describe('JSON 字符串(set/merge/append 必填)'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
+        value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串(set/merge/append 必填)'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后 get 到的 hash(autoLock)'),
       }),
     },
   )
@@ -615,8 +639,10 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
           hint: '用 list_data_slots 查看可用属性',
         })
       }
+      // 自动乐观锁:未显式传 expectedHash 且 autoLock 开启 → 用 LLM 最后读到的 hash
+      const effHash = expectedHash || (autoLock ? lastReadHash.get(path) : undefined)
       // 乐观锁冲突检测 + 人工介入(overwrite 时 fall through 继续删除)
-      const conflict = await handleConflict(path, 'delete', expectedHash)
+      const conflict = await handleConflict(path, 'delete', effHash)
       if (conflict !== null) return conflict
       pushSnapshot(path, 'delete')
       const ok = deleteByPath(window, path)
@@ -625,10 +651,10 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
     },
     {
       name: 'delete_data_slot',
-      description: '删除一个已注册 数据槽。expectedHash(可选):改前 get_data_slot 返回的 hash,传入启用乐观锁防"基于过期值删除"。',
+      description: '删除一个已注册 数据槽。expectedHash(可选):改前 get_data_slot 返回的 hash;不传时自动用你最后 get 到的 hash(autoLock,默认开)防"基于过期值删除"。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝删除防覆盖'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝删除防覆盖。不传则自动用你最后 get 到的 hash(autoLock)'),
       }),
     },
   )

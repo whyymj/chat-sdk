@@ -50,10 +50,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['edit_data_slot'], { path: 'page.config', op: 'set', jsonPath: 'bg', value: '"edited"', expectedHash: h3 })
     assert(/已 edit/.test(r) && w.page.config.bg === 'edited', 'edit 传正确 expectedHash 写入成功')
 
-    // 不传 expectedHash → 向后兼容,直接写(不校验)
+    // autoLock 默认开:get 后外部改过,不传 expectedHash → 自动检测 CONFLICT(防基于过期值覆盖)
+    // (page.count 在前面 get 过 + 42 行 set 成 5 后 lastReadHash=hash(5),54 行外部改成 77)
     w.page.count = 77
     r = await invoke(t['set_data_slot'], { path: 'page.count', value: '1' })
-    assert(/已设置/.test(r) && w.page.count === 1, '不传 expectedHash 向后兼容直接写入(不启用乐观锁)')
+    assert(/VERSION_CONFLICT/.test(r) && w.page.count === 77, 'autoLock 默认:get 后外部改过,不传 expectedHash → 自动 CONFLICT')
+    // 重新 get 拿最新 hash 后再写(不传 expectedHash,autoLock 用新 hash,值未变 → 成功)
+    await invoke(t['get_data_slot'], { path: 'page.count' })
+    r = await invoke(t['set_data_slot'], { path: 'page.count', value: '1' })
+    assert(/已设置/.test(r) && w.page.count === 1, 'autoLock:get 最新值后不传 expectedHash 写入成功(值未变,hash 匹配)')
 
     // delete 也支持 expectedHash
     w.page.title = 'toDelete'
@@ -64,6 +69,22 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/已删除/.test(r), 'delete 传正确 expectedHash 删除成功')
 
     delete w.page
+  }
+
+  // autoLock:false → 回退旧行为(不传 expectedHash = 不校验,直接写)
+  {
+    const tools = createDataSlotOps(
+      [{ path: 'app.x', description: 'x', schema: z.number() }],
+      { autoLock: false },
+    )
+    const t = byName(tools)
+    const w = (globalThis as any).window
+    w.app = { x: 1 }
+    await invoke(t['get_data_slot'], { path: 'app.x' })   // get 记录 hash(1)
+    w.app.x = 99                                            // 外部改
+    const r = await invoke(t['set_data_slot'], { path: 'app.x', value: '5' })  // 不传 expectedHash
+    assert(/已设置/.test(r) && w.app.x === 5, 'autoLock:false → 不传 expectedHash 直接写入(向后兼容,不校验)')
+    delete w.app
   }
 
   // onConflict 人工介入:冲突时挂起等用户决定(保留外部/强制覆盖/回退)
@@ -115,5 +136,37 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/无历史快照可回退/.test(r) && w.page.y === 'yext', 'onConflict restore 栈空 → 返回提示,值不变(外部改后值)')
 
     delete w.page
+  }
+
+  // JSON 直传(L1):value 支持直接传 object,无需 stringify;也兼容旧 string
+  {
+    const tools = createDataSlotOps([
+      { path: 'app.obj', description: '对象', schema: z.object({ name: z.string(), age: z.number() }) },
+      { path: 'app.arr', description: '数组', schema: z.array(z.string()) },
+    ])
+    const t = byName(tools)
+    const w = (globalThis as any).window
+    w.app = { obj: { name: 'a', age: 1 }, arr: ['x'] }
+
+    // set 直传 object
+    let r = await invoke(t['set_data_slot'], { path: 'app.obj', value: { name: 'b', age: 2 } })
+    assert(/已设置/.test(r) && w.app.obj.name === 'b' && w.app.obj.age === 2, 'set_data_slot 直传 object 写入成功')
+    // set 仍兼容 JSON 字符串(向后兼容)
+    r = await invoke(t['set_data_slot'], { path: 'app.obj', value: '{"name":"c","age":3}' })
+    assert(/已设置/.test(r) && w.app.obj.name === 'c' && w.app.obj.age === 3, 'set_data_slot 兼容 JSON 字符串写入')
+    // set 直传非法 object → schema 校验失败(不写入)
+    r = await invoke(t['set_data_slot'], { path: 'app.obj', value: { name: 'd', age: 'not-number' } })
+    assert(/error|校验失败|invalid/i.test(r) && w.app.obj.name === 'c', 'set_data_slot 直传非法 object → 校验失败不写入')
+    // edit 直传 object(merge)
+    r = await invoke(t['edit_data_slot'], { path: 'app.obj', op: 'merge', value: { age: 5 } })
+    assert(/已 edit/.test(r) && w.app.obj.age === 5, 'edit_data_slot 直传 object merge 成功')
+    // edit append 直传 object
+    r = await invoke(t['edit_data_slot'], { path: 'app.arr', op: 'append', value: ['y', 'z'] })
+    assert(/已 edit/.test(r) && w.app.arr.length === 3 && w.app.arr[2] === 'z', 'edit_data_slot append 直传数组成功')
+    // edit 仍兼容 JSON 字符串
+    r = await invoke(t['edit_data_slot'], { path: 'app.arr', op: 'append', value: '["w"]' })
+    assert(/已 edit/.test(r) && w.app.arr[3] === 'w', 'edit_data_slot 兼容 JSON 字符串 append')
+
+    delete w.app
   }
 }

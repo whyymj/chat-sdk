@@ -113,6 +113,8 @@ export interface ChatSdkOptions {
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number }
   /** 每个 数据槽最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
+  /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
+  autoLock?: boolean
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number
   debug?: boolean
@@ -540,6 +542,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         onAudit: options.debug ? (e) => console.log('[page-agent-sdk][window audit]', e) : undefined,
         maxSnapshots: options.maxSnapshots,
         onConflict: setPendingConflict,
+        autoLock: options.autoLock,
       })
     : []
   // 数据槽注册表控制器(运行时动态增删;dataSlotOps 关闭时为 null)
