@@ -24,3 +24,7 @@ dist/
 .env.local
 .env.*.local
 !.env.example
+
+# 本地 npm 包测试 demo(纯本地,不公开,不进 git)
+demo/npm-local/
+
