@@ -421,7 +421,8 @@ function copyText(text: string) {
   background: #ef4444; color: #fff; font-size: 10px; line-height: 16px; font-weight: 600;
 }
 
-.chat-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; scroll-behavior: smooth; }
+.chat-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; overscroll-behavior: contain; }
+/* 注:不设 scroll-behavior:smooth —— 流式生成频繁 scrollToBottom,smooth 动画会与 @scroll 的 stick-to-bottom 判定竞争(动画中段被误判为用户上滑),导致"划走又返回" */
 .empty-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 200px; color: #9ca3af;

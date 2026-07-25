@@ -11,7 +11,7 @@
  *
  * sendMessage / regenerate 共用 runAssistantStream:前者先 push user,后者移除旧 assistant 后以历史重发。
  */
-import { reactive, ref, nextTick } from 'vue'
+import { reactive, ref } from 'vue'
 import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
 import { isAbort } from '../harness/retry'
 
@@ -53,6 +53,8 @@ export function useChat(
   const isStickyBottom = ref(true)
   /** 距底部多少像素内视为"在底部"(吸附判定阈值) */
   const STICKY_THRESHOLD = 64
+  /** 程序滚动标志:scrollToBottom 期间触发的 scroll 事件不更新 sticky(避免误判) */
+  let programmaticScroll = false
 
   /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
@@ -60,18 +62,24 @@ export function useChat(
   /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
   const pendingApproval = ref<PendingApproval | null>(null)
 
-  /** scroll 事件处理:用户主动滚动时更新吸附状态(由 ChatDialog 在 @scroll 绑定) */
+  /** scroll 事件处理:仅用户主动滚动时更新吸附状态(程序触发的滚动跳过) */
   function onScroll() {
+    if (programmaticScroll) return
     const el = scrollContainer.value
     if (!el) return
     isStickyBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD
   }
 
+  /** 滚到底部:仅在用户吸附底部时跟随;用 rAF 确保流式 DOM 增量已渲染,且置 programmaticScroll 防 onScroll 误判 */
   function scrollToBottom() {
-    nextTick(() => {
-      if (scrollContainer.value && isStickyBottom.value) {
-        scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
-      }
+    if (!scrollContainer.value || !isStickyBottom.value) return
+    requestAnimationFrame(() => {
+      const el = scrollContainer.value
+      if (!el) return
+      programmaticScroll = true
+      el.scrollTop = el.scrollHeight
+      // 下一帧清除标志(本帧的 scroll 事件已被忽略)
+      requestAnimationFrame(() => { programmaticScroll = false })
     })
   }
 
