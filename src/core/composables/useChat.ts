@@ -51,10 +51,8 @@ export function useChat(
 
   /** 是否"吸附底部":用户向上滚查看历史时停止自动跟随,滚回底部附近恢复跟随 */
   const isStickyBottom = ref(true)
-  /** 距底部多少像素内视为"在底部"(吸附判定阈值) */
+  /** 距底部多少像素内视为"在底部"(吸附判定阈值,用于滚回底部恢复跟随) */
   const STICKY_THRESHOLD = 64
-  /** 程序滚动标志:scrollToBottom 期间触发的 scroll 事件不更新 sticky(避免误判) */
-  let programmaticScroll = false
 
   /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
@@ -62,24 +60,25 @@ export function useChat(
   /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
   const pendingApproval = ref<PendingApproval | null>(null)
 
-  /** scroll 事件处理:仅用户主动滚动时更新吸附状态(程序触发的滚动跳过) */
+  /** scroll 事件处理:仅用于"滚回底部附近时恢复跟随";向上滑由 onWheel 立即置 false,不等阈值 */
   function onScroll() {
-    if (programmaticScroll) return
     const el = scrollContainer.value
     if (!el) return
     isStickyBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD
   }
 
-  /** 滚到底部:仅在用户吸附底部时跟随;用 rAF 确保流式 DOM 增量已渲染,且置 programmaticScroll 防 onScroll 误判 */
+  /** wheel 事件处理:用户向上滚(deltaY<0)立即停止跟随,避免小幅滑动落在阈值内仍被拉回(震颤) */
+  function onWheel(e: WheelEvent) {
+    if (e.deltaY < 0) isStickyBottom.value = false
+  }
+
+  /** 滚到底部:仅在用户吸附底部时跟随;用 rAF 确保 DOM 增量已渲染,且执行前二次检查 sticky(用户可能在此期间上滑) */
   function scrollToBottom() {
-    if (!scrollContainer.value || !isStickyBottom.value) return
+    if (!scrollContainer.value) return
     requestAnimationFrame(() => {
       const el = scrollContainer.value
-      if (!el) return
-      programmaticScroll = true
+      if (!el || !isStickyBottom.value) return
       el.scrollTop = el.scrollHeight
-      // 下一帧清除标志(本帧的 scroll 事件已被忽略)
-      requestAnimationFrame(() => { programmaticScroll = false })
     })
   }
 
@@ -271,5 +270,5 @@ export function useChat(
     await sendMessage(content)
   }
 
-  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll }
+  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel }
 }

@@ -36,7 +36,7 @@ const props = withDefaults(defineProps<{
   showTyping: true,
 })
 
-const { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll } = useChat({
+const { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
@@ -203,7 +203,7 @@ function copyText(text: string) {
     </div>
 
     <!-- 消息列表 -->
-    <div v-show="isExpanded" class="chat-body" ref="scrollContainer" @scroll="onScroll">
+    <div v-show="isExpanded" class="chat-body" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
       <div v-if="!hasMessages" class="empty-state">
         <div class="empty-icon">💬</div>
         <p>有什么可以帮你的?</p>
