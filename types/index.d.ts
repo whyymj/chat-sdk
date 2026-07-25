@@ -1,4 +1,4 @@
-import { DefineComponent } from 'vue';
+import { DefineComponent, Ref } from 'vue';
 export { z } from 'zod';
 
 export interface ToolStep {
@@ -403,8 +403,8 @@ export interface ChatSdk {
   removeWindowProp(path: string): boolean;
   /** 列出当前所有已注册 window 属性(反映动态增删后的最新状态) */
   listWindowProps(): WindowPropSpec[];
-  /** 乐观锁冲突挂起状态(响应式;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */
-  pendingConflict: PendingConflict | null;
+  /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */
+  pendingConflict: Ref<PendingConflict | null>;
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
   resolveConflict(action: ConflictResolution['action']): void;
 }
@@ -569,3 +569,6 @@ export declare function estimateTokens(text: string): number;
 export declare function offloadThresholdChars(contextWindow: number): number;
 export declare function offloadPassThroughChars(contextWindow: number): number;
 export interface ModelCaps { [k: string]: any }
+
+// 剪贴板复制(clipboard API + execCommand 降级,兼容非 secure context / 旧浏览器)
+export declare function copyText(text: string): Promise<boolean>;

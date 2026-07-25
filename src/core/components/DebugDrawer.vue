@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
+import { copyText } from '../utils/clipboard'
 
 const props = withDefaults(defineProps<{
   logs?: DebugLog[]
@@ -61,10 +62,6 @@ function toggleBody(idx: number) {
 
 function formatJson(data: any): string {
   try { return JSON.stringify(data, null, 2) } catch { return String(data) }
-}
-
-function copyText(text: string) {
-  navigator.clipboard.writeText(text)
 }
 
 const roleMeta: Record<string, { label: string; color: string }> = {

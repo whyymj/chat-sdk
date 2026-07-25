@@ -257,6 +257,10 @@ export interface ChatSdk {
   removeWindowProp(path: string): boolean
   /** 列出当前所有已注册的 window 属性(反映动态增删后的最新状态) */
   listWindowProps(): WindowPropSpec[]
+  /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
+  pendingConflict: import('vue').Ref<PendingConflict | null>
+  /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
+  resolveConflict(action: ConflictResolution['action']): void
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -454,6 +458,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   let conflictSeq = 0
   function setPendingConflict(info: ConflictInfo): Promise<ConflictResolution> {
     return new Promise((resolve) => {
+      // shareContext 多实例并发冲突时,新冲突覆盖旧 pendingConflict.value,旧 resolve 函数会丢失 → 旧工具永挂。
+      // 兜底:覆盖前若仍有未解决冲突,自动按「保留外部」收口旧冲突(防 resolve 丢失)
+      const prev = pendingConflict.value
+      if (prev) prev.resolve({ action: 'keep_external' })
       const pending = { ...info, id: ++conflictSeq, resolve }
       pendingConflict.value = pending
       // 外发 conflict 事件(headless 集成方可经 onEvent/hook 收,无需 watch ref)

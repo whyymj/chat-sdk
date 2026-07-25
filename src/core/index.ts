@@ -52,6 +52,7 @@ export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo } fro
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from './utils/modelCaps'
 export type { ModelCaps } from './utils/modelCaps'
+export { copyText } from './utils/clipboard'
 // UI 模块(组件 + composable,供 headless 自建 UI 复用)
 export { default as ChatDialog } from './components/ChatDialog.vue'
 export { default as MessageContent } from './components/MessageContent.vue'

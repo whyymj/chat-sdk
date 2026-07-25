@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
+import { copyText } from '../utils/clipboard'
 
 const props = defineProps<{
   code: string
@@ -78,9 +79,11 @@ watch(
 )
 
 function copyCode() {
-  navigator.clipboard.writeText(props.code).then(() => {
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
+  copyText(props.code).then((ok) => {
+    if (ok) {
+      copied.value = true
+      setTimeout(() => (copied.value = false), 1500)
+    }
   })
 }
 

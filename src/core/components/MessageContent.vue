@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUpdated, nextTick, watch } from 'vue'
 import { useMarkdown, type CodeBlock } from '../composables/useMarkdown'
 import CodePreview from './CodePreview.vue'
+import { copyText } from '../utils/clipboard'
 
 const props = defineProps<{
   content: string
@@ -63,9 +64,9 @@ async function enhanceCodeBlocks() {
     const copyBtn = document.createElement('button')
     copyBtn.className = 'code-action-btn'
     copyBtn.innerHTML = '复制'
-    copyBtn.onclick = () => {
-      navigator.clipboard.writeText(rawCode)
-      copyBtn.innerHTML = '已复制 ✓'
+    copyBtn.onclick = async () => {
+      const ok = await copyText(rawCode)
+      copyBtn.innerHTML = ok ? '已复制 ✓' : '复制失败'
       setTimeout(() => (copyBtn.innerHTML = '复制'), 1500)
     }
     toolbar.appendChild(copyBtn)
