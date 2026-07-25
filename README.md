@@ -28,6 +28,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | **Validity check** | zod schema — `set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
 | **Incremental op** | `edit_window_prop` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
+| **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 
 "Editing JSON" moves from free-form LLM text generation to **structured, validatable, auditable, rollbackable** tool operations. This is the fundamental difference from "let the AI output a JSON string directly".
 

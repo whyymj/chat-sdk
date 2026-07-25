@@ -15,7 +15,7 @@
  *   (messages/agent/vfsStore/store/todos/memory 全共享 = 「同一 agent 的多个对话框视图」)。
  *   模块级 sharedCores 注册表 + 引用计数;mount/unmount 各自渲染到不同 container。
  */
-import { createApp, h, defineComponent, reactive, type App as VueApp } from 'vue'
+import { createApp, h, defineComponent, reactive, ref, type App as VueApp, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
@@ -44,7 +44,7 @@ import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
-import { createWindowOps, type WindowPropSpec, type WindowOpsController } from '../tools/windowOps'
+import { createWindowOps, type WindowPropSpec, type WindowOpsController, type ConflictInfo, type ConflictResolution } from '../tools/windowOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -281,6 +281,19 @@ type AgentInstance = ReturnType<typeof createAgent>
 type TodosMw = ReturnType<typeof createTodosMiddleware>
 type MemoryMw = ReturnType<typeof createMemoryMiddleware>
 
+/** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);resolve 由 resolveConflict 调用,清空后工具继续 */
+export interface PendingConflict {
+  id: number
+  path: string
+  op: 'set' | 'edit' | 'delete'
+  agentValue?: unknown
+  currentValue: unknown
+  currentHash: string
+  expectedHash: string
+  snapshotId: number
+  resolve: (r: ConflictResolution) => void
+}
+
 interface AgentCore {
   agentId: string
   store: SessionStore | null
@@ -304,6 +317,8 @@ interface AgentCore {
   checkpoint: CheckpointManager | null
   /** windowOps 控制器(动态注册 add/remove/list;windowOps 关闭 → null) */
   windowOpsController: WindowOpsController | null
+  /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
+  pendingConflict: Ref<PendingConflict | null>
   /** 当前注册的 windowProps(反映动态增删;供 inspect/verify/listWindowProps 读最新状态) */
   liveWindowProps: () => WindowPropSpec[]
   applySnapshot(snap: SessionSnapshot): void
@@ -313,6 +328,8 @@ interface AgentCore {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 实例 unmount 时调;引用计数归零才真销毁(store.dispose + 移出注册表) */
   release(): void
+  /** 冲突解决:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict,工具继续 */
+  resolveConflict(action: ConflictResolution['action']): void
   /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
   getInfo(): AgentInfo
 }
@@ -432,6 +449,24 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
+  // ===== 乐观锁冲突人工介入(windowOps 写入时检测到属性已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
+  const pendingConflict = ref<PendingConflict | null>(null)
+  let conflictSeq = 0
+  function setPendingConflict(info: ConflictInfo): Promise<ConflictResolution> {
+    return new Promise((resolve) => {
+      const pending = { ...info, id: ++conflictSeq, resolve }
+      pendingConflict.value = pending
+      // 外发 conflict 事件(headless 集成方可经 onEvent/hook 收,无需 watch ref)
+      emit({ type: 'conflict', conflict: pending })
+    })
+  }
+  function resolveConflict(action: ConflictResolution['action']) {
+    const p = pendingConflict.value
+    if (!p) return
+    pendingConflict.value = null
+    p.resolve({ action })
+  }
+
   // ===== 持久化(默认关闭;赋值后端字符串或配置对象开启)=====
   const store = resolveStorage(options.storage)
   if (options.debug && store) {
@@ -496,6 +531,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createWindowOps(options.windowProps || [], {
         onAudit: options.debug ? (e) => console.log('[page-agent-sdk][window audit]', e) : undefined,
         maxSnapshots: options.maxSnapshots,
+        onConflict: setPendingConflict,
       })
     : []
   // window 属性注册表控制器(运行时动态增删;windowOps 关闭时为 null)
@@ -689,6 +725,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     mcpServers: [],
     checkpoint: checkpointMgr,
     windowOpsController,
+    pendingConflict,
     liveWindowProps,
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
@@ -725,6 +762,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     async switchSession(sessionId?: string): Promise<string> {
       await core.initDone
         if (!store) throw new Error('page-agent-sdk: storage 未开启,无法切换会话(请传 storage 选项)')
+      // 收口挂起的冲突(按「保留外部」),防切会话后旧 conflict Promise 永久挂起
+      resolveConflict('keep_external')
       vfsStore.flush?.()
       await store.flush()
       let target = sessionId ?? ''
@@ -755,6 +794,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const wrappedHandler: StreamHandler = userOnEvent
         ? (event) => { onEvent?.(event); emit(event as SdkEvent) }
         : onEvent
+      // abort 联动:用户停止生成时,自动收口挂起的乐观锁冲突(按「保留外部」处理,防工具永久挂起)
+      if (signal) {
+        const abortConflict = () => resolveConflict('keep_external')
+        if (signal.aborted) abortConflict()
+        else signal.addEventListener('abort', abortConflict, { once: true })
+      }
       return core.agent.stream(msgs, wrappedHandler, signal)
     },
 
@@ -771,6 +816,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         sharedCores.delete(agentId)
       }
     },
+
+    resolveConflict,
 
     /** 检视 agent 详情:tools/skills/windowProps/memory/middleware/todos(inspect() 与 debug 窗口消费) */
     getInfo(): AgentInfo {
@@ -968,7 +1015,14 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return () =>
           h(ChatDialog, {
             fetchStream: streaming ? core.agent!.stream : undefined,
-            fetchResponse: streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => core.agent!.invoke(msgs, signal),
+            fetchResponse: streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => {
+              if (signal) {
+                const abortConflict = () => core.resolveConflict('keep_external')
+                if (signal.aborted) abortConflict()
+                else signal.addEventListener('abort', abortConflict, { once: true })
+              }
+              return core.agent!.invoke(msgs, signal)
+            },
             title: options.title,
             placeholder: options.placeholder,
             debugLogs: debugLogsRef.value,
@@ -991,6 +1045,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
               core.agent!.debugLogs.value = []
               void core.store.createSession(core.agentId, options.session?.title, core.sessionId)
             },
+            pendingConflict: core.pendingConflict.value,
+            onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
           })
       },
     })
@@ -1012,6 +1068,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   }
 
   function unmount(): void {
+    // 收口挂起的冲突(按「保留外部」),防 unmount 后旧 conflict Promise 永久挂起泄漏
+    core.resolveConflict('keep_external')
     if (flushHandler && typeof window !== 'undefined') window.removeEventListener('pagehide', flushHandler)
     if (visHandler && typeof document !== 'undefined') document.removeEventListener('visibilitychange', visHandler)
     flushHandler = null
@@ -1053,5 +1111,9 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     },
     /** 列出当前所有已注册 window 属性(反映动态增删) */
     listWindowProps: () => core.liveWindowProps(),
+    /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
+    pendingConflict: core.pendingConflict,
+    /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
+    resolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
   }
 }

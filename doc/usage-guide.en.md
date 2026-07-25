@@ -187,6 +187,47 @@ Key points:
 - Snapshots auto-stored before `set`/`edit`/`delete`; `restore_window_snapshot` rolls back
 - **Zero-bridge**: tool body's `window` = host page's main window (direct)
 
+#### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
+
+When a prop may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: `get_window_prop` returns a value with `hash=xxx` appended; pass `expectedHash` on write to verify.
+
+```ts
+// Agent workflow (run by the LLM automatically; integrator writes nothing)
+// 1. get → "page.title = old (hash=a1b2)"
+// 2. set_window_prop({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
+//    if externally modified since → hash mismatch → conflict
+```
+
+**On conflict (human-in-the-loop enabled by default):** the tool suspends, `sdk.pendingConflict` ref is set, and the built-in ChatDialog shows a conflict bar with three choices:
+
+| Option | Behavior | Result |
+|--------|----------|--------|
+| **Keep external** | Don't write, keep the externally-modified value | Agent re-gets and retries |
+| **Overwrite** | Execute the agent's write | Overrides external change |
+| **Restore** | Roll back to snapshot stack top (historical checkpoint) | Undo external change + agent doesn't write |
+
+```ts
+const sdk = createChatSdk({ /* ... */ })
+await sdk.mount()
+
+// Built-in UI handles the conflict bar automatically; for headless custom UI:
+import { watch } from 'vue'
+watch(sdk.pendingConflict, (c) => {
+  if (!c) return
+  // c: { id, path, op, agentValue, currentValue, currentHash, expectedHash, snapshotId }
+  showConflictDialog(c, (action) => sdk.resolveConflict(action)) // 'keep_external'|'overwrite'|'restore'
+})
+
+// or via event subscription
+sdk.hook((e) => {
+  if (e.type === 'conflict') showConflictDialog(e.conflict, (a) => sdk.resolveConflict(a))
+})
+```
+
+**Auto-resolution (prevent permanent hang):** on user stop (abort) / `unmount()` / `switchSession()`, a pending conflict is auto-resolved as "keep external".
+
+> Omitting `expectedHash` → backward-compatible direct write (no check). Using `createWindowOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
+
 ### 6.2 Custom tools
 
 ```ts

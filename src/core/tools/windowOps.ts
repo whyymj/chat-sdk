@@ -38,6 +38,29 @@ export interface WindowAuditEntry {
   timestamp: number
 }
 
+export interface ConflictInfo {
+  /** 冲突的属性 path */
+  path: string
+  /** 触发冲突的操作 */
+  op: 'set' | 'edit' | 'delete'
+  /** agent 想写入的值(set/edit 的 parsed 值;delete 无) */
+  agentValue?: unknown
+  /** 外部改后的当前值 */
+  currentValue: unknown
+  /** 当前值 hash */
+  currentHash: string
+  /** agent 传入的过期 hash */
+  expectedHash: string
+  /** 写前快照 id(用于 restore 回退到写前状态) */
+  snapshotId: number
+}
+
+/** 冲突解决决定:保留外部修改 / 强制覆盖 / 回退到写前快照 */
+export type ConflictResolution =
+  | { action: 'keep_external' }
+  | { action: 'overwrite' }
+  | { action: 'restore' }
+
 export interface WindowOpsOptions {
   /** 审计回调(如写入 DebugDrawer) */
   onAudit?: (entry: WindowAuditEntry) => void
@@ -52,6 +75,15 @@ export interface WindowOpsOptions {
    * 集成方注册「可操作子路径」(如 page.theme.color / page.components)而非顶层时,默认即「LLM 只见声明字段」。
    */
   whitelist?: boolean
+  /**
+   * 乐观锁冲突人工介入回调:写入时检测到属性已被外部改过(expectedHash 不匹配)时触发。
+   * 传入冲突信息(path/当前值/agent 想写的值/写前快照 id),返回用户决定:
+   *  - keep_external:保留外部修改,拒绝 agent 写入(默认行为,agent 重新 get 再改)
+   *  - overwrite:强制执行 agent 写入(覆盖外部修改)
+   *  - restore:回退到写前快照(撤销外部改 + agent 不写入)
+   * 不传此回调 → 冲突时直接返回 VERSION_CONFLICT 错误(向后兼容,agent 自行重新 get)。
+   */
+  onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>
 }
 
 /** 快照条目(per-path 栈) */
@@ -326,6 +358,61 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     return id
   }
 
+  /**
+   * 乐观锁冲突检测 + 人工介入(若 onConflict 存在)。
+   * 返回 null = 无冲突或 overwrite(继续正常写入流程);返回 string = 已处理(工具直接返回该消息)。
+   * 未传 expectedHash 或 hash 匹配 → null;冲突且无 onConflict → 返回 VERSION_CONFLICT 错误(向后兼容)。
+   *
+   * restore 语义:回退到快照栈顶(最近一次写前快照,通常是 agent 之前操作的检查点),撤销外部修改 + 不写入 agent 值。
+   *   注意:存的是"写前快照",无法回到 agent get 时的 V0(get 不存快照);restore 回到的是栈顶历史检查点。
+   * overwrite 语义:fall through 到正常写入流程(由该流程自行 pushSnapshot,避免冲突时重复 push 浪费栈位)。
+   */
+  async function handleConflict(
+    path: string,
+    op: 'set' | 'edit' | 'delete',
+    expectedHash: string | undefined,
+    agentValue?: unknown,
+  ): Promise<string | null> {
+    if (!expectedHash || expectedHash === '') return null
+    const cur = getByPath(window, path)
+    const curHash = hashValue(cur)
+    if (curHash === expectedHash) return null
+    // 冲突
+    if (!opts.onConflict) {
+      return toolError({
+        code: 'VERSION_CONFLICT',
+        path,
+        message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash}。属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)。`,
+        hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(cur, 400)}`,
+      })
+    }
+    const resolution = await opts.onConflict({
+      path,
+      op,
+      agentValue,
+      currentValue: cur,
+      currentHash: curHash,
+      expectedHash,
+      snapshotId: 0,
+    })
+    if (resolution.action === 'keep_external') {
+      return `已保留外部修改(未写入)。当前值:${safeStringify(cur, 400)} (hash=${curHash})。请重新 get_window_prop("${path}") 拿最新值与 hash 再改。`
+    }
+    if (resolution.action === 'restore') {
+      // 回退到快照栈顶(最近一次写前快照 = agent 之前操作的检查点);无历史快照则无法回退
+      const stack = snapshots.get(path) || []
+      if (!stack.length) {
+        return `无历史快照可回退(本次为首次操作)。当前值:${safeStringify(cur, 400)} (hash=${curHash})。请重新 get 再改或选「强制覆盖」。`
+      }
+      const entry = stack[stack.length - 1]
+      restoreLive(path, deepClone(entry.value))
+      const v = getByPath(window, path)
+      return `已回退 ${path} 到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(v, 400)} (hash=${hashValue(v)})。请基于回退后的值重写或停止。`
+    }
+    // overwrite → 返回 null,继续正常写入流程(由 set/edit/delete 自行 pushSnapshot)
+    return null
+  }
+
   const listWindowProps = tool(
     async () => {
       if (!registry.size) return '当前没有已注册的可操作 window 属性。'
@@ -397,19 +484,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           hint: '用 list_window_props 查看可用属性;集成方需先在 windowProps 声明该 path',
         })
       }
-      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 属性已被外部/其他操作改过 → 拒绝,让 agent 重新 get 再改
-      if (expectedHash !== undefined && expectedHash !== '') {
-        const cur = getByPath(window, path)
-        const curHash = hashValue(cur)
-        if (curHash !== expectedHash) {
-          return toolError({
-            code: 'VERSION_CONFLICT',
-            path,
-            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)`,
-            hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(cur, 400)}`,
-          })
-        }
-      }
+      // 乐观锁冲突检测 + 人工介入(若 onConflict 存在则挂起等用户决定;overwrite 时 fall through 继续写入)
+      const conflict = await handleConflict(path, 'set', expectedHash)
+      if (conflict !== null) return conflict
       let parsed: unknown
       try {
         parsed = JSON.parse(value)
@@ -465,18 +542,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
         })
       }
       const current = getByPath(window, path)
-      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 已被改过 → 拒绝
-      if (expectedHash !== undefined && expectedHash !== '') {
-        const curHash = hashValue(current)
-        if (curHash !== expectedHash) {
-          return toolError({
-            code: 'VERSION_CONFLICT',
-            path,
-            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)`,
-            hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再 edit(传新的 expectedHash)。当前值:${safeStringify(current, 400)}`,
-          })
-        }
-      }
+      // 乐观锁冲突检测 + 人工介入(overwrite 时 fall through 继续 patch)
+      const conflict = await handleConflict(path, 'edit', expectedHash)
+      if (conflict !== null) return conflict
       if (current == null || typeof current !== 'object') {
         return toolError({
           code: 'NOT_OBJECT',
@@ -547,19 +615,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           hint: '用 list_window_props 查看可用属性',
         })
       }
-      // 乐观锁:传了 expectedHash 则对比当前值 hash,不一致 → 已被改过 → 拒绝
-      if (expectedHash !== undefined && expectedHash !== '') {
-        const cur = getByPath(window, path)
-        const curHash = hashValue(cur)
-        if (curHash !== expectedHash) {
-          return toolError({
-            code: 'VERSION_CONFLICT',
-            path,
-            message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash},属性 "${path}" 在你 get 之后已被修改`,
-            hint: `重新 get_window_prop("${path}") 拿最新值与 hash 再决定是否删除。当前值:${safeStringify(cur, 400)}`,
-          })
-        }
-      }
+      // 乐观锁冲突检测 + 人工介入(overwrite 时 fall through 继续删除)
+      const conflict = await handleConflict(path, 'delete', expectedHash)
+      if (conflict !== null) return conflict
       pushSnapshot(path, 'delete')
       const ok = deleteByPath(window, path)
       audit({ op: 'delete', path, timestamp: Date.now() })

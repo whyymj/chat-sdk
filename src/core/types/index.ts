@@ -60,6 +60,7 @@ export type SdkEvent =
   | { type: 'done'; content: string }
   | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
+  | { type: 'conflict'; conflict: import('../sdk/createChatSdk').PendingConflict }
   | { type: 'error'; message: string }
 
 /** SDK 事件回调签名 */

@@ -248,6 +248,47 @@ Agent 自主调用这些内置工具(无需你写):
   - **校验**:递归 schema 自动穿透到 children,append 非法节点(如缺 `id`)被拒;passthrough 保留节点的额外字段(extra/style 等)
   - **复杂遍历**(如带父路径聚合、按多条件递归筛选)用 `eval_window_script` 写递归 visit 函数最直观
 
+#### 乐观锁(防"基于过期值覆盖")与冲突人工介入
+
+当属性可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:Agent `get_window_prop` 返回值末尾附 `hash=xxx`,写入时回传 `expectedHash` 校验。
+
+```ts
+// Agent 工作流(由 LLM 自动执行,集成方无需写)
+// 1. get → "page.title = old (hash=a1b2)"
+// 2. set_window_prop({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
+//    若期间外部改过 → hash 不匹配 → 触发冲突
+```
+
+**冲突时(默认开启人工介入):** 工具挂起,`sdk.pendingConflict` ref 置为冲突信息,内置 ChatDialog 弹冲突条让用户三选一:
+
+| 选项 | 行为 | 结果 |
+|------|------|------|
+| **保留外部** | 不写入,保留外部改后的值 | Agent 重新 get 再改 |
+| **强制覆盖** | 执行 Agent 写入 | 覆盖外部修改 |
+| **回退** | 回退到快照栈顶(历史检查点) | 撤销外部改 + Agent 不写入 |
+
+```ts
+const sdk = createChatSdk({ /* ... */ })
+await sdk.mount()
+
+// 内置 UI 已自动处理冲突条;若 headless 自建 UI:
+import { watch } from 'vue'
+watch(sdk.pendingConflict, (c) => {
+  if (!c) return
+  // c: { id, path, op, agentValue, currentValue, currentHash, expectedHash, snapshotId }
+  showConflictDialog(c, (action) => sdk.resolveConflict(action)) // 'keep_external'|'overwrite'|'restore'
+})
+
+// 或经事件订阅
+sdk.hook((e) => {
+  if (e.type === 'conflict') showConflictDialog(e.conflict, (a) => sdk.resolveConflict(a))
+})
+```
+
+**挂起自动收口(防永久挂起):** 用户停止生成(abort)/ `unmount()` / `switchSession()` 时,自动按「保留外部」收口挂起的冲突。
+
+> 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createWindowOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
+
 ### 6.2 自定义工具
 
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):
@@ -736,6 +777,11 @@ await agent.send('把标题改成 Hello')          // 命令式发送,返回 AI 
 const newId = await agent.switchSession()    // 切换/新建会话(storage 未开启时抛错)
 const reply = await agent.stream(msgs, cb)   // 底层流式(高级:自行管理历史)
 agent.unmount()                              // 卸载
+
+// 乐观锁冲突人工介入(内置 UI 自动处理;headless 自建 UI 时用)
+agent.pendingConflict                        // 响应式 ref<PendingConflict|null>,有冲突时非 null
+agent.resolveConflict('keep_external')       // 收口挂起的冲突:'keep_external'|'overwrite'|'restore'
+agent.hook((e) => { if (e.type === 'conflict') { /* e.conflict 含冲突详情 */ } })
 ```
 
 `send()` 与 UI 对话框共享同一份消息历史(唯一来源),命令式和 UI 可混用。

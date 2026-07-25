@@ -8,7 +8,7 @@
 export { z } from 'zod'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
-export type { ChatSdkOptions, ChatSdk, LLMConfig } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict } from './sdk/createChatSdk'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
 export { presets, systemPromptHelpers } from './presets'
@@ -30,7 +30,7 @@ export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harnes
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // window 操作类型(属性注册表 + 增量编辑 + 快照)
-export type { WindowPropSpec, WindowOpsOptions, WindowOpsController, WindowAuditEntry, WindowSnapshotEntry } from './tools/windowOps'
+export type { WindowPropSpec, WindowOpsOptions, WindowOpsController, WindowAuditEntry, WindowSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/windowOps'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.windowOps/fetch 关闭默认自动装配)
 export { createWindowOps } from './tools/windowOps'
 export { jpEval, searchJson, runSandboxedScript } from './tools/windowQuery'

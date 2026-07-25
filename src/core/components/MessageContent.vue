@@ -111,8 +111,9 @@ watch(() => props.content, enhanceCodeBlocks)
 
 <style>
 .message-md {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -123,6 +124,16 @@ watch(() => props.content, enhanceCodeBlocks)
 .message-md p:last-child {
   margin-bottom: 0;
 }
+
+.message-md table {
+  display: block; max-width: 100%; overflow-x: auto;
+  border-collapse: collapse; margin: 8px 0;
+}
+.message-md th, .message-md td {
+  border: 1px solid #e5e7eb; padding: 4px 8px; font-size: 12px; white-space: nowrap;
+}
+.message-md th { background: #f9fafb; }
+.message-md img { max-width: 100%; }
 
 .message-md ul,
 .message-md ol {

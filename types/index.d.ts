@@ -57,6 +57,7 @@ export type SdkEvent =
   | { type: 'done'; content: string }
   | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
+  | { type: 'conflict'; conflict: PendingConflict }
   | { type: 'error'; message: string };
 
 export type SdkEventHandler = (event: SdkEvent) => void;
@@ -402,6 +403,40 @@ export interface ChatSdk {
   removeWindowProp(path: string): boolean;
   /** 列出当前所有已注册 window 属性(反映动态增删后的最新状态) */
   listWindowProps(): WindowPropSpec[];
+  /** 乐观锁冲突挂起状态(响应式;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */
+  pendingConflict: PendingConflict | null;
+  /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
+  resolveConflict(action: ConflictResolution['action']): void;
+}
+
+/** 乐观锁冲突挂起(windowOps 写入时 expectedHash 不匹配,挂起等用户决定) */
+export interface PendingConflict {
+  id: number;
+  path: string;
+  op: 'set' | 'edit' | 'delete';
+  agentValue?: unknown;
+  currentValue: unknown;
+  currentHash: string;
+  expectedHash: string;
+  snapshotId: number;
+  resolve: (r: ConflictResolution) => void;
+}
+
+/** 冲突解决决定:保留外部修改 / 强制覆盖 / 回退到写前快照 */
+export type ConflictResolution =
+  | { action: 'keep_external' }
+  | { action: 'overwrite' }
+  | { action: 'restore' };
+
+/** 乐观锁冲突信息(windowOps onConflict 回调参数) */
+export interface ConflictInfo {
+  path: string;
+  op: 'set' | 'edit' | 'delete';
+  agentValue?: unknown;
+  currentValue: unknown;
+  currentHash: string;
+  expectedHash: string;
+  snapshotId: number;
 }
 
 export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;

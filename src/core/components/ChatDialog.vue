@@ -5,6 +5,8 @@ import MessageContent from './MessageContent.vue'
 import DebugDrawer from './DebugDrawer.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
+import type { PendingConflict } from '../sdk/createChatSdk'
+import type { ConflictResolution } from '../tools/windowOps'
 
 const props = withDefaults(defineProps<{
   fetchResponse?: (messages: AgentMessage[]) => Promise<string>
@@ -29,6 +31,10 @@ const props = withDefaults(defineProps<{
   showAvatar?: boolean
   /** 显示打字动画(默认 true;false → 用「思考中…」文字替代三点动画) */
   showTyping?: boolean
+  /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);core.pendingConflict 解包值,有冲突时非 null */
+  pendingConflict?: PendingConflict | null
+  /** 冲突解决回调:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict */
+  onResolveConflict?: (action: ConflictResolution['action']) => void
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -55,6 +61,30 @@ const approvalArgsPreview = computed(() => {
     return String(a)
   }
 })
+
+/** 冲突预览:agent 想写的值 / 外部改后的当前值(截断 JSON,便于用户对比决策) */
+const conflictAgentPreview = computed(() => {
+  const v = props.pendingConflict?.agentValue
+  if (v === undefined) return ''
+  try {
+    const s = JSON.stringify(v, null, 2)
+    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+  } catch {
+    return String(v)
+  }
+})
+const conflictCurrentPreview = computed(() => {
+  const v = props.pendingConflict?.currentValue
+  if (v == null) return ''
+  try {
+    const s = JSON.stringify(v, null, 2)
+    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+  } catch {
+    return String(v)
+  }
+})
+const conflictExpanded = ref(false)
+watch(() => props.pendingConflict, () => { conflictExpanded.value = false })
 
 /** 是否为 LLM 主动征询(request_human_confirmation):展示问题/方案/推荐,而非工具调用确认 */
 const isHumanConfirm = computed(() => pendingApproval.value?.toolName === 'request_human_confirmation')
@@ -336,6 +366,35 @@ function copyText(text: string) {
       </template>
     </div>
 
+    <!-- 乐观锁冲突:agent 写入时发现属性已被外部改过(expectedHash 不匹配),挂起等用户决定 -->
+    <div v-if="props.pendingConflict" class="conflict-bar">
+      <div class="conflict-head">
+        <span class="conflict-icon">⚠️</span>
+        <span class="conflict-title">写入冲突:<code>{{ props.pendingConflict.path }}</code> 已被外部修改</span>
+      </div>
+      <div class="conflict-detail">
+        AI 基于「读取时的旧值」准备{{ props.pendingConflict.op === 'delete' ? '删除' : '写入' }},但该属性在你读取之后被外部代码/其他 agent/手动改过。
+      </div>
+      <button class="conflict-toggle" @click="conflictExpanded = !conflictExpanded">
+        {{ conflictExpanded ? '收起对比' : '查看值对比' }}{{ conflictExpanded ? ' ▴' : ' ▾' }}
+      </button>
+      <div v-if="conflictExpanded" class="conflict-diff">
+        <div class="conflict-diff-col">
+          <div class="conflict-diff-label">AI 想写的值</div>
+          <pre class="conflict-diff-pre">{{ conflictAgentPreview || '(delete 操作无值)' }}</pre>
+        </div>
+        <div class="conflict-diff-col">
+          <div class="conflict-diff-label">外部改后的当前值</div>
+          <pre class="conflict-diff-pre">{{ conflictCurrentPreview }}</pre>
+        </div>
+      </div>
+      <div class="conflict-actions">
+        <button class="conflict-keep" @click="props.onResolveConflict?.('keep_external')" title="不写入,保留外部修改后的值,AI 重新读取再改">保留外部</button>
+        <button class="conflict-overwrite" @click="props.onResolveConflict?.('overwrite')" title="用 AI 的值覆盖外部修改">强制覆盖</button>
+        <button class="conflict-restore" @click="props.onResolveConflict?.('restore')" title="回退到最近一次历史快照(agent 之前操作的检查点),撤销外部修改 + AI 不写入">回退</button>
+      </div>
+    </div>
+
     <!-- 输入区域 -->
     <div v-show="isExpanded" class="chat-footer">
       <span v-if="props.getInfo" class="cap-badge" title="能力概览(MCP / 工具数)">
@@ -437,12 +496,12 @@ function copyText(text: string) {
   display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
 }
 .message-row.user .message-avatar { background: #ecf5ef; }
-.message-content { max-width: 75%; }
+.message-content { max-width: 80%; min-width: 0; }
 .message-bubble {
-  padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5;
-  word-break: break-word; white-space: pre-wrap;
+  padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.6;
+  overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;
 }
-.message-row.assistant .message-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; }
+.message-row.assistant .message-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
 .message-row.user .message-bubble { background: var(--cs-primary); color: #fff; border-bottom-right-radius: 4px; }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 .message-time { font-size: 11px; color: #9ca3af; margin-top: 4px; padding: 0 4px; }
@@ -486,8 +545,9 @@ function copyText(text: string) {
 .chat-footer { display: flex; align-items: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #f3f4f6; background: #fafafa; }
 .chat-input {
   flex: 1; resize: none; border: 1px solid #e5e7eb; border-radius: 8px;
-  padding: 10px 12px; font-size: 14px; font-family: inherit; line-height: 1.4;
+  padding: 9px 12px; font-size: 13px; font-family: inherit; line-height: 1.5;
   outline: none; transition: border-color 0.2s; max-height: 100px; overflow-y: auto;
+  overflow-wrap: anywhere; word-break: break-word;
 }
 .chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
 .send-btn {
@@ -536,4 +596,25 @@ function copyText(text: string) {
 .approval-recommend { margin: 4px 0 8px; font-size: 12px; color: #1f4d3a; }
 .approval-opt { padding: 5px 14px; border: 1px solid var(--cs-primary); border-radius: 6px; background: #fff; color: var(--cs-primary); font-size: 13px; cursor: pointer; transition: all 0.2s; }
 .approval-opt:hover { background: var(--cs-primary); color: #fff; }
+
+/* 乐观锁冲突条(windowOps 写入时 expectedHash 不匹配,挂起等用户决定) */
+.conflict-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #dc2626; border-radius: 10px; background: #fef2f2; }
+.conflict-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #991b1b; }
+.conflict-icon { font-size: 15px; }
+.conflict-title code { padding: 1px 6px; border-radius: 4px; background: #fee2e2; color: #7f1d1d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.conflict-detail { margin: 6px 0 8px; font-size: 12px; color: #7f1d1d; line-height: 1.5; }
+.conflict-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.conflict-actions button { padding: 5px 14px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
+.conflict-keep { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+.conflict-keep:hover { background: #e5e7eb; color: #374151; }
+.conflict-overwrite { background: #dc2626; color: #fff; }
+.conflict-overwrite:hover { opacity: 0.9; }
+.conflict-restore { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
+.conflict-restore:hover { background: #fee2e2; }
+.conflict-toggle { margin: 2px 0 6px; padding: 2px 8px; border: none; background: transparent; color: #991b1b; font-size: 12px; cursor: pointer; border-radius: 4px; }
+.conflict-toggle:hover { background: #fee2e2; }
+.conflict-diff { display: flex; gap: 8px; margin: 4px 0 8px; }
+.conflict-diff-col { flex: 1; min-width: 0; }
+.conflict-diff-label { font-size: 11px; color: #7f1d1d; margin-bottom: 2px; }
+.conflict-diff-pre { margin: 0; padding: 6px; max-height: 140px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #fecaca; font-size: 11px; color: #57534e; white-space: pre-wrap; word-break: break-all; }
 </style>

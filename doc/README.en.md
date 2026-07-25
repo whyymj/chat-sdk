@@ -7,18 +7,15 @@
 | Doc | Contents |
 |---|---|
 | [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / custom middleware / FAQ |
-| [Architecture](./architecture.md) *(Chinese)* | Layering / runtime control flow (ReAct + middleware) / window-op safety flow (3 mermaid diagrams + module map) |
+| [Architecture](./architecture.md) *(Chinese)* | Layering / assembly & mount / ReAct loop (format self-correction + verify self-correction) / window-op & optimistic lock / **conflict human-in-the-loop (state machine + abort linkage)** / context compression & persistence (6 mermaid diagrams) |
 | [Context & Compression](./context-management.md) *(Chinese)* | Context 3-part composition / 4-layer compression / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
-| [File Overview (Review)](./architecture-files.md) *(Chinese)* | Per-file responsibilities / module deps / import graph / single-request data flow / review focus |
-| [Evolution Roadmap](./evolution-roadmap.md) *(Chinese)* | 6 evolution directions (subagent / plan mode / MCP / task system / verify / caching) — rationale + design + effort |
 
 ## Other info sources (in repo)
 - **Specs source of truth** (Requirements): [`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
 - **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
-- **In-progress change**: [`../openspec/changes/generalize-chat-sdk/`](../openspec/changes/generalize-chat-sdk/) (generalization: provider / headless / capabilities / MCP)
 - **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
 - **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
-- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 341 assertions)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 384 assertions) + `npm run test:e2e` (integration e2e, 125 assertions)
 
 ## Quick start
 ```bash
