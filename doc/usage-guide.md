@@ -1003,3 +1003,23 @@ await agent.send('加一个提交按钮')
 - 框架无关集成示例:`demo/plain.html`
 - 开发自举 demo:`examples/page-demo/`(`npm run dev`)
 - 类型声明:`types/index.d.ts`
+
+## 使用案例索引(端到端场景)
+
+下列 9 个端到端场景含可复制代码,见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/use-cases.md`(npm 包内同样包含;安装 skill 见 README「给 AI 工具使用者的 Skills」):
+
+| # | 场景 | 关键配置 |
+|---|---|---|
+| 1 | 低代码页面搭建 | `windowProps`=组件树;`edit_window_prop` jsonPath 增量;`onEvent`→画布刷新;`checkpoint`+`approval` |
+| 2 | 表单设计器 | `windowProps`=字段定义(枚举/必填 schema);schema 校验防错 |
+| 3 | CMS 批量运营 | `eval_window_script` 批量循环;`search_window_prop` 筛选;`edit_window_prop` 精确改 |
+| 4 | 运维配置台 | `approval` 人工确认;`capabilities.verify:true` 写后读回;`checkpoint` |
+| 5 | AI 原生助手 | `capabilities:{windowOps:false,fetch:false}` + 自定义 `tools`(产品 API) |
+| 6 | 调研 agent | `capabilities:{windowOps:false}`;`subagent:{allowedTools:['fetch_document']}`;`contextPreset:'conservative'` |
+| 7 | 服务端 Node.js | `ui:false`+`storage:'memory'`+`capabilities:{windowOps:false,fetch:false}`;`sdk.send` 驱动 |
+| 8 | 同页多 agent | 同 `id`+`shareContext:true`→多对话框共享同一 `AgentCore` |
+| 9 | MCP 集成 | `mcp:[{transport,url}]` 远程工具;`@modelcontextprotocol/sdk` 可选 peerDep |
+
+各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)。
+
+**进阶扩展详细例子**(自定义 tool / skills / subagents / MCP)见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/advanced.md`:含 `defineTool`(错误处理 + 与 windowOps 共存)、`defineSkill`(内联内容 + 远程 doc)、子 agent(ad-hoc `spawn_agent`/`spawn_agents` + 预声明 `subagents`→`use_<id>`)、MCP(http/sse/websocket + 鉴权 + dev 坑)的可复制代码。

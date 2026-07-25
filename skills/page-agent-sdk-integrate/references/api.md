@@ -39,8 +39,8 @@ import { defineSkill } from 'page-agent-sdk'
 
 const apiSkill = defineSkill({
   name: 'api-design',
-  description: 'REST API design conventions for this project',
-  prompt: 'Use kebab-case URLs; version under /v1; ...',
+  description: 'REST API design conventions for this project (load when designing/reviewing APIs)',
+  getContent: () => 'Use kebab-case URLs; version under /v1; ...',   // or `doc: 'https://...'` for remote
 })
 
 createChatSdk({ skills: [apiSkill], /* ... */ }).mount()

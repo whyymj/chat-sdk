@@ -40,8 +40,12 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | 📰 **CMS ops** | "Prefix these products with 'Limited', mark under ¥100 red" | JSONPath filter + sandbox script batch edit |
 | 🖥 **Ops console** | "Raise A's threshold to 30%, turn off switch B" | Whitelist + human-confirm to edit config, read-back verify |
 | 🤖 **AI-native assistant** | "Change this chart's legend to bars" | Conversational ops on product data, no UI needed |
+| 🔬 **Research agent** | "Compare 3 solutions and recommend one" | Parallel subagents investigate each, return only conclusions |
+| 🧩 **Headless / server-side** | "Run the agent in Node.js" | `ui:false` + `storage:'memory'`, drive via `sdk.send` |
 
 > `examples/nested-demo` is a full low-code example: nested block tree + human confirm + one-click rollback.
+
+**Full end-to-end scenarios with copy-paste code** (9 cases: low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP) live in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/use-cases.md` (also shipped in the npm package). See [Skills for AI tools](#skills-for-ai-tools-for-integrators) below to install the skill.
 
 ## 30-second quickstart
 

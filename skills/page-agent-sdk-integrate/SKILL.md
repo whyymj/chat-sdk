@@ -77,6 +77,22 @@ Event types: `window_prop_change` / `message_update` / `tool_call` / `tool_resul
 - `capabilities: { windowOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — turn off unused built-ins to save tokens/size. `verify` is the reverse (off by default; `capabilities.verify:true` enables write-back self-check).
 - `presets.pageBuilder` / `researcher` / `minimal` — spread into `createChatSdk` for common scenarios.
 
+## Common use cases (match the user's scenario, then read [references/use-cases.md](references/use-cases.md) for full code)
+
+| Scenario | Key setup |
+|---|---|
+| **Low-code page builder** | `windowProps` = component tree; `edit_window_prop` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| **Form designer** | `windowProps` = field definitions with enum/required schemas; schema validation prevents malformed forms |
+| **CMS batch ops** | `eval_window_script` for bulk loops; `search_window_prop` to filter; `edit_window_prop` for targeted edits |
+| **Ops config console** | `approval:{tools:[set,edit]}` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
+| **AI-native assistant** | `capabilities:{windowOps:false,fetch:false}` + custom `tools` (your product API) |
+| **Research agent** | `capabilities:{windowOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
+| **Headless / server-side** | `ui:false` + `storage:'memory'` + `capabilities:{windowOps:false,fetch:false}`; drive via `sdk.send` |
+| **Multi-agent on one page** | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
+| **MCP integration** | `mcp:[{transport,url}]` remote tool servers; `@modelcontextprotocol/sdk` optional peerDep |
+
+When the user describes a scenario, map it to the row above and load `references/use-cases.md` for the matching numbered case (1→9) with copy-paste code.
+
 ## References (read as needed)
 
 Detailed docs live in this skill's `references/` folder — load the one matching the user's question:
@@ -85,6 +101,7 @@ Detailed docs live in this skill's `references/` folder — load the one matchin
 - **[references/options.md](references/options.md)** — every `createChatSdk` option: type, default, purpose & when to use. Read when the user asks "what does option X do" or needs to tune behavior.
 - **[references/api.md](references/api.md)** — instance methods (`mount`/`send`/`stream`/`inspect`/`switchSession`/`hook`/checkpoints), `defineTool`/`defineSkill`/`presets`, built-in window tools, and the full `SdkEvent` type table. Read when the user asks about APIs, tools, or events.
 - **[references/use-cases.md](references/use-cases.md)** — 9 end-to-end scenarios (low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP). Read when the user wants a concrete pattern for their use case.
+- **[references/advanced.md](references/advanced.md)** — detailed examples for the four extensibility surfaces: custom `defineTool` (with error handling + coexisting with windowOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha). Read when the user asks "how to add custom tools / skills / subagents / MCP".
 
 Project-level docs (in the repo, not bundled in this skill):
 - `doc/usage-guide.md` (zh) / `doc/usage-guide.en.md` — full options reference

@@ -411,3 +411,23 @@ A: Tool results > 6000 chars auto-offload to vfs (only preview + `vfs_read`/`vfs
 A: `verify` needs `capabilities.verify:true` (default off). `inspect().verify` shows load status.
 
 > More FAQs in the [Chinese guide §11](./usage-guide.md#11-常见问题与坑).
+
+## 11. Use-case index (end-to-end scenarios)
+
+Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/use-cases.md` (also shipped in the npm package; install the skill per README "Skills for AI tools"):
+
+| # | Scenario | Key setup |
+|---|---|---|
+| 1 | Low-code page builder | `windowProps` = component tree; `edit_window_prop` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| 2 | Form designer | `windowProps` = field defs (enum/required schemas); schema validation prevents malformed forms |
+| 3 | CMS batch ops | `eval_window_script` bulk loops; `search_window_prop` filter; `edit_window_prop` targeted edits |
+| 4 | Ops config console | `approval` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
+| 5 | AI-native assistant | `capabilities:{windowOps:false,fetch:false}` + custom `tools` (product API) |
+| 6 | Research agent | `capabilities:{windowOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
+| 7 | Server-side Node.js | `ui:false` + `storage:'memory'` + `capabilities:{windowOps:false,fetch:false}`; drive via `sdk.send` |
+| 8 | Multi-agent on one page | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
+| 9 | MCP integration | `mcp:[{transport,url}]` remote tools; `@modelcontextprotocol/sdk` optional peerDep |
+
+Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation).
+
+**Advanced extensibility examples** (custom tools / skills / subagents / MCP) in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/advanced.md`: copy-paste code for `defineTool` (error handling + coexisting with windowOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha).
