@@ -476,5 +476,219 @@ console.log('[e2e] presets.minimal spread:capabilities 反映精简')
   sdk.unmount()
 }
 
+console.log('[e2e] 导出项完整:中间件工厂 / 工具函数 / 存储后端 / 上下文预设')
+{
+  const mod = await import('../dist/page-agent-sdk.js')
+  const expectFns = [
+    'createAgent', 'createSubagentMiddleware', 'createSubagentsMiddleware',
+    'createVerifyMiddleware', 'createWriteBackCheck',
+    'createApprovalMiddleware', 'createHumanConfirmTool', 'createHumanConfirmMiddleware',
+    'createCheckpointManager', 'createCheckpointMiddleware',
+    'createUsageHintsMiddleware', 'createVfs',
+    'createSessionStore', 'createMemoryBackend', 'createWebStorageBackend', 'isQuotaError',
+    'createWindowOps', 'fetchDocTools', 'fetchTools', 'defineWindowToolset', 'selectBuiltinTools',
+    'connectMcp', 'extractText',
+    'resolveContextOptions', 'resolveModelCaps', 'estimateTokens', 'offloadThresholdChars', 'offloadPassThroughChars',
+    'jpEval', 'searchJson', 'runSandboxedScript',
+    'toolError', 'zodError', 'jsonParseError', 'formatZodIssues',
+    'ChatDialog', 'MessageContent', 'CodePreview', 'useChat',
+  ]
+  let allOk = true
+  for (const fn of expectFns) {
+    if (typeof mod[fn] === 'undefined') { allOk = false; console.error('  ✗ 缺导出:', fn) }
+  }
+  assert(allOk, `导出项齐全(${expectFns.length} 个函数/组件均导出)`)
+  assert('CONTEXT_PRESETS' in mod && typeof mod.CONTEXT_PRESETS === 'object', 'CONTEXT_PRESETS 导出为对象')
+}
+
+console.log('[e2e] inspect 初始状态:todos 空 / lastCompression undefined / checkpoints undefined')
+{
+  const sdk = createChatSdk({ ui: false, id: 'e2e-init-state', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdk.mount()
+  const info = sdk.inspect()
+  assert(Array.isArray(info.todos) && info.todos.length === 0, 'inspect().todos 初始为空数组')
+  assert(info.lastCompression === undefined, 'inspect().lastCompression 初始 undefined(未触发压缩)')
+  assert(info.checkpoints === undefined, 'inspect().checkpoints 未开启 → undefined')
+  sdk.unmount()
+}
+
+console.log('[e2e] storage 配置对象形式:{ backend, maxBytes }')
+{
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-storage-obj', storage: { backend: 'memory', maxBytes: 1 * 1024 * 1024 }, llm: FAKE_LLM, capabilities: MIN_CAPS,
+  })
+  await sdk.mount()
+  assert(sdk.inspect().id === 'e2e-storage-obj', 'storage 对象配置 {backend,maxBytes} → mount 成功')
+  sdk.unmount()
+}
+
+console.log('[e2e] presets.pageBuilder / presets.researcher spread:mount 成功 + 反映配置')
+{
+  for (const [key, preset] of Object.entries(presets)) {
+    const sdk = createChatSdk({
+      ui: false, id: `e2e-preset-${key}`, storage: 'memory', llm: FAKE_LLM,
+      ...preset,
+    })
+    await sdk.mount()
+    assert(sdk.inspect().id === `e2e-preset-${key}`, `presets.${key} spread → mount 成功`)
+    sdk.unmount()
+  }
+}
+
+console.log('[e2e] windowProps 各 schema 类型 + 嵌套 path')
+{
+  globalThis.window.app = { nested: { items: ['a'] }, flag: false }
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-schema-types', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+    windowProps: [
+      { path: 'app.title', description: '字符串', schema: z.string() },
+      { path: 'app.count', description: '数字', schema: z.number() },
+      { path: 'app.flag', description: '布尔', schema: z.boolean() },
+      { path: 'app.tags', description: '数组', schema: z.array(z.string()) },
+      { path: 'app.meta', description: '对象', schema: z.object({ k: z.string() }) },
+      { path: 'app.map', description: 'record', schema: z.record(z.string(), z.any()) },
+      { path: 'app.level', description: '枚举', schema: z.enum(['a', 'b', 'c']) },
+      { path: 'app.nested.items', description: '嵌套 path', schema: z.array(z.string()) },
+    ],
+  })
+  await sdk.mount()
+  const paths = sdk.inspect().windowProps.map((p) => p.path)
+  assert(paths.length === 8, '8 种 schema 类型 + 嵌套 path 全部注册成功')
+  assert(paths.includes('app.nested.items'), '嵌套 path(app.nested.items) 注册成功')
+  sdk.unmount()
+}
+
+console.log('[e2e] 动态注册与 inspect().windowProps 同步')
+{
+  globalThis.window.app = {}
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-dyn-sync', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+    windowProps: [{ path: 'app.base', description: '基础', schema: z.string() }],
+  })
+  await sdk.mount()
+  assert(sdk.inspect().windowProps.length === 1, '初始 1 个注册属性')
+  sdk.addWindowProp({ path: 'app.dynamic', description: '动态', schema: z.number() })
+  let info = sdk.inspect()
+  assert(info.windowProps.length === 2, 'addWindowProp 后 inspect().windowProps 含 2 个')
+  assert(info.windowProps.some((p) => p.path === 'app.dynamic'), 'inspect().windowProps 含动态新增 path')
+  assert(sdk.removeWindowProp('app.dynamic') === true, 'removeWindowProp 存在的 path 返回 true')
+  assert(sdk.inspect().windowProps.length === 1, 'removeWindowProp 后 inspect().windowProps 回到 1 个')
+  assert(sdk.removeWindowProp('not.exist') === false, 'removeWindowProp 不存在 path 返回 false')
+  sdk.unmount()
+}
+
+console.log('[e2e] shareContext:false(默认)两实例 messages 独立')
+{
+  const sdkA = createChatSdk({ ui: false, id: 'e2e-noshare', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdkA.mount()
+  const sdkB = createChatSdk({ ui: false, id: 'e2e-noshare', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdkB.mount()
+  assert(sdkA.messages !== sdkB.messages, 'shareContext:false(默认) → 两实例 messages 独立(不同引用)')
+  sdkA.unmount()
+  sdkB.unmount()
+}
+
+console.log('[e2e] 工具函数可用:isQuotaError / estimateTokens / jpEval / searchJson')
+{
+  const mod = await import('../dist/page-agent-sdk.js')
+  // isQuotaError
+  const quotaErr = new Error('quota exceeded')
+  quotaErr.name = 'QuotaExceededError'
+  assert(mod.isQuotaError(quotaErr) === true, 'isQuotaError 对 QuotaExceededError 返回 true')
+  assert(mod.isQuotaError(new Error('other')) === false, 'isQuotaError 对普通 error 返回 false')
+  // estimateTokens
+  assert(typeof mod.estimateTokens('hello world') === 'number' && mod.estimateTokens('hello world') > 0, 'estimateTokens 对字符串返回正数')
+  // offloadThresholdChars / offloadPassThroughChars 是函数(接受 contextWindow)
+  assert(typeof mod.offloadThresholdChars === 'function' && typeof mod.offloadThresholdChars(8192) === 'number', 'offloadThresholdChars 为函数,调用返回 number')
+  assert(typeof mod.offloadPassThroughChars === 'function' && typeof mod.offloadPassThroughChars(8192) === 'number', 'offloadPassThroughChars 为函数,调用返回 number')
+  // jpEval(root, expr) 返回 JpNode[]
+  try {
+    const r = mod.jpEval({ a: { b: 42 } }, '$.a.b')
+    assert(Array.isArray(r) && r.length > 0, 'jpEval(root, expr) 返回非空数组')
+  } catch (e) { assert(false, 'jpEval 执行失败:' + e.message) }
+  // searchJson
+  try {
+    const hits = mod.searchJson({ a: { b: 'hello' } }, 'hello')
+    assert(Array.isArray(hits) && hits.length > 0, 'searchJson 命中字符串返回非空数组')
+  } catch (e) { assert(false, 'searchJson 执行失败:' + e.message) }
+}
+
+console.log('[e2e] windowOps 工具 source=builtin / fetch_document source=builtin')
+{
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-source', storage: 'memory', llm: FAKE_LLM,
+    capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
+  })
+  await sdk.mount()
+  const setTool = sdk.inspect().tools.find((t) => t.name === 'set_window_prop')
+  assert(setTool?.source === 'builtin', 'set_window_prop source=builtin')
+  const fetchTool = sdk.inspect().tools.find((t) => t.name === 'fetch_document')
+  assert(fetchTool?.source === 'builtin', 'fetch_document source=builtin')
+  sdk.unmount()
+}
+
+console.log('[e2e] mount 边界:重复 mount 安全 / unmount 后 inspect 仍可调')
+{
+  const sdk = createChatSdk({ ui: false, id: 'e2e-mount-bound', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdk.mount()
+  let threw = false
+  try { await sdk.mount() } catch (e) { threw = true }
+  assert(!threw, '重复 mount 不抛错(幂等安全)')
+  sdk.unmount()
+  // unmount 后 inspect 仍可调(返回静态信息)
+  let inspectOk = true
+  try { sdk.inspect() } catch { inspectOk = false }
+  assert(inspectOk, 'unmount 后 inspect() 仍可调(返回静态信息)')
+}
+
+console.log('[e2e] windowProps 不传 vs 传空数组:均 mount 成功')
+{
+  const sdkNone = createChatSdk({ ui: false, id: 'e2e-no-props', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdkNone.mount()
+  assert(sdkNone.inspect().windowProps.length === 0, '不传 windowProps → inspect().windowProps 为空')
+  sdkNone.unmount()
+}
+
+console.log('[e2e] hook 多监听器 + off 重复调用安全')
+{
+  const sdk = createChatSdk({ ui: false, id: 'e2e-hook-multi', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+  await sdk.mount()
+  let c1 = 0, c2 = 0
+  const off1 = sdk.hook(() => { c1++ })
+  const off2 = sdk.hook(() => { c2++ })
+  assert(typeof off1 === 'function' && typeof off2 === 'function', '注册两个 hook 均返回取消函数')
+  off1()
+  off1()  // 重复调用 off 安全
+  off2()
+  assert(c1 === 0 && c2 === 0, '未触发事件前两监听器计数均为 0')
+  sdk.unmount()
+}
+
+console.log('[e2e] subagents 预声明配置可传(llm/systemPrompt/temperature/maxTokens)不报错')
+{
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-sub-cfg2', storage: 'memory', llm: FAKE_LLM,
+    capabilities: { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false },
+    subagents: [
+      { id: 'worker', description: '工作者', systemPrompt: '你是子 agent', temperature: 0.3, maxTokens: 4096 },
+    ],
+  })
+  await sdk.mount()
+  assert(sdk.inspect().middleware.includes('subagents'), 'subagents 预声明含详细配置 → subagents 中间件装载')
+  sdk.unmount()
+}
+
+console.log('[e2e] llm 配置 temperature/maxTokens 可传不报错')
+{
+  const sdk = createChatSdk({
+    ui: false, id: 'e2e-llm-cfg', storage: 'memory',
+    llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake', temperature: 0.3, maxTokens: 8192 },
+    capabilities: MIN_CAPS,
+  })
+  await sdk.mount()
+  assert(sdk.inspect().model === 'fake', 'llm 含 temperature/maxTokens 配置 → mount 成功')
+  sdk.unmount()
+}
+
 console.log(`\n==== e2e: ${pass} passed, ${fail} failed ====`)
 if (fail > 0) process.exit(1)

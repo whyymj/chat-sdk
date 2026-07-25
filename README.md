@@ -368,7 +368,7 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
 ```bash
 npm test            # 364 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 86 integration assertions (node, built dist; covers APIs/options/simple&complex scenes: default systemPrompt(capability overview) / dynamic register / inspect(tools/middleware/subagent/verify/mcp reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext sharing / storage backends / presets / checkpoint / options accepted / error scenes)
+npm run test:e2e    # 120 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
 ```
 
 ## Local npm package test
