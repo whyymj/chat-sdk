@@ -1,0 +1,200 @@
+# Use cases — end-to-end scenarios
+
+Concrete integration patterns for common scenarios. Each shows the key `windowProps` + options that matter. Adapt the LLM config to your provider.
+
+## 1. Low-code page builder
+
+A visual builder where the page is a component tree; the AI edits the tree via jsonPath patches and the canvas re-renders live.
+
+```ts
+window.page = {
+  components: [
+    { id: 'banner', type: 'banner', props: { title: 'Welcome', bg: '#1f4d3a' } },
+    { id: 'card1', type: 'card', props: { title: '新品', price: 99 } },
+  ],
+}
+
+createChatSdk({
+  container: '#chat',
+  llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 0.3 },
+  systemPrompt: '你是页面搭建助手。用 edit_window_prop 按 jsonPath 增量改 components,不要重传整树。',
+  windowProps: [
+    { path: 'page.components', description: '组件树',
+      schema: z.array(z.object({
+        id: z.string(), type: z.string(),
+        props: z.record(z.any()),
+      })) },
+  ],
+  onEvent(e) { if (e.type === 'window_prop_change') renderCanvas() },  // canvas reactive refresh
+  checkpoint: true,                       // bad edit → one-click rollback
+  approval: { tools: ['set_window_prop', 'edit_window_prop'] },  // confirm writes
+}).mount()
+```
+
+User: "顶部 Banner 改深色、主标题加粗、加一张新品卡" → AI calls `edit_window_prop` per component.
+
+## 2. Form designer
+
+Form schema as data; AI edits field definitions, schema validation prevents malformed forms.
+
+```ts
+window.form = {
+  fields: [
+    { name: 'phone', label: '手机号', type: 'text', required: true, validation: 'none' },
+    { name: 'address', label: '地址', type: 'text', required: false, cascade: false },
+  ],
+}
+
+createChatSdk({
+  container: '#chat', llm: { ... },
+  systemPrompt: '你是表单设计助手。改 form.fields 的字段定义,保持 schema 合法。',
+  windowProps: [
+    { path: 'form.fields', description: '字段定义数组',
+      schema: z.array(z.object({
+        name: z.string(), label: z.string(),
+        type: z.enum(['text','number','select','date']),
+        required: z.boolean(),
+        validation: z.enum(['none','phone','email','idcard']),
+        cascade: z.boolean().optional(),
+      })) },
+  ],
+  onEvent(e) { if (e.type === 'window_prop_change') renderForm() },
+}).mount()
+```
+
+User: "手机号加格式校验、地址改三级联动" → AI patches `form.fields[0].validation='phone'`, `form.fields[1].cascade=true`.
+
+## 3. CMS batch operation
+
+Bulk-edit a product list; use `eval_window_script` or `search_window_prop` + `edit_window_prop` for batch ops.
+
+```ts
+window.products = [
+  { id: 1, title: '商品A', price: 99, highlight: false },
+  { id: 2, title: '商品B', price: 150, highlight: false },
+  // ...hundreds
+]
+
+createChatSdk({
+  container: '#chat', llm: { ... },
+  systemPrompt: '你是运营助手。批量改 products;标题加前缀用 eval_window_script,按条件筛选用 search_window_prop。',
+  windowProps: [
+    { path: 'products', description: '商品列表',
+      schema: z.array(z.object({
+        id: z.number(), title: z.string(), price: z.number(), highlight: z.boolean(),
+      })) },
+  ],
+  onEvent(e) { if (e.type === 'window_prop_change') renderTable() },
+}).mount()
+```
+
+User: "标题加『限时』前缀、低于 100 元的标红" → AI uses `eval_window_script` for the prefix loop + `search_window_prop` to find `<100` then `edit_window_prop` to set `highlight`.
+
+## 4. Ops config console
+
+Edit experiment thresholds / feature flags with human confirmation.
+
+```ts
+window.config = {
+  expA: { threshold: 0.5, enabled: true },
+  featureB: { enabled: false },
+}
+
+createChatSdk({
+  container: '#chat', llm: { ... },
+  systemPrompt: '你是运维助手。改 config 前必须经用户确认。',
+  windowProps: [
+    { path: 'config.expA', description: '实验A',
+      schema: z.object({ threshold: z.number().min(0).max(1), enabled: z.boolean() }) },
+    { path: 'config.featureB', description: 'B开关',
+      schema: z.object({ enabled: z.boolean() }) },
+  ],
+  approval: { tools: ['set_window_prop', 'edit_window_prop'] },  // human-in-the-loop
+  checkpoint: true,
+  capabilities: { verify: true },           // write-back read + schema check
+}).mount()
+```
+
+User: "A 实验阈值调到 30%、关掉 B 开关" → AI proposes writes → user confirms → verify reads back.
+
+## 5. AI-native assistant (no page data, custom tools)
+
+The agent drives your product's own API via custom tools (no windowOps).
+
+```ts
+const lookupTool = defineTool({
+  name: 'lookup_order',
+  description: '查询订单',
+  schema: z.object({ orderId: z.string() }),
+  handler: async ({ orderId }) => JSON.stringify(await api.getOrder(orderId)),
+})
+
+createChatSdk({
+  container: '#chat',
+  llm: { ... },
+  systemPrompt: '你是订单助手。用 lookup_order 查询。',
+  tools: [lookupTool],
+  capabilities: { windowOps: false, fetch: false },   // pure custom-tool agent
+}).mount()
+```
+
+## 6. Research agent (fetch + subagents, no writes)
+
+Pure research: fetch docs, parallel subagents for multi-source investigation.
+
+```ts
+createChatSdk({
+  container: '#chat', llm: { ... },
+  systemPrompt: '你是调研助手。多源对比用 spawn_agents 并行委派。',
+  capabilities: { windowOps: false },       // read-only, no page edits
+  subagent: { allowedTools: ['fetch_document'] },
+  contextPreset: 'conservative',             // long research sessions
+}).mount()
+```
+
+## 7. Headless server-side (Node.js)
+
+Run the agent in Node (no browser). Provide `globalThis.window` only if you enable windowOps.
+
+```ts
+// node mjs
+import { createChatSdk, z } from 'page-agent-sdk'
+
+const sdk = createChatSdk({
+  ui: false,
+  storage: 'memory',
+  llm: { apiKey, baseUrl, model },
+  systemPrompt: '...',
+  capabilities: { windowOps: false, fetch: false },
+  tools: [/* your tools */],
+})
+await sdk.mount()
+const reply = await sdk.send('do something')
+console.log(reply)
+sdk.unmount()
+```
+
+## 8. Multi-agent on one page (shared context)
+
+Two dialogs backed by one agent brain.
+
+```ts
+const a = createChatSdk({ id: 'shared', container: '#dlg-a', llm: {...}, shareContext: true, windowProps }).mount()
+const b = createChatSdk({ id: 'shared', container: '#dlg-b', llm: {...}, shareContext: true, windowProps }).mount()
+// a & b share messages/agent/vfs/todos/memory — two views of one agent
+```
+
+## 9. MCP integration (external tool servers)
+
+```ts
+createChatSdk({
+  container: '#chat', llm: { ... },
+  mcp: [
+    { transport: 'http', url: 'https://my-mcp-server/mcp' },
+    { transport: 'sse',  url: 'https://another/sse' },
+  ],
+  // MCP tools auto-injected; fault-isolated (one server down doesn't break others)
+}).mount()
+```
+
+> Note: `@modelcontextprotocol/sdk` is an optional peerDep — install it only if you use `mcp`. Browser supports only remote transports (http/sse/websocket), not stdio.

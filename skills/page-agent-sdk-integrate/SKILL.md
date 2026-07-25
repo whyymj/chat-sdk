@@ -79,7 +79,15 @@ Event types: `window_prop_change` / `message_update` / `tool_call` / `tool_resul
 
 ## References (read as needed)
 
-- `doc/usage-guide.md` (zh) / `doc/usage-guide.en.md` — full options reference (onEvent/hook/server-side/checkpoint/approval/verify/subagent/MCP)
+Detailed docs live in this skill's `references/` folder — load the one matching the user's question:
+
+- **[references/quickstart.md](references/quickstart.md)** — progressive setup from 5-line CDN to full-featured (Stages 0→6). Read when the user wants a step-by-step "from simple to complete" walkthrough.
+- **[references/options.md](references/options.md)** — every `createChatSdk` option: type, default, purpose & when to use. Read when the user asks "what does option X do" or needs to tune behavior.
+- **[references/api.md](references/api.md)** — instance methods (`mount`/`send`/`stream`/`inspect`/`switchSession`/`hook`/checkpoints), `defineTool`/`defineSkill`/`presets`, built-in window tools, and the full `SdkEvent` type table. Read when the user asks about APIs, tools, or events.
+- **[references/use-cases.md](references/use-cases.md)** — 9 end-to-end scenarios (low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP). Read when the user wants a concrete pattern for their use case.
+
+Project-level docs (in the repo, not bundled in this skill):
+- `doc/usage-guide.md` (zh) / `doc/usage-guide.en.md` — full options reference
 - `examples/<demo>/` — runnable demos (page-demo, nested-demo, subagent-demo, mcp-demo, planner-demo, toolsets-demo, human-confirm-demo)
 - `demo/plain.html` — framework-agnostic CDN integration
 - `CLAUDE.md` — internal dev guide (architecture, conventions)
