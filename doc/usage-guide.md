@@ -1,5 +1,7 @@
 # page-agent-sdk 使用手册
 
+> **[English](./usage-guide.en.md)** · **[中文](./usage-guide.md)**
+
 > 框架无关的页面 Agent SDK:一行挂载,给任意网页装上一个能**读写宿主页面、调用工具、规划任务**的 AI 对话框。
 
 ---

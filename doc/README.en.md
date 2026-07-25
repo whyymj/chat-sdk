@@ -1,0 +1,43 @@
+# page-agent-sdk Docs
+
+> **[English](./README.en.md)** · **[中文](./README.md)**
+
+> **For AI agents**: read the "Agent Integration Cheat Sheet" section of the root [`../README.md`](../README.md) first (exports/options/extension points/built-in tools/file structure), then consult the table below as needed; architecture & gotchas in [`../CLAUDE.md`](../CLAUDE.md).
+
+| Doc | Contents |
+|---|---|
+| [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / custom middleware / FAQ |
+| [Architecture](./architecture.md) *(Chinese)* | Layering / runtime control flow (ReAct + middleware) / window-op safety flow (3 mermaid diagrams + module map) |
+| [Context & Compression](./context-management.md) *(Chinese)* | Context 3-part composition / 4-layer compression / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
+| [File Overview (Review)](./architecture-files.md) *(Chinese)* | Per-file responsibilities / module deps / import graph / single-request data flow / review focus |
+| [Evolution Roadmap](./evolution-roadmap.md) *(Chinese)* | 6 evolution directions (subagent / plan mode / MCP / task system / verify / caching) — rationale + design + effort |
+
+## Other info sources (in repo)
+- **Specs source of truth** (Requirements): [`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
+- **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
+- **In-progress change**: [`../openspec/changes/generalize-chat-sdk/`](../openspec/changes/generalize-chat-sdk/) (generalization: provider / headless / capabilities / MCP)
+- **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
+- **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 341 assertions)
+
+## Quick start
+```bash
+npm run dev    # two-pane demo: left JSON reactive page + right chat (@3000, 3001 if occupied)
+npm run build  # library-mode build
+npm test       # core-logic self-tests
+```
+
+```ts
+import { createChatSdk } from 'page-agent-sdk'
+import { z } from 'zod'
+
+createChatSdk({
+  container: '#root',
+  llm: { apiKey, baseUrl, model },
+  systemPrompt: 'You are a page-ops assistant…',
+  windowProps: [
+    { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
+  ],
+  tools: [], skills: [], memory: '',
+}).mount()
+```
