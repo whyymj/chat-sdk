@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-341%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-364%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -367,7 +367,8 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 ## Self-tests
 
 ```bash
-npm test   # 341 assertions, no LLM dependency
+npm test            # 364 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 14 integration assertions (node, built dist; createChatSdk top-level API: default systemPrompt / dynamic register / inspect / hook)
 ```
 
 ## Local npm package test

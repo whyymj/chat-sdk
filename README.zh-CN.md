@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-341%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-364%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -312,7 +312,8 @@ createChatSdk({
 ## 自测
 
 ```bash
-npm test   # 341 项断言，不依赖 LLM
+npm test            # 364 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 14 项集成断言（node 跑构建产物 dist；createChatSdk 顶层 API：默认 systemPrompt / 动态注册 / inspect / hook）
 ```
 
 ## 本地 npm 包测试

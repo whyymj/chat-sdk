@@ -31,7 +31,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test      # 自测(tsx 跑 src/__tests__/selftest.ts,341 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,364 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,14 项;验证 createChatSdk 顶层 API:默认 systemPrompt / 动态注册 / inspect / hook)
 ```
 
 ## 环境配置
@@ -143,7 +144,8 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
 ### 自测
-`npm test`(341 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp/verify/approval/checkpoint),不依赖 LLM;子 agent / MCP / verify 自纠循环运行时手动验证。
+`npm test`(364 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp/verify/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果),不依赖 LLM,tsx 跑源码。
+`npm run test:e2e`(14 项)用构建产物 dist 验证 createChatSdk 集成层(默认 systemPrompt / 自定义覆盖 / 动态注册 add/remove/list / windowOps 关闭 no-op / sdk.hook),覆盖 selftest 触不到的顶层 API 作用域。**改 createChatSdk 顶层 API 后必跑 e2e**(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 ReferenceError,由 e2e 捕获)。子 agent / MCP / verify 自纠循环运行时手动验证。
 
 ## SDK 用法
 ```ts
@@ -207,7 +209,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:`npm run build` + `npm test`(341 项全过)→ `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记
+4. **构建+自测**:`npm run build` + `npm test`(364 项全过)+ `npm run test:e2e`(14 项全过,验证 createChatSdk 集成层)→ `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进
@@ -235,5 +237,5 @@ createChatSdk({
 - **账号**:`whyymj`(已开 2FA,**禁止在文档/仓库/聊天记录中留存密码或 token 明文**)。凭据只存本机 user 级 `~/.npmrc`,不进项目目录、不进 git。
 - **registry 陷阱**:本机默认 registry 是公司私有源;`package.json` 的 `publishConfig.registry` 已锁定官方 npm,`npm publish` 不受影响;但 `npm login`/`whoami` 需显式 `--registry=https://registry.npmjs.org/`。
 - **2FA**:用 **Automation Access Token**(npmjs.com → Access Tokens → Classic → Automation,绕过 OTP),写入 `~/.npmrc`:`npm config set //registry.npmjs.org/:_authToken <token> --location=user`。用完即吊销。
-- **发布前检查**:①`npm run build` ②`npm test` ③版本号 semver 递增(`npm version patch|minor|major`,不得重复发布)④`npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记 ⑤`npm publish`。
+- **发布前检查**:①`npm run build` ②`npm test` ③`npm run test:e2e`(改 createChatSdk 顶层 API 后必跑)④版本号 semver 递增(`npm version patch|minor|major`,不得重复发布)⑤`npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记 ⑥`npm publish`。
 - **发布后测试**:`npm view page-agent-sdk version` + 临时目录 `npm i page-agent-sdk` 验证可装。
