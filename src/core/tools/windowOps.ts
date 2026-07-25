@@ -17,7 +17,6 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
-import { watch, isReactive } from 'vue'
 import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './windowQuery'
 import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 
