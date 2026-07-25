@@ -1,4 +1,4 @@
-# chat-sdk 架构与文件全览(Review 版)
+# page-agent-sdk 架构与文件全览(Review 版)
 
 > 本文与 [`architecture.md`](./architecture.md) 互补:后者偏运行控制流(ReAct + 中间件、window 操作安全流);本文偏**文件级职责清单、模块依赖关系、以及人工 review 关注点**。
 > 最后更新:2026-07-23
@@ -16,7 +16,7 @@
 | Markdown | `marked` + `highlight.js` | **打包进库** |
 | 持久化 | 原生 IndexedDB / WebStorage / Memory | **零依赖**,可注入后端 |
 
-**三种产物**:`dist/chat-sdk.js`(ESM)、`dist/chat-sdk.umd.cjs`(UMD)、`dist/chat-sdk.iife.js`(IIFE 全量 ~1.4MB,供 CDN `<script>`)、`dist/chat-sdk.css`。`types/index.d.ts` 手动维护(构建不自动生成)。
+**三种产物**:`dist/page-agent-sdk.js`(ESM)、`dist/page-agent-sdk.umd.cjs`(UMD)、`dist/page-agent-sdk.iife.js`(IIFE 全量 ~1.4MB,供 CDN `<script>`)、`dist/page-agent-sdk.css`。`types/index.d.ts` 手动维护(构建不自动生成)。
 
 ---
 

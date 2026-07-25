@@ -441,7 +441,7 @@ const WORKER_PREAMBLE = [
   "self.XMLHttpRequest = function(){ throw new Error('XMLHttpRequest 已被沙箱禁用') }",
   "self.importScripts = () => { throw new Error('importScripts 已被沙箱禁用') }",
   "self.WebSocket = function(){ throw new Error('WebSocket 已被沙箱禁用') }",
-  // 同源数据泄漏:Worker 可读写宿主同源 indexedDB/caches(chat-sdk 自身会话数据),禁用
+  // 同源数据泄漏:Worker 可读写宿主同源 indexedDB/caches(page-agent-sdk 自身会话数据),禁用
   "try { self.indexedDB = undefined } catch {}",
   "try { self.caches = undefined } catch {}",
   // 嵌套 worker 绕过:dedicated worker 内 new Worker 有独立全局(其 fetch 未禁),禁构造

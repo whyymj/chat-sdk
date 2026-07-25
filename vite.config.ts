@@ -9,7 +9,7 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, 'src/core/index.ts'),
       name: 'ChatSdk',
-      fileName: 'chat-sdk',
+      fileName: 'page-agent-sdk',
     },
     rollupOptions: {
       // vue 打包进 SDK(框架无关);zod / @langchain/* 保持 external(peerDep)

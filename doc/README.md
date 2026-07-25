@@ -1,4 +1,4 @@
-# chat-sdk 文档
+# page-agent-sdk 文档
 
 > **给 AI agent**：先读仓库根 [`../README.md`](../README.md) 的「Agent 接入速查」小节（导出/选项表/扩展点/内置工具/文件结构），再按需查下表；架构与约定坑见 [`../CLAUDE.md`](../CLAUDE.md)。
 

@@ -8,7 +8,7 @@
 
 由原 `zhuanti-agent`(Vue3 库、绑定"什么值得买专题"业务)重构而来,采用**自研 Deep Agents 风格 harness**(规避 `deepagentsjs#292` 浏览器打包阻塞,不引入 LangGraph/langchain 整包)。
 
-- 构建产物:`dist/chat-sdk.js`(ESM,peer 外置)、`dist/chat-sdk.umd.cjs`(UMD)、`dist/chat-sdk.iife.js`(IIFE 全量,供 CDN `<script>` 直引)、`dist/chat-sdk.css`
+- 构建产物:`dist/page-agent-sdk.js`(ESM,peer 外置)、`dist/page-agent-sdk.umd.cjs`(UMD)、`dist/page-agent-sdk.iife.js`(IIFE 全量,供 CDN `<script>` 直引)、`dist/page-agent-sdk.css`
 - 类型声明:`types/index.d.ts`(手动维护,构建不自动生成)
 - 入口:`src/index.ts`
 

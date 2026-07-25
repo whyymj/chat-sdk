@@ -128,7 +128,7 @@ function readByPath(root: unknown, path: string): unknown {
 export interface WriteBackCheckOptions {
   /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」不校验 schema */
   schemas?: Record<string, ZodType>
-  /** 读 window 的根对象(默认 globalThis.window;chat-sdk 零桥接 = 宿主 window) */
+  /** 读 window 的根对象(默认 globalThis.window;page-agent-sdk 零桥接 = 宿主 window) */
   window?: unknown
 }
 

@@ -1,6 +1,6 @@
 # 上下文组成与压缩策略
 
-> chat-sdk 的上下文（送给大模型的 messages）如何组装、何时压缩、压缩后长什么样。含流程图。
+> page-agent-sdk 的上下文（送给大模型的 messages）如何组装、何时压缩、压缩后长什么样。含流程图。
 >
 > 对齐 Deep Agents 的 context 管理思路，但面向浏览器场景做了自适应与零成本兜底。
 
@@ -228,7 +228,7 @@ flowchart TB
 
 ## 七、与 Deep Agents 的差异
 
-| 维度 | Deep Agents | chat-sdk |
+| 维度 | Deep Agents | page-agent-sdk |
 |---|---|---|
 | 跨轮压缩 | checkpointer 每步存档 | summarization 输入压缩（不改 state）+ trimMemoryMessages 内存裁剪 |
 | 摘要累积 | 持久化 checkpoint 历史 | 旧摘要合并进新摘要（防逐级丢失），但仅内存 |
@@ -236,4 +236,4 @@ flowchart TB
 | store | 跨 thread KV 语义记忆 | 未实现（memory 为单字符串指令） |
 | 时间旅行 | 任意历史 checkpoint（持久化） | 仅内存 checkpoint（刷新丢） |
 
-**一句话**：chat-sdk 上下文 = 动态 system prompt（不压缩）+ 旧轮摘要 + 近轮原文 + 本轮工具结果（超长外存 vfs）；4 层压缩自适应触发，零成本兜底，旧摘要合并防累积丢失。
+**一句话**：page-agent-sdk 上下文 = 动态 system prompt（不压缩）+ 旧轮摘要 + 近轮原文 + 本轮工具结果（超长外存 vfs）；4 层压缩自适应触发，零成本兜底，旧摘要合并防累积丢失。

@@ -1,4 +1,4 @@
-# chat-sdk 使用手册
+# page-agent-sdk 使用手册
 
 > 框架无关的页面 Agent SDK:一行挂载,给任意网页装上一个能**读写宿主页面、调用工具、规划任务**的 AI 对话框。
 
@@ -31,7 +31,7 @@
 
 ## 1. 它是什么
 
-`chat-sdk` 是一个 **JS SDK**,把一个基于 ReAct 的 Tool-Calling Agent 以**对话框形态**挂载到任意网页。Agent 能:
+`page-agent-sdk` 是一个 **JS SDK**,把一个基于 ReAct 的 Tool-Calling Agent 以**对话框形态**挂载到任意网页。Agent 能:
 
 - **读写宿主页面** `window` 上声明的属性(带 schema 校验 + 快照回退)→ 直接驱动你的页面 UI
 - **调用工具**:抓取文档、读写虚拟工作区、以及你自定义的任意工具

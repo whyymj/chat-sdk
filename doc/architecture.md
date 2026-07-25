@@ -1,4 +1,4 @@
-# chat-sdk 功能架构
+# page-agent-sdk 功能架构
 
 > 框架无关的「页面内 Agent」JS SDK。Agent 通过自定义 tool 读写宿主页面 `window` 对象(属性注册表 + schema 校验),并具备 planning / skills / 内存工作区 / context 管理能力。
 > 核心为**自研 Deep Agents 风格 harness**(ReAct + 可插拔中间件),不引入 LangGraph/langchain 整包(规避 [`deepagentsjs#292`](https://github.com/langchain-ai/deepagentsjs/issues/292) 浏览器打包阻塞)。
@@ -15,7 +15,7 @@ flowchart TD
     WP["window.page = reactive({...})<br/>响应式数据(测试模块)"]
   end
 
-  subgraph SDK["📦 chat-sdk SDK — 框架无关,Vue 打包进,使用者无需装 Vue"]
+  subgraph SDK["📦 page-agent-sdk SDK — 框架无关,Vue 打包进,使用者无需装 Vue"]
     Entry["<b>对外入口</b><br/>createChatSdk(container, llm, windowProps, tools, skills, memory)<br/>.mount() / .unmount() / .send()"]
     Core["<b>harness 核心</b> createAgent<br/>ReAct 循环 + 中间件契约(before/wrap/after)"]
     MW["<b>中间件栈(可插拔)</b><br/>todos → skills → vfs → summarization → memory → permissions"]

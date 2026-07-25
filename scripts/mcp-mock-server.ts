@@ -1,9 +1,9 @@
 /**
- * MCP mock server —— 用于测试 chat-sdk 的 MCP client 集成。
+ * MCP mock server —— 用于测试 page-agent-sdk 的 MCP client 集成。
  *
  * 运行:npm run mcp:mock            → http://localhost:3001/mcp
  *       MCP_PORT=3003 npm run mcp:mock  → 自定义端口
- * 然后浏览器 chat-sdk 连它:
+ * 然后浏览器 page-agent-sdk 连它:
  *   createChatSdk({ mcp: [{ transport: 'http', url: 'http://localhost:3001/mcp' }] })
  *
  * 暴露 3 个 mock 工具:get_weather / search / calc。
@@ -67,7 +67,7 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 const httpServer = http.createServer(async (req, res) => {
-  // CORS(浏览器 chat-sdk 跨域连)
+  // CORS(浏览器 page-agent-sdk 跨域连)
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', '*')
@@ -156,5 +156,5 @@ httpServer.listen(PORT, () => {
   console.log(`\n🧪 MCP mock server 已启动: http://localhost:${PORT}/mcp`)
   console.log(`   工具:get_weather / search / calc`)
   console.log(`   完整 StreamableHTTP:POST(initialize/调用)+ GET(SSE 通知流)+ DELETE(关 session)`)
-  console.log(`   chat-sdk 连接:createChatSdk({ mcp: [{ transport: 'http', url: 'http://localhost:${PORT}/mcp' }] })\n`)
+  console.log(`   page-agent-sdk 连接:createChatSdk({ mcp: [{ transport: 'http', url: 'http://localhost:${PORT}/mcp' }] })\n`)
 })

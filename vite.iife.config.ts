@@ -24,7 +24,7 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, 'src/core/index.ts'),
       name: 'ChatSdk',
-      fileName: () => 'chat-sdk.iife.js',
+      fileName: () => 'page-agent-sdk.iife.js',
       formats: ['iife'],
     },
     rollupOptions: {

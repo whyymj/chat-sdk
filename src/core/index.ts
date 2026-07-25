@@ -1,5 +1,5 @@
 /**
- * chat-sdk 通用 SDK 入口(框架无关)
+ * page-agent-sdk 通用 SDK 入口(框架无关)
  *
  * 只导出通用核心 —— createChatSdk(命令式入口)/ createAgent(harness)/ 中间件契约类型 /
  * window 操作类型 / vfs / 通用消息类型。不含任何业务定制或旧链路,可整体迁移到任意项目复用。
