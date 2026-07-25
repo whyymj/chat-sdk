@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# 同一分支新推送取消旧运行,省 CI 额度
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (lib + iife)
+        run: npm run build
+
+      - name: Self-test (364 assertions, tsx 跑源码,无 LLM 依赖)
+        run: npm test
+
+      - name: E2E integration (120 assertions,用 dist 产物,无 LLM 依赖)
+        run: npm run test:e2e
+
+      - name: Pack dry-run (核对 tarball 不含 .env/src/examples/tests/笔记)
+        run: npm pack --dry-run
+
+  build-matrix:
+    # 跨 Node 版本构建验证(仅 build,不跑测试,省额度)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
