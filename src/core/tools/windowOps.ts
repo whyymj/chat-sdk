@@ -242,6 +242,18 @@ function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: 
 
 // ============ 工具集构建 ============
 
+/** window 属性注册表控制器(运行时动态增删,供 createChatSdk 暴露 sdk.addWindowProp 等) */
+export interface WindowOpsController {
+  /** 新增/覆盖一个属性注册项(运行时懒加载组件场景);覆盖时旧快照栈保留 */
+  add(spec: WindowPropSpec): void
+  /** 移除一个属性注册项;返回是否确实存在并移除。快照栈一并清理 */
+  remove(path: string): boolean
+  /** 列出当前所有注册项(反映动态增删后的最新状态,供 inspect() 用) */
+  list(): WindowPropSpec[]
+  /** 是否已注册某 path */
+  has(path: string): boolean
+}
+
 /** 基于属性注册表构建 window 操作工具集 */
 export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions = {}): StructuredToolInterface[] {
   // 注册表:path → spec
@@ -251,6 +263,18 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   // 快照栈:path → 条目数组(会话级,FIFO 限长)
   const snapshots = new Map<string, WindowSnapshotEntry[]>()
   const maxSnapshots = opts.maxSnapshots ?? 20
+
+  // 运行时动态注册控制器(操作同一 registry/snapshots 闭包,工具运行时即时生效,无需重 bind)
+  const controller: WindowOpsController = {
+    add: (spec) => { registry.set(spec.path, spec) },
+    remove: (path) => {
+      const had = registry.delete(path)
+      if (had) snapshots.delete(path)
+      return had
+    },
+    list: () => [...registry.values()],
+    has: (path) => registry.has(path),
+  }
 
   const audit = (entry: WindowAuditEntry) => {
     opts.onAudit?.(entry)
@@ -803,7 +827,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
   )
 
-  return [
+  const tools: StructuredToolInterface[] = [
     listWindowProps,
     describeWindowProp,
     getWindowProp,
@@ -818,4 +842,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     searchWindowProp,
     evalWindowScript,
   ]
+  // 挂控制器到工具数组(不可枚举:不影响 selectBuiltinTools 遍历/长度;createChatSdk 经 .controller 取用)
+  Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
+  return tools
 }

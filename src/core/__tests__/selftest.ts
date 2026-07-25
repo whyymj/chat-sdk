@@ -1749,5 +1749,57 @@ console.log('\n[trimMemoryMessagesImpl]')
 }
 
 
+// ===== windowOps 动态注册(controller.add/remove/list)=====
+{
+  const w = (globalThis as any).window
+  w.dyn = {}
+  const tools = createWindowOps([
+    { path: 'dyn.base', description: '初始注册', schema: z.string() },
+  ])
+  const t = byName(tools)
+  // controller 挂在工具数组上(不可枚举)
+  const controller = (tools as any).controller
+  assert(!!controller, 'createWindowOps 返回的工具数组上挂有 controller')
+  assert(Array.isArray(tools) && tools.length === 13, 'controller 不可枚举不影响数组长度/遍历(仍 13 工具)')
+
+  // 初始只有 dyn.base
+  assert(controller.list().length === 1 && controller.has('dyn.base'), '初始 list 仅含 dyn.base')
+  assert(controller.has('dyn.unknown') === false, 'has 未注册 path 返回 false')
+
+  // 动态新增 dyn.late(懒加载组件场景)
+  controller.add({ path: 'dyn.late', description: '动态注册项', schema: z.number().int().min(0) })
+  assert(controller.has('dyn.late') && controller.list().length === 2, 'add 后 has 命中 + list 数量+1')
+  // 新增项立即对工具生效:set 合法值写入
+  let r = await invoke(t['set_window_prop'], { path: 'dyn.late', value: '42' })
+  assert(w.dyn.late === 42 && /已设置/.test(r), '动态注册后 set 立即生效(写成功)')
+  // schema 校验同样生效
+  r = await invoke(t['set_window_prop'], { path: 'dyn.late', value: '-1' })
+  assert(/SCHEMA_INVALID/.test(r) && w.dyn.late === 42, '动态注册项的 schema 校验生效(非法值不写)')
+  // 未动态注册的 path 仍被拒
+  r = await invoke(t['set_window_prop'], { path: 'dyn.never', value: '1' })
+  assert(/未在注册表中声明/.test(r), '未注册 path 仍被范围控制拒绝')
+
+  // 覆盖已注册项(改 schema)
+  controller.add({ path: 'dyn.base', description: '改后', schema: z.enum(['a', 'b']) })
+  r = await invoke(t['set_window_prop'], { path: 'dyn.base', value: '"a"' })
+  assert(w.dyn.base === 'a', '覆盖注册项后按新 schema 写入')
+  r = await invoke(t['set_window_prop'], { path: 'dyn.base', value: '"x"' })
+  assert(/SCHEMA_INVALID/.test(r), '覆盖后按新 schema 校验(旧 string schema 不再适用)')
+
+  // 移除注册项
+  const removed = controller.remove('dyn.late')
+  assert(removed === true && !controller.has('dyn.late'), 'remove 返回 true 且 has 变 false')
+  assert(controller.list().length === 1, 'remove 后 list 数量-1(只剩 dyn.base)')
+  // 移除后 set 被拒
+  r = await invoke(t['set_window_prop'], { path: 'dyn.late', value: '1' })
+  assert(/未在注册表中声明/.test(r), 'remove 后 set 被拒(已不在注册表)')
+  // 移除不存在的 path 返回 false
+  assert(controller.remove('dyn.late') === false, 'remove 不存在 path 返回 false')
+
+  // 清理
+  delete w.dyn
+}
+
+
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)
 if (failed > 0) process.exit(1)

@@ -168,6 +168,18 @@ export interface WindowOpsOptions {
   whitelist?: boolean;
 }
 
+/** window 属性注册表控制器(运行时动态增删;createWindowOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
+export interface WindowOpsController {
+  /** 新增/覆盖一个属性注册项(运行时懒加载组件场景);覆盖时旧快照栈保留 */
+  add(spec: WindowPropSpec): void;
+  /** 移除一个属性注册项;返回是否确实存在并移除。快照栈一并清理 */
+  remove(path: string): boolean;
+  /** 列出当前所有注册项(反映动态增删后的最新状态) */
+  list(): WindowPropSpec[];
+  /** 是否已注册某 path */
+  has(path: string): boolean;
+}
+
 export interface PermissionRule {
   operations: ('read' | 'write')[];
   scopes: string[];
@@ -383,6 +395,12 @@ export interface ChatSdk {
   listCheckpoints(): CheckpointMeta[];
   /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
   hook(handler: SdkEventHandler): () => void;
+  /** 运行时动态新增/覆盖一个 window 属性注册项(懒加载组件:组件挂载时注册其 schema);立即对 window 工具生效,无需重建 agent。需开启 windowOps */
+  addWindowProp(spec: WindowPropSpec): void;
+  /** 运行时移除一个 window 属性注册项(组件卸载);返回是否确实存在并移除。快照栈一并清理 */
+  removeWindowProp(path: string): boolean;
+  /** 列出当前所有已注册 window 属性(反映动态增删后的最新状态) */
+  listWindowProps(): WindowPropSpec[];
 }
 
 export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;

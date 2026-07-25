@@ -12,6 +12,9 @@
 | `inspect()` | `() => AgentInfo` | Inspect agent: tools/skills/windowProps/middleware/todos/mcp.servers (each tool's `source`: `builtin`/`mcp:<name>`/`user`). DebugDrawer uses this. |
 | `switchSession(id?)` | `(id?: string) => Promise<string>` | Switch session context (load or create by id). Requires `storage` enabled. |
 | `hook(handler)` | `(h: SdkEventHandler) => () => void` | Runtime event subscription (multi-listener, returns unsubscribe). Complements `onEvent`. |
+| `addWindowProp(spec)` | `(spec: WindowPropSpec) => void` | Runtime register/override a window prop (lazy-loaded components). Takes effect immediately, no rebuild. Needs `windowOps` enabled. |
+| `removeWindowProp(path)` | `(path: string) => boolean` | Remove a registered window prop (component unmount); returns whether it existed. Clears its snapshot stack. |
+| `listWindowProps()` | `() => WindowPropSpec[]` | List currently-registered window props (reflects dynamic add/remove). |
 | `restoreLastCheckpoint()` | `() => boolean` | Restore last good checkpoint (needs `checkpoint` enabled). |
 | `listCheckpoints()` | `() => CheckpointMeta[]` | List available checkpoints. |
 

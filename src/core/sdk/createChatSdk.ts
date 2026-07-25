@@ -43,7 +43,7 @@ import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
-import { createWindowOps, type WindowPropSpec } from '../tools/windowOps'
+import { createWindowOps, type WindowPropSpec, type WindowOpsController } from '../tools/windowOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -234,6 +234,15 @@ export interface ChatSdk {
    * approval_request 不外发(UI 已处理)。流式事件仅 stream 模式(UI 默认 stream;sdk.send 走 invoke 无流式事件)。
    */
   hook(handler: SdkEventHandler): () => void
+  /**
+   * 运行时动态新增/覆盖一个 window 属性注册项(懒加载组件场景:组件挂载时注册其 schema)。
+   * 立即对 window 工具生效(无需重建 agent);覆盖时保留旧快照栈。需开启 windowOps(默认开)。
+   */
+  addWindowProp(spec: WindowPropSpec): void
+  /** 运行时移除一个 window 属性注册项(组件卸载时调用);返回是否确实存在并移除。快照栈一并清理 */
+  removeWindowProp(path: string): boolean
+  /** 列出当前所有已注册的 window 属性(反映动态增删后的最新状态) */
+  listWindowProps(): WindowPropSpec[]
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -471,6 +480,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         maxSnapshots: options.maxSnapshots,
       })
     : []
+  // window 属性注册表控制器(运行时动态增删;windowOps 关闭时为 null)
+  const windowOpsController = useWindowOps
+    ? (windowOps as StructuredToolInterface[] & { controller?: WindowOpsController }).controller ?? null
+    : null
+  /** 当前注册的 windowProps(反映动态增删;供 inspect/verify 等读最新状态) */
+  const liveWindowProps = (): WindowPropSpec[] => windowOpsController?.list() ?? (options.windowProps ?? [])
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
   const builtinTools = selectBuiltinTools(caps, windowOps, fetchDocTools)
@@ -563,7 +578,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const verifyMw = useVerify
     ? createVerifyMiddleware({
         check: options.verify!.check ?? createWriteBackCheck({
-          schemas: Object.fromEntries((options.windowProps ?? []).map((p) => [p.path, p.schema])),
+          schemas: () => Object.fromEntries(liveWindowProps().map((p) => [p.path, p.schema])),  // 动态取最新(适配 sdk.addWindowProp)
         }),
         adversarial: options.verify?.adversarial ? { llm: options.llm, tools: readonlyTools } : undefined,
       })
@@ -737,7 +752,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
-        windowProps: (options.windowProps ?? []).map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
+        windowProps: liveWindowProps().map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
         memory: options.memory ?? '',
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),
@@ -995,5 +1010,20 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       core.listeners.add(handler)
       return () => core.listeners.delete(handler)
     },
+    /** 运行时动态新增/覆盖 window 属性注册(懒加载组件场景) */
+    addWindowProp: (spec: WindowPropSpec) => {
+      if (!windowOpsController) {
+        console.warn('[page-agent-sdk] addWindowProp 忽略:windowOps 已关闭(capabilities.windowOps:false)')
+        return
+      }
+      windowOpsController.add(spec)
+    },
+    /** 运行时移除 window 属性注册(组件卸载);返回是否曾存在 */
+    removeWindowProp: (path: string) => {
+      if (!windowOpsController) return false
+      return windowOpsController.remove(path)
+    },
+    /** 列出当前所有已注册 window 属性(反映动态增删) */
+    listWindowProps: () => liveWindowProps(),
   }
 }

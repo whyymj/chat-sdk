@@ -73,6 +73,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 
 ### window 操作
 - 集成方声明 `windowProps: [{ path, description, schema }]`;工具:`list/describe/get/get_paths/set/edit/delete_window_prop` + `snapshot/list/restore_window_snapshot` + `query/search_window_prop` + `eval_window_script`
+- **运行时动态注册**(懒加载组件场景):`sdk.addWindowProp(spec)` / `removeWindowProp(path)` / `listWindowProps()`;`createWindowOps` 返回的工具数组上挂不可枚举 `controller`(操作同一 registry 闭包,工具运行时即时生效,无需重 bind);`inspect()`/`verify`(createWriteBackCheck schemas 改 getter 实时取)反映动态增删。动态注册属性不自动进 checkpoint 快照(windowPaths 构造时固定)
 - `set/edit/delete` 仅限注册表内;`set/edit` 按 schema 校验,不合法返回结构化错误(不写入)
 - `edit_window_prop` 按 `jsonPath` 发 patch(set/remove/merge/append),避免 LLM 重传整个大 JSON;就地写回改子属性不替换根引用 → 兼容 Vue reactive
 - 快照回退:`set/edit/delete` 前自动存快照(per-path 栈);`restore_window_snapshot` 一键回退

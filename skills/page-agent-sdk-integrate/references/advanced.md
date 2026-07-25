@@ -1,6 +1,41 @@
-# Advanced examples — custom tools, skills, subagents, MCP
+# Advanced examples — custom tools, skills, subagents, MCP, dynamic windowProps
 
-Detailed, copy-paste examples for the four extensibility surfaces. Read the section matching the user's need.
+Detailed, copy-paste examples for the extensibility surfaces. Read the section matching the user's need.
+
+## 0. Dynamic windowProps (lazy-loaded components) — `sdk.addWindowProp` / `removeWindowProp`
+
+When components are lazy-loaded with **different schemas each**, don't declare all `windowProps` upfront. Register them at runtime as components mount/unmount. The agent's window tools pick up new registrations immediately (no agent rebuild).
+
+```ts
+const sdk = createChatSdk({
+  container: '#chat', llm: { ... },
+  systemPrompt: '你是页面助手,按组件类型操作 window.app.components.<id>。',
+  windowProps: [
+    // statically-declared ones (always present)
+    { path: 'app.config', description: '全局配置', schema: z.record(z.any()) },
+  ],
+}).mount()
+
+// 组件懒加载时动态注册其 schema(结构各异)
+function onComponentMount(comp: { id: string; type: string; schema: z.ZodType }) {
+  sdk.addWindowProp({ path: `app.components.${comp.id}`, description: `${comp.type} 组件`, schema: comp.schema })
+  // 立即生效:AI 现在能 set/edit_window_prop 这个 path,按其 schema 校验
+}
+
+// 组件卸载时移除(快照栈一并清理)
+function onComponentUnmount(id: string) {
+  sdk.removeWindowProp(`app.components.${id}`)
+}
+
+// 查看当前所有注册项(反映动态增删)
+const current: WindowPropSpec[] = sdk.listWindowProps()
+```
+
+Notes:
+- `addWindowProp` 覆盖同名 path 时保留旧快照栈;按新 schema 校验。
+- 动态注册的属性**不自动纳入 checkpoint 快照**(checkpoint 的 windowPaths 在构造时固定);如需回滚动态组件,自行管理或重建。
+- `inspect().windowProps` 与 `verify`(默认 `createWriteBackCheck`)均反映动态注册的最新 schemas(verify 每次 check 实时取 `listWindowProps()`)。
+- `capabilities.windowOps:false` 时 `addWindowProp`/`removeWindowProp` 为 no-op(并 warn)。
 
 ## 1. Custom tools (`defineTool`)
 

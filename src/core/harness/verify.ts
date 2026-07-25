@@ -126,8 +126,8 @@ function readByPath(root: unknown, path: string): unknown {
 }
 
 export interface WriteBackCheckOptions {
-  /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」不校验 schema */
-  schemas?: Record<string, ZodType>
+  /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」不校验 schema。支持 getter 函数:运行时每次 check 调用取最新(适配 sdk.addWindowProp 动态注册) */
+  schemas?: Record<string, ZodType> | (() => Record<string, ZodType>)
   /** 读 window 的根对象(默认 globalThis.window;page-agent-sdk 零桥接 = 宿主 window) */
   window?: unknown
 }
@@ -145,11 +145,14 @@ export interface WriteBackCheckOptions {
  */
 export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCheck {
   const root = opts.window ?? (globalThis as any).window
-  const schemas = opts.schemas ?? {}
+  // schemas 支持静态对象或 getter(动态注册场景:每次 check 取最新 schemas)
+  const schemasRef: () => Record<string, ZodType> =
+    typeof opts.schemas === 'function' ? opts.schemas : () => (opts.schemas ?? {})
   return async ({ messages }) => {
     const writes = extractWrites(messages)
     if (!writes.length) return { ok: true }
     const toolResults = collectToolResults(messages)
+    const schemas = schemasRef()   // 每次运行时取最新(反映 sdk.addWindowProp 动态注册)
     const issues: string[] = []
     for (const { path, op, callId } of writes) {
       // 写被 windowOps 合法拒绝 → 读回无值是预期,跳过(避免误报"未生效"误导 agent 去修一个本就该失败的写)
