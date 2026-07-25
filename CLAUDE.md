@@ -93,6 +93,7 @@ demo/plain.html                 # 框架无关集成示例
 - 停止生成(abort):signal 穿透到 `llm.stream`;abort 时保留已生成 partial
 - 自定义中间件外接:`createChatSdk({ middleware: [...] })` 拼到内置栈末尾;`Middleware` 类型已导出
 - **onEvent 事件回调**:`createChatSdk({ onEvent })` 订阅常用时机(`window_prop_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`error`),供外部联动替代轮询;`approval_request` 不外发;流式事件仅 stream 模式(UI 默认 stream;`send` 走 invoke 无流式事件,但 window/message/error 仍发)。内部由 `sdk-events` 中间件 + `core.stream` 包装实现
+- **sdk.hook() 实例方法**:`sdk.hook(handler) => () => void` —— 运行时动态订阅(可多个监听器、可取消),与构造时 `onEvent` 互补;`AgentCore.listeners` 集合,`shareContext` 时多实例共享;`sdk-events` 中间件始终装载(无监听器时 emit 为 no-op)
 - ⚠️ 错误判定**先排除 abort 再判 status**
 
 ### 子 agent 与并行编排
@@ -174,6 +175,27 @@ createChatSdk({
 包名 `page-agent-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`)。`vue` 打包进库;`zod`/`@langchain/*` 为 peer。三种引入:npm / CDN·ESM(esm.sh) / CDN·IIFE 全量(`unpkg` 单文件)。
 
 构建:`npm run build` = `build:lib`(ESM+UMD,peer 外置)+ `build:iife`(IIFE 全量)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。
+
+## 发布流程 checklist(改代码 → 文档 → git → npm)
+
+每次发布按此顺序,缺一不可:
+
+1. **改代码**:`src/` 改实现 → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
+2. **更新中英文文档**(同步,勿漏单边):
+   - `README.md`(英)/ `README.zh-CN.md`(中):特性、用法、场景、本地 npm 测试
+   - `doc/README.md`(中)/ `doc/README.en.md`(英):文档索引
+   - `doc/usage-guide.md`(中)/ `doc/usage-guide.en.md`(英):用法指南(含 onEvent/hook/服务端等)
+   - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
+   - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
+3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
+4. **构建+自测**:`npm run build` + `npm test`(341 项全过)→ `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记
+5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
+6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
+7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进
+8. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)
+9. **验证**:`npm view page-agent-sdk version` 确认最新版 + 临时目录 `npm i page-agent-sdk` 验证可装可导入
+
+> 双远程职责分工、npm 凭据/2FA 细节见下两节。
 
 ## 双远程仓库与发布约定(重要)
 
