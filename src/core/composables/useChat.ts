@@ -49,15 +49,27 @@ export function useChat(
   /** 消息列表容器 DOM 引用,用于自动滚动 */
   const scrollContainer = ref<HTMLElement | null>(null)
 
-  /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
-  const pendingApproval = ref<PendingApproval | null>(null)
+  /** 是否"吸附底部":用户向上滚查看历史时停止自动跟随,滚回底部附近恢复跟随 */
+  const isStickyBottom = ref(true)
+  /** 距底部多少像素内视为"在底部"(吸附判定阈值) */
+  const STICKY_THRESHOLD = 64
 
   /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
 
+  /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
+  const pendingApproval = ref<PendingApproval | null>(null)
+
+  /** scroll 事件处理:用户主动滚动时更新吸附状态(由 ChatDialog 在 @scroll 绑定) */
+  function onScroll() {
+    const el = scrollContainer.value
+    if (!el) return
+    isStickyBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD
+  }
+
   function scrollToBottom() {
     nextTick(() => {
-      if (scrollContainer.value) {
+      if (scrollContainer.value && isStickyBottom.value) {
         scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight
       }
     })
@@ -65,6 +77,8 @@ export function useChat(
 
   function addMessage(role: AgentMessage['role'], content: string) {
     state.messages.push({ role, content, timestamp: Date.now() })
+    // 新消息默认跟随到底部(addMessage 用于 user 消息 + 非流式 assistant 回复)
+    isStickyBottom.value = true
     scrollToBottom()
   }
 
@@ -74,6 +88,8 @@ export function useChat(
    * 流式优先,否则非流式 fallback。abort 不计入 error;失败移除空占位。
    */
   async function runAssistantStream(signal: AbortSignal) {
+    // 新一轮生成默认跟随到底部(sendMessage 经 addMessage 已设;regenerate/retry 路径在此补设)
+    isStickyBottom.value = true
     if (fetchStream) {
       const assistantMsg = reactive({
         role: 'assistant' as const,
@@ -247,5 +263,5 @@ export function useChat(
     await sendMessage(content)
   }
 
-  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval }
+  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll }
 }
