@@ -197,6 +197,31 @@ rg -o "createChatSdk|addWindowProp|systemPromptHelpers|reliableWriteRules" /tmp/
 #### 发布前必跑顺序
 `npm run build` → `npm test`(364 全过) → `npm run test:e2e`(86 全过) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
+#### 新增功能测试同步约定(强制)
+
+**每新增一个功能/配置项/导出 API,必须同步补对应测试用例**,与功能代码同 commit。无测试的改动不予合并/发布。
+
+**判定该补 selftest 还是 e2e(可都补)**
+
+| 新增类型 | 补 selftest(`src/__tests__/selftest.ts`) | 补 e2e(`tests/e2e-integration.mjs`) |
+|---|---|---|
+| 底层纯函数/工具逻辑(windowOps/vfs/中间件/存储/retry/pool/压缩) | ✅ 必补 | — |
+| `createChatSdk` 顶层返回对象方法 / `AgentCore` 接口 / 动态注册 API | — | ✅ 必补 |
+| 新 `capabilities` 开关 / 新配置项 | — | ✅ 必补(`inspect()` 反映) |
+| 新导出(`defineTool`/`presets`/`systemPromptHelpers`/中间件工厂等) | — | ✅ 必补(导出可用 + 基本行为) |
+| 新中间件 | ✅(逻辑层:hooks 触发/state 变更) | ✅(`inspect().middleware` 含) |
+| 新工具 | ✅(参数校验/返回/范围) | ✅(`inspect().tools` 含 + source) |
+| UI 组件 / demo | — | 浏览器手动(上节 3) |
+| 依赖 LLM/server 的运行时行为(spawn/MCP/verify 自纠) | ✅ 逻辑层可测部分 | 手动(上节 4) |
+
+**命名约定**:测试用例描述以 `✓` 开头,写明「功能名 → 预期行为」,便于失败时定位。selftest 用中文描述,e2e 同。
+
+**最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
+
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(364/86)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+
+**自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
+
 ## SDK 用法
 ```ts
 import { createChatSdk, defineTool, defineSkill, type Middleware } from 'page-agent-sdk'
@@ -226,6 +251,7 @@ createChatSdk({
 - 新增 composable/组件/工具在 `src/index.ts` 导出并同步 `types/index.d.ts`
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
+- **新增功能必须同步补对应测试用例**(见「测试流程 → 新增功能测试同步约定」),无测试的 PR 不予合并/发布
 
 ## 项目 Skills(分发给使用者 + 维护者自用)
 

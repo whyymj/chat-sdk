@@ -18,7 +18,7 @@ Personal notes (`doc/待确认问题.md`) are gitignored — Gitee only, never G
 
 ## Release checklist (in order)
 
-1. **Code**: edit `src/`, sync `types/index.d.ts` (hand-maintained), update exports in `src/core/index.ts`.
+1. **Code**: edit `src/`, sync `types/index.d.ts` (hand-maintained), update exports in `src/core/index.ts`. **新增功能必须同步补对应测试用例**(selftest 和/或 e2e,见 `CLAUDE.md` → "测试流程 → 新增功能测试同步约定"),与功能代码同 commit,无测试不予发布。
 2. **Docs (sync zh + en, never single-side)**:
    - `README.md` (en) / `README.zh-CN.md` (zh) — features, usage, scenarios
    - `doc/README.md` (zh) / `doc/README.en.md` (en) — doc index
@@ -26,7 +26,7 @@ Personal notes (`doc/待确认问题.md`) are gitignored — Gitee only, never G
    - `CLAUDE.md` — internal dev guide/architecture
    - Keep language toggle links bidirectional.
 3. **Bump version**: `npm version patch|minor|major --no-git-tag-version` (semver: minor for new API, major for breaking, patch for fix). Never republish the same version.
-4. **Build + self-test**: `npm run build` (= `build:lib` + `build:iife`) then `npm test` (341 assertions must pass). Run `npm pack --dry-run` to confirm the tarball excludes `.env` / `src` / `examples` / notes.
+4. **Build + self-test**: `npm run build` (= `build:lib` + `build:iife`) then `npm test` (364 assertions must pass) then `npm run test:e2e` (86 assertions must pass, uses built `dist`). Run `npm pack --dry-run` to confirm the tarball excludes `.env` / `src` / `examples` / notes.
 5. **Commit**: `git add -A && git commit -m "feat/fix/docs: ..."` (conventional style).
 6. **Push Gitee** (daily storage): `git push origin master`. If you just rebased and rewrote history → `git push --force-with-lease origin master` (personal repo, safe).
 7. **Push GitHub** (official): `git push github master`. If rejected as `non-fast-forward` → `git fetch github master && git pull --rebase github master` then push again.
