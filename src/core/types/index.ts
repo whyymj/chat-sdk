@@ -95,6 +95,8 @@ export interface SubagentInfo {
 export interface AgentInfo {
   id: string
   model?: string
+  /** 当前生效的 systemPrompt(默认或用户传入;含中间件 augmentPrompt 段则仅为 base 段,便于调试/验证默认提示词) */
+  systemPrompt: string
   tools: ToolInfo[]
   skills: SkillInfo[]
   windowProps: WindowPropInfo[]

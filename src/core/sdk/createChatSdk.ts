@@ -302,6 +302,10 @@ interface AgentCore {
   mcpServers: { name: string; url: string; toolCount: number }[]
   /** 会话级 checkpoint 管理器(未开启 checkpoint → null) */
   checkpoint: CheckpointManager | null
+  /** windowOps 控制器(动态注册 add/remove/list;windowOps 关闭 → null) */
+  windowOpsController: WindowOpsController | null
+  /** 当前注册的 windowProps(反映动态增删;供 inspect/verify/listWindowProps 读最新状态) */
+  liveWindowProps: () => WindowPropSpec[]
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -684,6 +688,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     mcpClosers: [],
     mcpServers: [],
     checkpoint: checkpointMgr,
+    windowOpsController,
+    liveWindowProps,
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -771,6 +777,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       return {
         id: agentId,
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
+        systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
         windowProps: liveWindowProps().map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
@@ -1033,18 +1040,18 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     },
     /** 运行时动态新增/覆盖 window 属性注册(懒加载组件场景) */
     addWindowProp: (spec: WindowPropSpec) => {
-      if (!windowOpsController) {
+      if (!core.windowOpsController) {
         console.warn('[page-agent-sdk] addWindowProp 忽略:windowOps 已关闭(capabilities.windowOps:false)')
         return
       }
-      windowOpsController.add(spec)
+      core.windowOpsController.add(spec)
     },
     /** 运行时移除 window 属性注册(组件卸载);返回是否曾存在 */
     removeWindowProp: (path: string) => {
-      if (!windowOpsController) return false
-      return windowOpsController.remove(path)
+      if (!core.windowOpsController) return false
+      return core.windowOpsController.remove(path)
     },
     /** 列出当前所有已注册 window 属性(反映动态增删) */
-    listWindowProps: () => liveWindowProps(),
+    listWindowProps: () => core.liveWindowProps(),
   }
 }
