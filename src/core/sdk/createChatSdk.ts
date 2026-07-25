@@ -228,6 +228,12 @@ export interface ChatSdk {
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
   listCheckpoints(): { id: number; label?: string; timestamp: number; messageCount: number }[]
+  /**
+   * 运行时订阅 SDK 事件(常用时机:window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * 与构造时 `onEvent` 选项互补:可注册多个监听器、运行时动态订阅;返回取消函数。
+   * approval_request 不外发(UI 已处理)。流式事件仅 stream 模式(UI 默认 stream;sdk.send 走 invoke 无流式事件)。
+   */
+  hook(handler: SdkEventHandler): () => void
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -257,6 +263,8 @@ interface AgentCore {
   store: SessionStore | null
   messages: AgentMessage[]
   vfsStore: VfsStore
+  /** SDK 事件监听器集合(sdk.hook 注册;shareContext 时多实例共享同一 core,故合并于此) */
+  listeners: Set<SdkEventHandler>
   todosMw: TodosMw
   memoryMw: MemoryMw
   agent: AgentInstance | null
@@ -573,11 +581,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   )
   // SDK 事件回调:把常用时机外发给集成方(window 属性变化 / 消息更新 / 流式事件 / 错误)
   const userOnEvent = options.onEvent
+  // 运行时动态订阅(sdk.hook 注册,可多个监听器,各自可取消)
+  const listeners = new Set<SdkEventHandler>()
   const emit: SdkEventHandler = (event) => {
-    if (!userOnEvent) return
     // approval_request 不外发(UI 已处理,避免集成方误调 resolve 双重收口)
     if ((event as any).type === 'approval_request') return
-    try { userOnEvent(event) } catch { /* 回调抛错不影响 agent 循环 */ }
+    if (userOnEvent) { try { userOnEvent(event) } catch { /* 回调抛错不影响 agent 循环 */ } }
+    for (const l of listeners) { try { l(event) } catch { /* 单个监听器抛错不影响其他 */ } }
   }
 
   const middlewares = [
@@ -617,7 +627,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentsMw ? [subagentsMw] : []),
     ...(options.middleware || []),
     // SDK 事件中间件(最末,最后观察):window 写后发 window_prop_change;每轮结束发 message_update
-    ...(userOnEvent ? [createSdkEventMiddleware(emit, messages)] : []),
+    // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
+    createSdkEventMiddleware(emit, messages),
   ]
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
@@ -627,6 +638,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     store,
     messages,
     vfsStore,
+    listeners,
     todosMw,
     memoryMw,
     agent: null,
@@ -978,5 +990,10 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,
     /** 列出可用 checkpoint(回退点) */
     listCheckpoints: () => core.checkpoint?.list() ?? [],
+    /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
+    hook: (handler: SdkEventHandler) => {
+      core.listeners.add(handler)
+      return () => core.listeners.delete(handler)
+    },
   }
 }

@@ -381,6 +381,8 @@ export interface ChatSdk {
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */
   listCheckpoints(): CheckpointMeta[];
+  /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
+  hook(handler: SdkEventHandler): () => void;
 }
 
 export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;

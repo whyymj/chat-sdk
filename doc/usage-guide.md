@@ -635,6 +635,30 @@ createChatSdk({
 
 > 更深度的拦截/增强(改 messages、包裹模型调用、贡献工具)用**自定义中间件**(见下节);`onEvent` 适合只读观察。
 
+**`sdk.hook(handler)` —— 运行时动态订阅(可多个监听器、可取消)**
+
+除构造时 `onEvent`,实例还提供 `hook` 方法,运行时随时订阅,可注册多个监听器,返回取消函数:
+
+```ts
+const sdk = createChatSdk({ /* 不必传 onEvent */ }).mount()
+
+// 订阅 1:宿主页面响应式刷新
+const off1 = sdk.hook((event) => {
+  if (event.type === 'window_prop_change') renderUI()
+})
+
+// 订阅 2:埋点(与订阅 1 共存,互不影响)
+const off2 = sdk.hook((event) => {
+  if (event.type === 'tool_call') analytics.track('tool', { name: event.name })
+})
+
+// 取消订阅
+off1()
+off2()
+```
+
+`onEvent` 与 `hook` 互补:前者构造时单回调,后者运行时多监听器;两者可并存。事件类型与过滤规则同上(`approval_request` 不外发;流式事件仅 stream 模式)。
+
 ## 8. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。

@@ -277,6 +277,30 @@ createChatSdk({
 
 > For deeper interception/enhancement (mutating messages, wrapping model calls, contributing tools) use **custom middleware** (next section); `onEvent` is for read-only observation.
 
+**`sdk.hook(handler)` — runtime subscription (multiple listeners, cancellable)**
+
+Besides the constructor-time `onEvent`, the instance exposes a `hook` method for runtime subscription — register multiple listeners, each returning an unsubscribe function:
+
+```ts
+const sdk = createChatSdk({ /* onEvent not required */ }).mount()
+
+// listener 1: host page reactive refresh
+const off1 = sdk.hook((event) => {
+  if (event.type === 'window_prop_change') renderUI()
+})
+
+// listener 2: analytics (coexists with listener 1, independent)
+const off2 = sdk.hook((event) => {
+  if (event.type === 'tool_call') analytics.track('tool', { name: event.name })
+})
+
+// unsubscribe
+off1()
+off2()
+```
+
+`onEvent` and `hook` are complementary: the former is a single constructor-time callback, the latter runtime multi-listener; both can coexist. Event types and filtering rules as above (`approval_request` not forwarded; stream events only in stream mode).
+
 ## 7. Custom middleware
 
 ```ts

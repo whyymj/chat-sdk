@@ -18,6 +18,19 @@
 
 One-line gist: **declare the page data structure (schema) to the Agent; it reads/writes via tools, validated by schema** — "editing the page" goes from drag/fill to a single sentence.
 
+### What it is: a standardized JSON-operation Agent
+
+At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI editing JSON is no longer "generate a blob of text and stuff it back" (uncontrolled), but a structured operation under four constraints:
+
+| Constraint | Mechanism | Effect |
+|---|---|---|
+| **Scope control** | Property registry (`windowProps`) — only declared paths are writable | AI touching undeclared fields → rejected |
+| **Validity check** | zod schema — `set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
+| **Incremental op** | `edit_window_prop` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
+| **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
+
+"Editing JSON" moves from free-form LLM text generation to **structured, validatable, auditable, rollbackable** tool operations. This is the fundamental difference from "let the AI output a JSON string directly".
+
 ## Use cases
 
 | Scenario | User says | AI does |
