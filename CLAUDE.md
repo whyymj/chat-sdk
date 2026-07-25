@@ -172,19 +172,19 @@ createChatSdk({
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
-## 项目 Skills(分发给使用者,协助 AI 工具使用本 SDK)
+## 项目 Skills(分发给使用者 + 维护者自用)
 
-`skills/` 下提供两个面向**集成方/使用者**的 Agent Skill,供他们安装到自己的 Claude Code / Cursor(或任何加载 `.claude/skills/` 的工具)中,教 AI 如何使用本 SDK:
+本仓库提供两个 Agent Skill,供 Claude Code / Cursor 等 AI 工具加载使用。**注意公开范围不同**:
 
-| Skill | 触发场景 | 内容 |
-|---|---|---|
-| `page-agent-sdk-integrate` | 把 SDK 集成进网页(选引入方式/声明 windowProps+schema/配 llm/挂载/订阅事件/headless/排坑) | 集成工作流 + 常见坑(DeepSeek 400 tool_call_id / MCP 注入 0 工具 / 服务端) |
-| `page-agent-sdk-release` | 发布新版本到 npm + 推两个 git | 完整发布 checklist + 双远程职责 + npm 2FA 凭据 |
+| Skill | 位置 | 公开范围 | 触发场景 |
+|---|---|---|---|
+| `page-agent-sdk-integrate` | `skills/`(含入 npm 包 `files`) | ✅ **公开分发**(使用者 `npm i` 即可得) | 集成 SDK 进网页(选引入方式/声明 windowProps+schema/配 llm/挂载/订阅事件/headless/排坑) |
+| `page-agent-sdk-release` | `.claude/skills/`(不进 npm 包) | 🔒 **维护者自用**(仅仓库内) | 发布新版本(bump→build→test→推 gitee/github→npm publish→验证) |
 
-- **位置**:`skills/page-agent-sdk-integrate/`、`skills/page-agent-sdk-release/`(已含入 npm 包 `files`)
-- **安装方式**:使用者 `cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-* ~/.claude/skills/` 或从 github 下载
-- 二者引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程
-- ⚠️ 注意区分:本仓库 `.claude/skills/openspec-*` 是**本仓库 agent 自用**(开发本项目);`skills/page-agent-sdk-*` 是**分发给使用者**(用本 SDK)
+- **integrate** 面向集成方:使用者 `cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-integrate ~/.claude/skills/` 或从 github 下载安装
+- **release** 面向维护者:含双远程职责/npm 2FA 凭据等内部信息,**不通过 npm 包分发**;留在仓库 `.claude/skills/` 供本项目 agent 工作时自用
+- 二者均引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程
+- ⚠️ 区分:本仓库 `.claude/skills/openspec-*` = 开发本项目自用;`.claude/skills/page-agent-sdk-release` = 维护者发布自用;`skills/page-agent-sdk-integrate` = 分发给使用者
 
 ## 发布与引入
 

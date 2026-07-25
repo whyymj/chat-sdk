@@ -257,26 +257,27 @@ CLAUDE.md                       # architecture + gotchas + coding conventions (a
 
 ## Skills for AI tools (for integrators)
 
-Two ready-to-use Agent Skills are bundled for integrators using Claude Code / Cursor (or any agent harness that loads `.claude/skills/` / `~/.claude/skills/`). They teach the AI how to use **this SDK** in your project:
+A ready-to-use Agent Skill is bundled for integrators using Claude Code / Cursor (or any agent harness that loads `.claude/skills/` / `~/.claude/skills/`). It teaches the AI how to use **this SDK** in your project:
 
 | Skill | When it triggers |
 |---|---|
 | `page-agent-sdk-integrate` | Embedding the SDK — choose install method, declare `windowProps` + zod schemas, configure the LLM, mount, subscribe to events (`onEvent` / `sdk.hook`), run headless, troubleshoot common pitfalls |
-| `page-agent-sdk-release` | Releasing a new version (bump → build → test → push gitee/github → npm publish → verify) — for maintainers |
 
 **Install** (pick one):
 
 ```bash
 # Option A — copy from the installed npm package
 npm i page-agent-sdk
-cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-* ~/.claude/skills/
+cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-integrate ~/.claude/skills/
 
 # Option B — download from the repo (no install needed)
-curl -L https://github.com/whyymj/chat-sdk/tarball/master | tar xz --strip-components=1 --wildcards '*/skills/page-agent-sdk-*'
-mv skills/page-agent-sdk-* ~/.claude/skills/
+curl -L https://github.com/whyymj/chat-sdk/tarball/master | tar xz --strip-components=1 --wildcards '*/skills/page-agent-sdk-integrate'
+mv skills/page-agent-sdk-integrate ~/.claude/skills/
 ```
 
-After install, restart your AI tool; the skills auto-trigger when you ask things like "add page-agent-sdk to my page" or "publish a new version".
+After install, restart your AI tool; the skill auto-triggers when you ask things like "add page-agent-sdk to my page".
+
+> A second skill `page-agent-sdk-release` (release workflow for maintainers) is kept in the repo's `.claude/skills/` for project maintainers only and is **not** distributed via the npm package.
 
 ## Architecture
 
