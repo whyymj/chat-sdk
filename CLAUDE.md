@@ -171,6 +171,17 @@ createChatSdk({
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行
 
+## 项目 Skills(协助 AI 工具使用本项目)
+
+`.claude/skills/` 下提供两个针对本项目的 skill,供 Claude Code / Cursor 等 AI 工具触发使用:
+
+| Skill | 触发场景 | 内容 |
+|---|---|---|
+| `page-agent-sdk-integrate` | 把 SDK 集成进网页(选引入方式/声明 windowProps+schema/配 llm/挂载/订阅事件/headless/排坑) | 集成工作流 + 常见坑(DeepSeek 400 tool_call_id / MCP 注入 0 工具 / 服务端) |
+| `page-agent-sdk-release` | 发布新版本到 npm + 推两个 git | 完整发布 checklist + 双远程职责 + npm 2FA 凭据 |
+
+二者均引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程。
+
 ## 发布与引入
 
 包名 `page-agent-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`)。`vue` 打包进库;`zod`/`@langchain/*` 为 peer。三种引入:npm / CDN·ESM(esm.sh) / CDN·IIFE 全量(`unpkg` 单文件)。
