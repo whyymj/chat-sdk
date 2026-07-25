@@ -147,9 +147,9 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/__tests__/selftest.ts,364 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),364 项断言
 ```
-覆盖核心逻辑:windowOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。
+**按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(24 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:windowOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
