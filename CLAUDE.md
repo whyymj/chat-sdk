@@ -143,9 +143,59 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 ### window 工具零桥接
 工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_window_prop`(范围 + 校验)。
 
-### 自测
-`npm test`(364 项)覆盖核心逻辑(windowOps/vfs/中间件/存储配额淘汰/retry/pool/subagent/mcp/verify/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果),不依赖 LLM,tsx 跑源码。
-`npm run test:e2e`(14 项)用构建产物 dist 验证 createChatSdk 集成层(默认 systemPrompt / 自定义覆盖 / 动态注册 add/remove/list / windowOps 关闭 no-op / sdk.hook),覆盖 selftest 触不到的顶层 API 作用域。**改 createChatSdk 顶层 API 后必跑 e2e**(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 ReferenceError,由 e2e 捕获)。子 agent / MCP / verify 自纠循环运行时手动验证。
+### 测试流程
+
+#### 1. 单元/集成自测(必跑,无 LLM 依赖)
+```bash
+npm test            # tsx 跑 src/__tests__/selftest.ts,364 项断言
+```
+覆盖核心逻辑:windowOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。
+
+#### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
+```bash
+npm run build       # 先构建(e2e 用 dist 产物)
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs,14 项断言
+```
+用构建产物 dist 验证 createChatSdk 顶层 API:**默认 systemPrompt / 自定义覆盖 / 动态注册 add·remove·list / inspect().windowProps 反映 / windowOps 关闭 no-op / sdk.hook 返回取消函数**。覆盖 selftest 触不到的顶层 `return` 对象作用域(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 `ReferenceError`,由 e2e 捕获)。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词后必跑**。
+
+#### 3. 浏览器手动验证(改 UI/示例后跑)
+```bash
+npm run dev         # 启动(端口 3000;被占自动换)
+```
+逐个 demo 验证(`/examples/<demo>/`):
+- `page-demo` 自举低代码(reactive 绑定 + windowProps + edit jsonPath)
+- `nested-demo` 嵌套树(递归 schema + 人工确认 + checkpoint)
+- `dynamic-demo` 动态注册(懒加载组件 + addWindowProp/removeWindowProp + onEvent)
+- `subagent-demo` 子 agent 并行编排
+- `mcp-demo` MCP 远程工具(需 `npm run mcp:mock`)
+- `human-confirm-demo` / `planner-demo` / `toolsets-demo`
+- `demo/plain.html` 框架无关 CDN 集成(importmap + esm.sh)
+
+#### 4. 运行时手动验证(依赖 LLM/server)
+selftest/e2e 不调真 LLM,以下需配 `.env` API key 或 server 手动验证:
+- 子 agent `spawn_agent`/`spawn_agents` 委派(过程隔离 + 进度转发)
+- MCP 远程工具注入(`npm run mcp:mock` 起本地 server,`npm run mcp:probe` 验证连通)
+- verify 自纠循环(`capabilities.verify:true` + `check` 反馈回灌)
+- 真实 LLM 工具调用 + 流式输出 + 停止/重试
+
+#### 5. CDN 可达性验证(发布后)
+```bash
+curl -sL "https://esm.sh/page-agent-sdk@<version>" | head -20              # 可达 + peer 自动解析
+curl -sL "https://esm.sh/page-agent-sdk@<version>/es2022/page-agent-sdk.mjs" -o /tmp/sdk.mjs
+rg -o "createChatSdk|addWindowProp|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mjs | sort -u  # 导出齐全
+```
+
+#### 测试矩阵(改 X → 必跑 Y)
+| 改动范围 | npm test | npm run test:e2e | 浏览器 demo | 真实 LLM |
+|---|---|---|---|---|
+| 核心模块(windowOps/vfs/中间件/存储) | ✅ | — | 改对应 demo 时 | — |
+| createChatSdk 顶层 API / AgentCore / 动态注册 / 默认提示词 | ✅ | ✅ | dynamic-demo | — |
+| UI 组件(ChatDialog/DebugDrawer) | — | — | ✅ | — |
+| 子 agent / MCP / verify 自纠 | ✅(逻辑层) | — | 对应 demo | ✅ |
+| 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
+
+#### 发布前必跑顺序
+`npm run build` → `npm test`(364 全过) → `npm run test:e2e`(14 全过) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 ## SDK 用法
 ```ts
@@ -209,12 +259,12 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:`npm run build` + `npm test`(364 项全过)+ `npm run test:e2e`(14 项全过,验证 createChatSdk 集成层)→ `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 364 全过 → `npm run test:e2e` 14 全过 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进
 8. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)
-9. **验证**:`npm view page-agent-sdk version` 确认最新版 + 临时目录 `npm i page-agent-sdk` 验证可装可导入
+9. **验证**:`npm view page-agent-sdk version` 确认最新版 + 临时目录 `npm i page-agent-sdk` 验证可装可导入 + CDN 可达性验证(「### 测试流程」§5:esm.sh 拉取 + 导出齐全)
 
 > 双远程职责分工、npm 凭据/2FA 细节见下两节。
 
