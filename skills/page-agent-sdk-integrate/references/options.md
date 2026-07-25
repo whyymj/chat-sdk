@@ -7,7 +7,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `llm` | `LLMConfig \| BaseChatModel` | — (required) | The model. `LLMConfig = { apiKey, baseUrl, model, temperature?, maxTokens? }` (OpenAI-compatible; DeepSeek default). Or pass any LangChain `BaseChatModel` (e.g. `ChatAnthropic`, install its peerDep). |
-| `systemPrompt` | `string` | generic page assistant | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). |
+| `systemPrompt` | `string` | built-in default (generic page assistant + reliable write rules) | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). If omitted, a built-in default is used (page-operation assistant + `systemPromptHelpers.reliableWriteRules`); passing your own fully overrides it (append `systemPromptHelpers.reliableWriteRules` yourself if needed). |
 | `id` | `string` | random + warn | Stable agent id for multi-agent isolation & persistence. **Must pass a stable value** if you use `storage` or run multiple agents on one page. |
 | `title` / `placeholder` | `string` | — | Dialog title / input placeholder (cosmetic). |
 
@@ -70,7 +70,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `contextPreset` | `'auto'\|'conservative'\|'aggressive'` | `auto` | `conservative` = save cost; `aggressive` = save context. `contextOptions` fine-tunes further. |
-| `contextOptions` | `object` | — | Detailed compression params (overrides preset). `false` disables compression. |
+| `contextOptions` | `object` | — | Detailed compression params (overrides preset). `false` disables compression. Key fields: `windowRounds`, `summaryThresholdRounds`, `contextWindow`, `summaryThresholdRatio`, `windowRatio`, `enableRecall`, `recallTopK`, `enableLLMSummary`, `preserveLastToolResults` (default `['describe_window_prop','list_window_props']` — keep these tools' result summaries in the compressed summary so field descriptions survive compression; set `[]` to disable). `getRegisteredProps` is injected internally by the SDK (from `sdk.listWindowProps`) to embed a live registry snapshot in the summary — no need to set it manually. |
 | `summaryLlm` | `BaseChatModel \| LLMConfig` | main `llm` | Use a cheaper/faster model for summarization. |
 | `summaryTemperature` | `number` | 0.3 | Summary model temperature. |
 | `summaryMaxTokens` | `number` | 1024 | Summary output cap. |

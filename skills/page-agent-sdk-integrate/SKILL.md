@@ -27,6 +27,8 @@ See `demo/plain.html` for a framework-agnostic importmap + esm.sh example.
 
 Put the page data on `window` (e.g. `window.app = { title, theme }`), then declare each writable path with a zod schema. The agent can ONLY touch declared paths; `set`/`edit` are schema-validated (invalid → structured error, no write).
 
+> `systemPrompt` is optional — a built-in default is used if omitted (generic page-operation assistant + `systemPromptHelpers.reliableWriteRules`: read-before-write, list in dynamic scenarios, fields per `describe`, retry on validation error, prefer incremental `edit`). Passing your own fully overrides it; append `systemPromptHelpers.reliableWriteRules` yourself if you want the rules.
+
 ```ts
 import { createChatSdk, z } from 'page-agent-sdk'
 import 'page-agent-sdk/style.css'
@@ -92,7 +94,7 @@ Event types: `window_prop_change` / `message_update` / `tool_call` / `tool_resul
 | **MCP integration** | `mcp:[{transport,url}]` remote tool servers; `@modelcontextprotocol/sdk` optional peerDep |
 | **Lazy-loaded components (dynamic schemas)** | `sdk.addWindowProp(spec)` on component mount / `removeWindowProp` on unmount; tools pick up new registrations immediately, no rebuild. See [references/advanced.md §0](references/advanced.md) |
 
-When the user describes a scenario, map it to the row above and load `references/use-cases.md` for the matching numbered case (1→9) with copy-paste code. For dynamic/lazy-loaded component schemas, custom tools/skills/subagents/MCP, load [references/advanced.md](references/advanced.md).
+When the user describes a scenario, map it to the row above and load `references/use-cases.md` for the matching numbered case (1→10) with copy-paste code. For dynamic/lazy-loaded component schemas, custom tools/skills/subagents/MCP, load [references/advanced.md](references/advanced.md).
 
 ## References (read as needed)
 
@@ -101,7 +103,7 @@ Detailed docs live in this skill's `references/` folder — load the one matchin
 - **[references/quickstart.md](references/quickstart.md)** — progressive setup from 5-line CDN to full-featured (Stages 0→6). Read when the user wants a step-by-step "from simple to complete" walkthrough.
 - **[references/options.md](references/options.md)** — every `createChatSdk` option: type, default, purpose & when to use. Read when the user asks "what does option X do" or needs to tune behavior.
 - **[references/api.md](references/api.md)** — instance methods (`mount`/`send`/`stream`/`inspect`/`switchSession`/`hook`/checkpoints), `defineTool`/`defineSkill`/`presets`, built-in window tools, and the full `SdkEvent` type table. Read when the user asks about APIs, tools, or events.
-- **[references/use-cases.md](references/use-cases.md)** — 9 end-to-end scenarios (low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP). Read when the user wants a concrete pattern for their use case.
+- **[references/use-cases.md](references/use-cases.md)** — 10 end-to-end scenarios (low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP / lazy-loaded dynamic components). Read when the user wants a concrete pattern for their use case.
 - **[references/advanced.md](references/advanced.md)** — detailed examples for the extensibility surfaces: **dynamic windowProps (`sdk.addWindowProp`/`removeWindowProp` for lazy-loaded components)**, custom `defineTool` (with error handling + coexisting with windowOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha). Read when the user asks "how to add custom tools / skills / subagents / MCP" or "lazy-load components with different schemas".
 
 Project-level docs (in the repo, not bundled in this skill):

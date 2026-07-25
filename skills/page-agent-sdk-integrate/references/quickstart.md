@@ -9,7 +9,7 @@ From the smallest working setup to a full-featured integration. Read top-down; s
 
 ## Stage 1 — Minimal (5 lines, CDN, no build)
 
-Drop into any HTML page. The built-in dialog mounts itself.
+Drop into any HTML page. The built-in dialog mounts itself. (`systemPrompt` is optional — a built-in default is used if omitted: a generic page-operation assistant + `systemPromptHelpers.reliableWriteRules`. Shown here explicitly for clarity.)
 
 ```html
 <div id="root"></div>
@@ -114,6 +114,38 @@ createChatSdk({
 // later, switch session:
 await sdk.switchSession('session-abc')   // load or create
 ```
+
+## Stage 7 — Dynamic windowProps (lazy-loaded components)
+
+Components loaded on demand with **different schemas each** — register at mount, unregister at unmount. No need to pre-declare every possible component at `createChatSdk`. The agent picks up new registrations immediately (no rebuild); `summarization` also embeds a live registry snapshot in compressed summaries so the agent won't act on stale memory.
+
+```ts
+const sdk = createChatSdk({
+  container: '#root', llm: { ... },
+  // only the static container is pre-declared; per-component paths are dynamic
+  windowProps: [{ path: 'app.components', description: '动态组件容器(按 id 存)', schema: z.record(z.string(), z.any()) }],
+}).mount()
+
+// component mounts (lazy) → register its schema, immediately operative
+function mountComp(comp: { id: string; type: 'banner' | 'card' | 'stat' | 'chart' }) {
+  window.app.components[comp.id] = reactive(comp)
+  sdk.addWindowProp({
+    path: `app.components.${comp.id}`,
+    description: `${typeDescriptions[comp.type]}`,  // ← give the LLM field-level detail (it can't see the zod schema)
+    schema: compSchemas[comp.type],                 // ← validation guardrail
+  })
+}
+// component unmounts → unregister (snapshot stack cleaned too)
+function unmountComp(id: string) {
+  delete window.app.components[id]
+  sdk.removeWindowProp(`app.components.${id}`)
+}
+sdk.listWindowProps()  // live registry (reflects dynamic add/remove)
+```
+
+> Key points: `description` is the LLM's only source of field structure (write it in detail); `schema` is the validation guardrail (the LLM never sees it). Write operations return the current operable path list; long-session compression keeps a live registry snapshot + preserved `describe`/`list` results so the agent never loses track of dynamic components.
+
+**Full runnable demo**: `examples/dynamic-demo/` (`npm run dev` → `/examples/dynamic-demo/`).
 
 ## Next
 

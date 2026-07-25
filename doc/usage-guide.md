@@ -135,7 +135,7 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与行为指令
+  systemPrompt: '...',          // Agent 身份与行为指令(可选:不传用内置默认——页面操作助手 + reliableWriteRules;传了则完全覆盖)
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
 
   /* ===== 能力注入 ===== */

@@ -62,6 +62,19 @@ createChatSdk({ ...presets.pageBuilder, llm, container }).mount()
 
 Spread into options for common scenarios.
 
+## systemPromptHelpers (best-practice prompt snippets)
+
+```ts
+import { createChatSdk, systemPromptHelpers } from 'page-agent-sdk'
+
+createChatSdk({
+  systemPrompt: `你是页面助手。\n${systemPromptHelpers.reliableWriteRules}`,
+  llm, container,
+}).mount()
+```
+
+`reliableWriteRules` — standardized "reliable write rules": read before write (`get_window_prop`), list in dynamic scenarios, fields per `describe_window_prop`, retry on schema-validation errors, prefer `edit_window_prop` incremental patches. Recommended for any scenario involving window writes.
+
 ## Built-in window tools (auto-injected when `capabilities.windowOps`)
 
 | Tool | Purpose |

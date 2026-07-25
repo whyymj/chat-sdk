@@ -117,7 +117,7 @@ createChatSdk({
   ui: true,                        // false = headless (build UI with agent.messages + send/stream)
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
-  systemPrompt: '...',             // Agent identity (no hardcoded business; inject via this)
+  systemPrompt: '...',             // Agent identity (optional: built-in default — page assistant + reliableWriteRules — used if omitted; passing your own fully overrides it)
 
   // page data
   windowProps: [{ path, description, schema }],  // register window props + zod schema

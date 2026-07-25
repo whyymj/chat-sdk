@@ -37,6 +37,38 @@ Notes:
 - `inspect().windowProps` 与 `verify`(默认 `createWriteBackCheck`)均反映动态注册的最新 schemas(verify 每次 check 实时取 `listWindowProps()`)。
 - `capabilities.windowOps:false` 时 `addWindowProp`/`removeWindowProp` 为 no-op(并 warn)。
 
+**完整可运行示例**:`examples/dynamic-demo/`(dev 启动后访问 `/examples/dynamic-demo/`)—— 演示加载/卸载结构各异的组件(banner/card/stat/chart),挂载即 `addWindowProp` 注册其 schema,AI 立即可按各自 schema 操作,卸载即 `removeWindowProp`;右侧实时显示 `sdk.listWindowProps()` 反映动态增删。
+
+### 动态场景下「压缩后不丢信息」的保障(内置,无需额外配置)
+
+动态组件随时增删,长会话压缩后 LLM 可能基于过时记忆操作已卸载的组件、或不知道新组件已注册。SDK 内置两道保障:
+
+- **A. 压缩时注入注册表快照**:`summarization` 中间件压缩 older 轮次时,自动把当前 `listWindowProps()` 的 `path + description` 作为一段附进摘要 system 消息(不进压缩)。LLM 即便忘了历史 `describe`,每轮仍看得到「当前有哪些可操作 path」,不会再去操作已卸载的组件。`windowOps` 关闭时返回空,无影响。
+- **C. preserveLastToolResults**:`contextOptions.preserveLastToolResults`(默认 `['describe_window_prop','list_window_props']`)指定这些工具的步骤 `result` 在跨轮摘要时额外保留摘要片段进 summaryMsg。即便 older 轮被摘要,关键字段说明仍在摘要里,LLM 不必反复 `describe`。设为 `[]` 关闭。
+
+```ts
+// 默认即开启 A + C;如需关闭或自定义:
+createChatSdk({
+  contextOptions: {
+    preserveLastToolResults: [],  // 关闭 C(不保留工具结果摘要)
+    // getRegisteredProps 由 SDK 内部注入(来自 sdk.listWindowProps),无需手动传
+  },
+  // ...
+})
+```
+
+- **B. 写操作返回附当前可操作 path 列表**:`set`/`edit`/`delete` 成功返回末尾自动附 `(当前可操作 path: a, b, c)`,LLM 写完即知全貌,多组件批量场景减少 `list` 调用。超过 8 项或过长时只报数量,避免提示过长。
+- **D. `systemPromptHelpers.reliableWriteRules`**:导出的标准化「可靠写入规则」片段,建议拼进 `systemPrompt`:
+
+```ts
+import { systemPromptHelpers } from 'page-agent-sdk'
+createChatSdk({
+  systemPrompt: `你是页面助手。\n${systemPromptHelpers.reliableWriteRules}`,
+  // ...
+})
+```
+内容:改前先 `get` 读真实值、动态场景先 `list`、字段以 `describe` 为准、写错看校验错误重试、优先 `edit` 增量 patch。避免集成方忘了写这些元规则导致 LLM 凭记忆瞎改。
+
 ## 1. Custom tools (`defineTool`)
 
 Custom tools extend the agent beyond built-in `windowOps`/`fetch`. Use them to expose your product's API to the AI.

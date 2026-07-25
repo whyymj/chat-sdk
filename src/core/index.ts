@@ -11,7 +11,7 @@ export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig } from './sdk/createChatSdk'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
-export { presets } from './presets'
+export { presets, systemPromptHelpers } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约

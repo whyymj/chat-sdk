@@ -90,6 +90,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🤖 subagents | Delegate subtasks; process stays out of main context | `subagent` |
 | 🔌 MCP | Connect remote MCP servers, inject tools dynamically | `mcp` |
 | 📦 context compression | 4-layer adaptive compression, presets + LLM summary | `contextPreset` |
+| 🛡️ compression-safe | Live windowProps snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
 | 💾 persistence | IndexedDB multi-session + quota eviction + switch | `storage` |
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
@@ -125,7 +126,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `ui` | `boolean \| 'default'` · default `true` | `false` = headless (build UI with `agent.messages`) |
 | | `llm` | `LLMConfig \| BaseChatModel` · **required** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`; OpenAI-compatible (default DeepSeek) |
 | | `id` | `string` | Stable id (multi-agent isolation + persistence resume; random+warn if omitted) |
-| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this) |
+| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (page assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it |
 | **Page data** | `windowProps` | `{path,description,schema}[]` | Register window props readable/writable by tools + zod schema |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
 | **Capability toggles** | `capabilities` | `{planning?,windowOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | Default all on (`verify` default off); `false` to turn off |
@@ -137,7 +138,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · default `auto` | Compression preset |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression) |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_window_prop','list_window_props']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `50` | Dialog history memory round cap (`0` disables trim) |
 | | `vfs` | `{initialFiles?,maxBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
@@ -199,7 +200,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -254,7 +255,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -344,6 +345,7 @@ After `npm run dev`, visit the corresponding page:
 |---|---|---|
 | page-demo | `/` | Self-bootstrapping demo: left JSON reactive page + right chat |
 | nested-demo | `/examples/nested-demo/` | Nested block tree + human confirm + checkpoint |
+| dynamic-demo | `/examples/dynamic-demo/` | Lazy-loaded components with dynamic schemas (`sdk.addWindowProp`/`removeWindowProp`) |
 | human-confirm-demo | `/examples/human-confirm-demo/` | AI proactive inquiry (multi-plan pick) + pre-write confirm |
 | planner-demo | `/examples/planner-demo/` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
 | subagent-demo | `/examples/subagent-demo/` | Subagent parallel orchestration |

@@ -33,6 +33,8 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       const hints: string[] = []
       if (caps?.planning !== false) hints.push('多步任务建议先 write_todos 拆解为步骤并逐步推进。')
       if (hasWindowOps) {
+        hints.push('不确定可操作哪些属性时用 list_window_props 查看(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);不确定某属性字段结构时用 describe_window_prop。')
+        hints.push('改属性前先 get_window_prop 读其当前真实值,基于真实值改,不要凭记忆。')
         hints.push('修改大对象/数组属性优先用 edit_window_prop 增量 patch(只发改动部分),避免 set 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
         hints.push('修改属性出错时可用 restore_window_snapshot(path) 回退最近一次。')
         hints.push('在大数组里按条件筛选元素用 query_window_prop(JSONPath,如 $[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 edit_window_prop 改。')

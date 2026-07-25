@@ -90,6 +90,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🤖 子 agent | 委派子任务，过程不占主上下文 | `subagent` |
 | 🔌 MCP | 连远程 MCP server 动态注入工具 | `mcp` |
 | 📦 上下文压缩 | 4 层自适应压缩，预设档位 + LLM 摘要 | `contextPreset` |
+| 🛡️ 压缩不丢信息 | 摘要内嵌当前 windowProps 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
@@ -125,7 +126,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `ui` | `boolean \| 'default'` · 默认 `true` | `false` = headless（用 `agent.messages` 自建 UI） |
 | | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
-| | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入） |
+| | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入）。可选——不传用内置默认（页面操作助手 + `reliableWriteRules`）；传了则完全覆盖 |
 | **页面数据** | `windowProps` | `{path,description,schema}[]` | 注册可被工具读写的 window 属性 + zod schema 校验 |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
 | **能力开关** | `capabilities` | `{planning?,windowOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
@@ -137,7 +138,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · 默认 `auto` | 压缩预设档位 |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩） |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_window_prop','list_window_props']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `50` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
@@ -199,7 +200,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # 类型 / 库唯一入口
-examples/                       # page-demo / nested-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # 架构要点 + 约定坑 + 编码规范（agent 必读）
 ```
@@ -289,6 +290,7 @@ createChatSdk({
 |---|---|---|
 | page-demo | `/` | 自举 demo：左 JSON 响应式页面 + 右对话框 |
 | nested-demo | `/examples/nested-demo/` | 嵌套区块树 + 人工确认 + checkpoint |
+| dynamic-demo | `/examples/dynamic-demo/` | 懒加载组件 + 动态注册 schema（`sdk.addWindowProp`/`removeWindowProp`） |
 | human-confirm-demo | `/examples/human-confirm-demo/` | AI 主动征询（多方案点选）+ 写前确认 |
 | planner-demo | `/examples/planner-demo/` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
 | subagent-demo | `/examples/subagent-demo/` | 子 agent 并行编排 |

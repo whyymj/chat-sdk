@@ -39,6 +39,7 @@ import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfi
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
+import { systemPromptHelpers } from '../presets'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -208,6 +209,19 @@ export interface ChatSdkOptions {
   title?: string
   placeholder?: string
 }
+
+/**
+ * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
+ * 定位:通用「页面操作助手」(规范化 JSON 操作 agent)——通过注册的 window 属性安全读写宿主页面数据。
+ * 含身份 + 能力概述 + 可靠写入规则(改前先读、动态先查、字段以工具返回为准、写错看校验错误重试、优先增量 patch)。
+ * 用户传了 systemPrompt 则完全覆盖此默认(不自动追加 reliableWriteRules,避免重复;需要时自行拼入 systemPromptHelpers.reliableWriteRules)。
+ */
+const DEFAULT_SYSTEM_PROMPT = [
+  '你是一个页面操作助手。宿主页面在 window 对象上注册了可操作的属性,你通过专用工具安全地读写这些属性来操作页面。',
+  '所有写操作都经范围控制(仅注册表内)与 schema 校验(不合法会返回结构化错误而非写入),并自动留快照可回退。',
+  '大对象/数组优先用增量 patch(只发改动)而非整体重传,避免输出被截断。',
+  systemPromptHelpers.reliableWriteRules,
+].join('\n\n')
 
 export interface ChatSdk {
   /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless) */
@@ -624,6 +638,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底
             ...resolveContextOptions(options, modelCaps.contextWindow),
             llmInvoke: summaryLlmInvoke,
+            // A:压缩时注入当前 windowProps 注册表快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件);
+            //   windowOps 关闭时 liveWindowProps() 返回空,无影响
+            getRegisteredProps: () => liveWindowProps().map((p) => ({ path: p.path, description: p.description })),
+            // C:跨轮摘要时保留 describe/list 工具的 result 摘要(防字段描述被摘要掉);用户可在 contextOptions 覆盖
+            preserveLastToolResults:
+              (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
+              ['describe_window_prop', 'list_window_props'],
           }),
         ]
       : []),
@@ -867,7 +888,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             temperature: options.llm.temperature,
             maxTokens: options.llm.maxTokens,
           }),
-      systemPrompt: options.systemPrompt,
+      systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       tools: allTools,
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,

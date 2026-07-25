@@ -1274,6 +1274,9 @@ console.log('\n[usageHints middleware]')
   const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
   const segFull = mwFull.augmentPrompt?.(createState()) || ''
   assert(/write_todos/.test(segFull) && /restore_window_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
+  // windowOps 开 → 含 list/describe(查当前可操作属性)与 get(读真实值再改)提示
+  assert(/list_window_props/.test(segFull) && /describe_window_prop/.test(segFull), 'windowOps 开 → 注入 list/describe 用法(动态注册场景关键)')
+  assert(/get_window_prop/.test(segFull), 'windowOps 开 → 注入 get 读真实值再改用法')
 
   // planning 关 → 无 write_todos 提示
   const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
@@ -1436,6 +1439,37 @@ console.log('\n[token 驱动压缩]')
   const cmZero = useContextManager({ contextWindow: 0, summaryThresholdRounds: 2, windowRounds: 1 })
   const rZero = await cmZero.compress(mkMsgs(4))
   assert(rZero.stats.triggered === true && !/token/.test(rZero.stats.strategy), 'contextWindow:0 → 回退轮数模式')
+
+  // A + C:压缩时注入注册表快照 + preserveLastToolResults 保留指定工具结果摘要
+  function mkMsgsWithSteps(n: number): any[] {
+    const out: any[] = []
+    for (let i = 0; i < n; i++) {
+      out.push({ role: 'user', content: 'q' + i, timestamp: i * 2 })
+      // 前 4 轮(将进 older)带 describe_window_prop 步骤;后 2 轮(将进 recent)无步骤
+      const steps = i < 4
+        ? [{ name: 'describe_window_prop', args: { path: 'app.x' }, result: '路径: app.x 说明: X属性 {a,b}', status: 'done' }]
+        : []
+      out.push({ role: 'assistant', content: 'a' + i + 'y'.repeat(300), steps, timestamp: i * 2 + 1 })
+    }
+    return out
+  }
+  const cmAC = useContextManager({
+    summaryThresholdRounds: 4,
+    windowRounds: 2,
+    getRegisteredProps: () => [{ path: 'app.x', description: 'X属性' }],
+    preserveLastToolResults: ['describe_window_prop'],
+  })
+  const rAC = await cmAC.compress(mkMsgsWithSteps(6))
+  assert(rAC.stats.triggered, 'A/C:6 轮触发压缩')
+  const sumAC = String(rAC.messages[0].content)
+  assert(sumAC.includes('当前可操作 window 属性'), 'A:摘要含注册表快照段')
+  assert(sumAC.includes('app.x') && sumAC.includes('X属性'), 'A:摘要含注册 path 与 description')
+  assert(sumAC.includes('字段提示'), 'C:摘要含 preserve 工具结果片段')
+  assert(sumAC.includes('describe_window_prop'), 'C:摘要含 preserve 工具名')
+  // 未提供 getRegisteredProps 时不注入该段(不污染摘要)
+  const cmNoProps = useContextManager({ summaryThresholdRounds: 4, windowRounds: 2 })
+  const rNoProps = await cmNoProps.compress(mkMsgsWithSteps(6))
+  assert(!String(rNoProps.messages[0].content).includes('当前可操作 window 属性'), 'A:未提供 getRegisteredProps 时不注入注册表段')
 }
 
 // ============ 压缩预设档位 resolveContextOptions ============
@@ -1772,6 +1806,8 @@ console.log('\n[trimMemoryMessagesImpl]')
   // 新增项立即对工具生效:set 合法值写入
   let r = await invoke(t['set_window_prop'], { path: 'dyn.late', value: '42' })
   assert(w.dyn.late === 42 && /已设置/.test(r), '动态注册后 set 立即生效(写成功)')
+  // B:写操作成功返回附「当前可操作 path 列表」提示
+  assert(/当前可操作 path:/.test(r) && r.includes('dyn.base') && r.includes('dyn.late'), 'B:set 返回附当前可操作 path 列表')
   // schema 校验同样生效
   r = await invoke(t['set_window_prop'], { path: 'dyn.late', value: '-1' })
   assert(/SCHEMA_INVALID/.test(r) && w.dyn.late === 42, '动态注册项的 schema 校验生效(非法值不写)')

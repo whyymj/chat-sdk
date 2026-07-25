@@ -198,3 +198,34 @@ createChatSdk({
 ```
 
 > Note: `@modelcontextprotocol/sdk` is an optional peerDep — install it only if you use `mcp`. Browser supports only remote transports (http/sse/websocket), not stdio.
+
+## 10. Lazy-loaded components with dynamic schemas (dynamic windowProps)
+
+Components loaded on demand with **different structures each** — register their schema at mount time, unregister at unmount. No need to pre-declare every possible component at `createChatSdk`.
+
+```ts
+const sdk = createChatSdk({
+  container: '#chat', llm: { ... },
+  // only the static container is pre-declared; per-component paths are dynamic
+  windowProps: [{ path: 'app.components', description: '动态组件容器', schema: z.record(z.any()) }],
+  systemPrompt: '用 list_window_props 查看当前可操作的组件 path,再按各自 schema 操作',
+}).mount()
+
+// 组件挂载(懒加载)→ 动态注册其 schema,立即对 AI 生效
+function mountComp(comp: { id: string; type: CompType }) {
+  window.app.components[comp.id] = reactive(comp)
+  sdk.addWindowProp({
+    path: `app.components.${comp.id}`,
+    description: `${comp.type} 组件`,
+    schema: compSchemas[comp.type],   // 结构各异:banner/card/stat/chart 各自 schema
+  })
+}
+// 组件卸载 → 动态移除注册(快照栈一并清理)
+function unmountComp(id: string) {
+  delete window.app.components[id]
+  sdk.removeWindowProp(`app.components.${id}`)
+}
+```
+
+**完整可运行示例**:`examples/dynamic-demo/`(`npm run dev` → `/examples/dynamic-demo/`)。
+**何时用**:可视化编辑器/低代码平台中,组件按需加载且结构各异(图表/表单/卡片 schema 各不同),无法在初始化时穷举所有组件 schema。详见 `advanced.md` §0。

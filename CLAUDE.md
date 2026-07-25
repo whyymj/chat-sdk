@@ -14,7 +14,8 @@
 
 ## Agent 身份
 
-通用「页面操作助手」。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
+通用「页面操作助手」(规范化 JSON 操作 agent)。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
+**默认 systemPrompt**:用户不传时,`createChatSdk` 内置 `DEFAULT_SYSTEM_PROMPT`(身份 + 能力概述 + `systemPromptHelpers.reliableWriteRules`);用户传了则完全覆盖(不自动追加 reliableWriteRules,需自行拼入)。`createAgent` 层另有兜底 `'你是一个智能助手。'`(直接用 createAgent 且不传时)。
 
 ## 技术栈
 
@@ -83,6 +84,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 
 ### 记忆管理
 - 上下文压缩(纯内存、会话级):`summarization` 中间件复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回);`contextPreset`:`auto`(默认)/`conservative`(省成本)/`aggressive`(省上下文)
+- **压缩后不丢关键信息(内置保障)**:① `summarization` 压缩时自动注入当前 `listWindowProps()` 注册表快照(path+description)进摘要 system 消息(`getRegisteredProps` 由 createChatSdk 内部注入,防 LLM 基于过时记忆操作已卸载的动态组件);② `contextOptions.preserveLastToolResults`(默认 `['describe_window_prop','list_window_props']`)跨轮摘要时保留这些工具的 result 摘要片段(防字段描述被摘要掉,设 `[]` 关);③ `set`/`edit`/`delete` 成功返回附「当前可操作 path 列表」(超 8 项或过长只报数量);④ 导出 `systemPromptHelpers.reliableWriteRules`(改前先 get、动态先 list、字段以 describe 为准、写错看校验错误重试、优先 edit 增量)建议拼进 systemPrompt
 - 纯内存上限:vfs `maxBytes`(默认 4MB)LRU 淘汰;对话历史 `maxMemoryRounds`(默认 50)超限压缩为摘要 system 消息
 
 ### 持久化存储

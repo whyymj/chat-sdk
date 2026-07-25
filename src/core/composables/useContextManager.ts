@@ -39,6 +39,16 @@ export interface ContextManagerOptions {
   summaryThresholdRatio?: number
   /** 保留最近窗口的 token 预算比例(默认 0.4) */
   windowRatio?: number
+  /**
+   * 压缩时注入「当前可操作 window 属性」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)。
+   * 提供 getter 则每次压缩把当前注册表 path+description 作为一段附进摘要 system 消息(不进压缩)。
+   */
+  getRegisteredProps?: () => { path: string; description: string }[]
+  /**
+   * 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉)。
+   * 如 ['describe_window_prop','list_window_props'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
+   */
+  preserveLastToolResults?: string[]
 }
 
 export interface CompressionStats {
@@ -98,14 +108,27 @@ function estimateRoundTokens(r: Round): number {
 }
 
 /** 用索引摘要（零成本）生成旧轮次摘要文本 */
-function indexSummarize(older: Round[]): string {
+function indexSummarize(older: Round[], preserve?: Set<string>): string {
   return older
     .map((r) => {
       const q = plainSummary(r.userMsg.content, 60) || '(空)'
       const a = r.assistantMsgs[0] ? plainSummary(r.assistantMsgs[0].content, 80) : '(无回复)'
       const tools = r.assistantMsgs.flatMap((m) => (m.steps || []).map((s) => s.name))
       const toolTag = tools.length ? ` [工具: ${tools.join(', ')}]` : ''
-      return `- 第${r.round}轮：${q} → ${a}${toolTag}`
+      // C:对 preserve 集合内的工具,额外保留其 result 摘要(防字段描述被摘要掉)
+      let preserveBlock = ''
+      if (preserve && preserve.size) {
+        const kept: string[] = []
+        for (const m of r.assistantMsgs) {
+          for (const st of m.steps || []) {
+            if (st.name && preserve.has(st.name) && st.result) {
+              kept.push(`${st.name}: ${plainSummary(st.result, 120)}`)
+            }
+          }
+        }
+        if (kept.length) preserveBlock = `\n  字段提示: ${kept.join(' | ')}`
+      }
+      return `- 第${r.round}轮：${q} → ${a}${toolTag}${preserveBlock}`
     })
     .join('\n')
 }
@@ -197,18 +220,19 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     const query = lastUser?.content || ''
 
     // 摘要
+    const preserveSet = config.preserveLastToolResults?.length ? new Set(config.preserveLastToolResults) : undefined
     let summaryText: string
     let strategy: string
     if (config.enableLLMSummary && config.llmInvoke) {
       try {
-        summaryText = await config.llmInvoke(indexSummarize(older))
+        summaryText = await config.llmInvoke(indexSummarize(older, preserveSet))
         strategy = strategyPrefix + 'llm_summary'
       } catch {
-        summaryText = indexSummarize(older)
+        summaryText = indexSummarize(older, preserveSet)
         strategy = strategyPrefix + 'index_summary(llm_fallback)'
       }
     } else {
-      summaryText = indexSummarize(older)
+      summaryText = indexSummarize(older, preserveSet)
       strategy = strategyPrefix + 'index_summary'
     }
 
@@ -230,6 +254,18 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     ]
     if (recallBlock) {
       parts.push(`\n【与当前问题可能相关的早期对话】`, recallBlock)
+    }
+    // A:注入当前可操作 window 属性快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
+    if (config.getRegisteredProps) {
+      try {
+        const props = config.getRegisteredProps()
+        if (props.length) {
+          const propLines = props.map((p) => `- ${p.path}: ${p.description}`).join('\n')
+          parts.push(`\n【当前可操作 window 属性(动态增删后的最新状态,操作前以 list_window_props 为准)】`, propLines)
+        }
+      } catch {
+        /* getter 抛错不影响压缩 */
+      }
     }
     const summaryMsg: AgentMessage = {
       role: 'system',

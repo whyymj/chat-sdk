@@ -36,3 +36,27 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
     capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
   },
 }
+
+/**
+ * systemPrompt 辅助片段 —— 标准化最佳实践,集成方 spread 进自己的 systemPrompt,降低写错门槛。
+ *
+ * 用法:
+ *   import { systemPromptHelpers } from 'page-agent-sdk'
+ *   createChatSdk({ systemPrompt: `你是页面助手。\n${systemPromptHelpers.reliableWriteRules}`, ... })
+ */
+export const systemPromptHelpers = {
+  /**
+   * 可靠写入规则 —— 教 LLM「改前先读真实值、动态场景先 list、字段以 describe 为准、写错看校验错误重试」。
+   * 避免集成方忘了写这些元规则,导致 LLM 基于记忆瞎改、靠 schema 兜底纠错烧轮次。
+   * 建议所有涉及 window 写操作的场景都把这段拼进 systemPrompt。
+   */
+  reliableWriteRules: [
+    '【可靠写入规则】',
+    '1. 改任何属性前,先用 get_window_prop 读其当前真实值,基于真实值改,不要凭记忆;',
+    '2. 若不确定可操作哪些属性,先 list_window_props 查看当前注册项(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);',
+    '3. 不确定某属性字段结构时,先 describe_window_prop 看其说明,字段以 describe 返回为准;',
+    '4. 写入若被 schema 校验拒绝(返回结构化错误含字段名与期望类型),按错误修正后重试,不要放弃;',
+    '5. 优先用 edit_window_prop 增量 patch(只发改动),避免 set 整体重传大 JSON 被截断。',
+  ].join('\n'),
+} as const
+

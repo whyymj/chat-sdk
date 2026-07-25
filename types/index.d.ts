@@ -422,6 +422,11 @@ export declare function createSubagentMiddleware(opts: any): any;
 export declare function createVerifyMiddleware(opts: VerifyMiddlewareOptions): any;
 export declare function createWriteBackCheck(opts?: WriteBackCheckOptions): VerifyCheck;
 export declare const presets: Record<string, any>;
+/** systemPrompt 辅助片段(标准化最佳实践,拼进 systemPrompt 降低写错门槛) */
+export declare const systemPromptHelpers: {
+  /** 可靠写入规则:改前先读、动态先 list、字段以 describe 为准、写错看校验错误重试、优先增量 patch */
+  readonly reliableWriteRules: string;
+};
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;

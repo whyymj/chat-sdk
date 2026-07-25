@@ -280,6 +280,16 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     opts.onAudit?.(entry)
   }
 
+  // B:写操作成功后附「当前可操作 path 列表」提示,让 LLM 写完即知全貌(多组件批量场景减少 list 调用)
+  function pathsHint(): string {
+    const ps = [...registry.keys()]
+    if (!ps.length) return ''
+    // 控制长度:超过 8 个 path 或总长 > 240 字符时只报数量,避免提示过长
+    const joined = ps.join(', ')
+    if (ps.length > 8 || joined.length > 240) return `\n(当前可操作属性共 ${ps.length} 项,用 list_window_props 查看)`
+    return `\n(当前可操作 path: ${joined})`
+  }
+
   // 字段白名单读模式(默认 true):仅注册 path 自身/后代可读;false 时允许读祖先(整体读)
   const allowAncestorRead = (opts.whitelist ?? true) === false
   /** 读权限:allowRawRead 最高;否则注册 path 自身/后代可读;非白名单模式另允许祖先读 */
@@ -391,7 +401,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
         setByPath(window, path, res.data)
       }
       audit({ op: 'set', path, value: res.data, timestamp: Date.now() })
-      return `已设置 ${path} = ${safeStringify(res.data, 600)}`
+      return `已设置 ${path} = ${safeStringify(res.data, 600)}${pathsHint()}`
     },
     {
       name: 'set_window_prop',
@@ -470,7 +480,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       pushSnapshot(path, 'edit')
       applyPatchToLive(path, op, jp, parsed)
       audit({ op: 'edit', path, detail: `${op}${jp ? '@' + jp : ''}`, value: parsed, timestamp: Date.now() })
-      return `已 edit ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(getByPath(window, path), 600)}`
+      return `已 edit ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(getByPath(window, path), 600)}${pathsHint()}`
     },
     {
       name: 'edit_window_prop',
@@ -498,7 +508,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       pushSnapshot(path, 'delete')
       const ok = deleteByPath(window, path)
       audit({ op: 'delete', path, timestamp: Date.now() })
-      return ok ? `已删除 ${path}` : `${path} 不存在(无需删除)`
+      return ok ? `已删除 ${path}${pathsHint()}` : `${path} 不存在(无需删除)${pathsHint()}`
     },
     {
       name: 'delete_window_prop',
