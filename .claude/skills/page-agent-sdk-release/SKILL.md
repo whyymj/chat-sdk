@@ -7,6 +7,8 @@ description: Release a new version of the page-agent-sdk npm package and push to
 
 Execute the project's release checklist end-to-end. The authoritative, detailed checklist lives in `CLAUDE.md` → "发布流程 checklist"; read that section first, then follow the steps below.
 
+> ⚠️ **Do NOT auto-release**: after fixing a bug or adding a feature, do NOT automatically bump / push / publish. Stop and ask the user "是否发布?" first. Only run this checklist when the user explicitly says 发布 / publish / 推上去 / ship, etc.
+
 ## Two remotes (do NOT mix them up)
 
 | remote | URL | role |
