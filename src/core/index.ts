@@ -15,7 +15,7 @@ export { presets, systemPromptHelpers } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
-export { createAgent } from './harness/createAgent'
+export { createAgent, detectGarbledToolCall } from './harness/createAgent'
 export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware } from './harness/subagent'

@@ -43,6 +43,19 @@ export interface DebugLog {
   timestamp: number
   type: 'context' | 'llm_request' | 'llm_response' | 'tool_call' | 'tool_result' | 'error' | 'middleware'
   data: any
+}
+
+/** 检测模型把工具调用写成文本(伪 XML/标签)而非走标准 tool_calls 通道的异常格式。导出供测试 */
+export function detectGarbledToolCall(content: string): boolean {
+  if (!content) return false
+  // 仅匹配明确的"伪工具调用标签",避免误判正常文本
+  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+}
+
+export interface DebugLog {
+  timestamp: number
+  type: 'context' | 'llm_request' | 'llm_response' | 'tool_call' | 'tool_result' | 'error' | 'middleware'
+  data: any
   /** 日志来源(主 agent 省;子 agent 转发时为 '子:label',便于区分) */
   source?: string
 }
@@ -352,6 +365,8 @@ export function createAgent(options: CreateAgentOptions) {
 
     let rounds = 0
     let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
+    let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
+    const maxFormatRetries = 2
     try {
       while (rounds < maxToolRounds) {
         // 每轮开始检查 abort(用户停止)
@@ -385,6 +400,15 @@ export function createAgent(options: CreateAgentOptions) {
         }
 
         if (!response.toolCalls.length) {
+          // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / 伪 XML <invoke> 等)而非标准 tool_calls,
+          // 系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环
+          if (formatRetries < maxFormatRetries && detectGarbledToolCall(response.content)) {
+            formatRetries += 1
+            log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
+            currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签,如 <｜tool_calls｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
+            rounds += 1
+            continue
+          }
           // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
           // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
           if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {

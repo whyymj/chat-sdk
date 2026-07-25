@@ -419,6 +419,8 @@ export declare const fetchTools: any[];
 export declare function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
+/** 检测模型把工具调用写成文本(伪 XML/标签)而非标准 tool_calls 的异常格式;主循环据此回灌 feedback 自纠 */
+export declare function detectGarbledToolCall(content: string): boolean;
 export declare function createSubagentMiddleware(opts: any): any;
 export declare function createVerifyMiddleware(opts: VerifyMiddlewareOptions): any;
 export declare function createWriteBackCheck(opts?: WriteBackCheckOptions): VerifyCheck;
