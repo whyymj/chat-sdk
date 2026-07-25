@@ -269,6 +269,44 @@ createChatSdk({
 npm test   # 341 项断言，不依赖 LLM
 ```
 
+## 本地 npm 包测试
+
+验证 **npm 发布包**实际可用（区别于 `src/` 本地代码与 `dist/*.iife.js` 本地产物）：在独立目录建一个 vite 应用，从 npm registry 装 `page-agent-sdk` 跑起来。
+
+**场景**：发布新版后确认 `npm install page-agent-sdk` 装到的包能正常 import + mount + 调工具；或在干净环境复现集成方遇到的问题（排除本机 `node_modules` 缓存/`dist` 旧产物的干扰）。
+
+**最小步骤**：
+
+```bash
+mkdir npm-pkg-test && cd npm-pkg-test
+npm init -y
+npm install page-agent-sdk zod @langchain/openai @langchain/core
+npm install -D vite typescript
+```
+
+`index.html`（挂载点）+ `main.ts`：
+
+```ts
+import { createChatSdk, z } from 'page-agent-sdk'
+import 'page-agent-sdk/style.css'
+
+window.app = { title: '示例', theme: 'light' }
+
+createChatSdk({
+  container: '#root',
+  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  systemPrompt: '你是页面助手，用工具读写 window.app。',
+  windowProps: [
+    { path: 'app.title', description: '标题', schema: z.string() },
+    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
+  ],
+}).mount()
+```
+
+`npx vite` → 对话框输入「把 app.theme 改成 dark」→ AI 调 `set_window_prop` → `window.app.theme` 变为 `dark` 即验证通过。
+
+> 建议此测试目录加入 `.gitignore`（纯本地，不进仓库），避免把含真实 key 的 `.env` 提交到远程。
+
 ## 开发
 
 ```bash
