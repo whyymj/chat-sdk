@@ -190,8 +190,12 @@ const summary = computed(() => {
   return { mcp: info?.mcp?.servers?.length ?? 0, tools: info?.tools?.length ?? 0 }
 })
 function copyText(text: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).then(() => {
+    copiedMsg.value = true
+    setTimeout(() => (copiedMsg.value = false), 1500)
+  })
 }
+const copiedMsg = ref(false)
 </script>
 
 <template>
@@ -305,7 +309,7 @@ function copyText(text: string) {
           <div class="message-time">{{ formatTime(msg.timestamp) }}</div>
           <!-- 最后一条 assistant(非生成中)的操作:复制 / 重新生成 -->
           <div v-if="msg.role === 'assistant' && msg.content && !state.loading && idx === state.messages.length - 1" class="msg-actions">
-            <button class="msg-action-btn" title="复制" @click="copyText(msg.content)">📋 复制</button>
+            <button class="msg-action-btn" :title="copiedMsg ? '已复制' : '复制'" @click="copyText(msg.content)">{{ copiedMsg ? '✓ 已复制' : '📋 复制' }}</button>
             <button class="msg-action-btn" title="重新生成" @click="regenerate">🔄 重新生成</button>
           </div>
         </div>

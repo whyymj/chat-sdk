@@ -10,6 +10,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const mode = ref<'preview' | 'source'>('preview')
+const copied = ref(false)
 
 /** 判断是否为可预览的代码类型 */
 const isPreviewable = computed(() => {
@@ -77,7 +78,10 @@ watch(
 )
 
 function copyCode() {
-  navigator.clipboard.writeText(props.code)
+  navigator.clipboard.writeText(props.code).then(() => {
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  })
 }
 
 function openInNewTab() {
@@ -98,7 +102,7 @@ function openInNewTab() {
           <button :class="{ active: mode === 'source' }" @click="mode = 'source'">源码</button>
         </div>
         <div class="preview-actions">
-          <button class="icon-btn" title="复制代码" @click="copyCode">📋</button>
+          <button class="icon-btn" :title="copied ? '已复制' : '复制代码'" @click="copyCode">{{ copied ? '✓' : '📋' }}</button>
           <button class="icon-btn" title="新窗口打开" @click="openInNewTab">↗</button>
           <button class="icon-btn" title="关闭" @click="emit('close')">✕</button>
         </div>
