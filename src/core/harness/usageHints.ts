@@ -66,6 +66,9 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  3) 即将执行高风险不可逆操作(删除/覆盖/批量改动)前:调工具确认。')
         hints.push('用户在选项里选了哪个,就按那个方案继续;选「拒绝」则停止并询问如何调整。')
       }
+      if (hints.length) {
+        hints.unshift('调用工具务必用标准 function calling(工具调用)格式发起,不要在回复正文里输出伪 XML/标签(如 deepseek 的 tool_calls 标签、invoke、function_call、tool_call 等)或 JSON 文本——那不会被识别为工具调用,会被当普通文字,工具不执行。')
+      }
       return hints.length ? '## 能力使用提示\n' + hints.join('\n') : undefined
     },
   }
