@@ -368,7 +368,7 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
 ```bash
 npm test            # 364 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 48 integration assertions (node, built dist; createChatSdk top-level API: default systemPrompt(capability overview) / dynamic register / inspect(tools/middleware reflect caps) / subagents declared / hook/onEvent)
+npm run test:e2e    # 86 integration assertions (node, built dist; covers APIs/options/simple&complex scenes: default systemPrompt(capability overview) / dynamic register / inspect(tools/middleware/subagent/verify/mcp reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext sharing / storage backends / presets / checkpoint / options accepted / error scenes)
 ```
 
 ## Local npm package test

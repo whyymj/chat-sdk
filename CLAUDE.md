@@ -32,7 +32,7 @@ npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,364 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,48 项;验证 createChatSdk 顶层 API:默认 systemPrompt(含能力概述) / 动态注册 / inspect(tools/middleware 反映 caps) / subagents 预声明 / hook/onEvent 联动)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,86 项;覆盖各 API/配置项/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册 / inspect(tools/middleware/subagent/verify/mcp 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 共享 / storage 后端 / presets / checkpoint / 配置项可传 / 错误场景)
 ```
 
 ## 环境配置
@@ -154,7 +154,7 @@ npm test            # tsx 跑 src/__tests__/selftest.ts,364 项断言
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs,48 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs,86 项断言
 ```
 用构建产物 dist 验证 createChatSdk 顶层 API:**默认 systemPrompt / 自定义覆盖 / 动态注册 add·remove·list / inspect().windowProps 反映 / windowOps 关闭 no-op / sdk.hook 返回取消函数**。覆盖 selftest 触不到的顶层 `return` 对象作用域(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 `ReferenceError`,由 e2e 捕获)。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词后必跑**。
 
@@ -195,7 +195,7 @@ rg -o "createChatSdk|addWindowProp|systemPromptHelpers|reliableWriteRules" /tmp/
 | 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(364 全过) → `npm run test:e2e`(48 全过) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(364 全过) → `npm run test:e2e`(86 全过) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 ## SDK 用法
 ```ts
@@ -259,7 +259,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 364 全过 → `npm run test:e2e` 48 全过 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 364 全过 → `npm run test:e2e` 86 全过 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进
