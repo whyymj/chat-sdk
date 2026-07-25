@@ -1,0 +1,65 @@
+// systemPrompt 相关:默认 / 自定义覆盖 / 能力概述 / reliableWriteRules 拼接
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, systemPromptHelpers } from './_helpers.mjs'
+
+export async function run() {
+  setupEnv()
+  const ctx = createAssert(); const { assert } = ctx
+
+  console.log('[e2e:systemprompt] 默认 systemPrompt + inspect.systemPrompt')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+    })
+    await sdk.mount()
+    const info = sdk.inspect()
+    assert(typeof info.systemPrompt === 'string' && info.systemPrompt.length > 0, 'inspect().systemPrompt 为非空字符串')
+    assert(/reliableWriteRules|改前先|增量 patch|可靠写入/.test(info.systemPrompt), '默认 systemPrompt 含 reliableWriteRules 关键词')
+    assert(/页面操作助手/.test(info.systemPrompt), '默认 systemPrompt 含「页面操作助手」身份')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] 自定义 systemPrompt 完全覆盖默认')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-custom', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      systemPrompt: '你是定制助手。',
+      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+    })
+    await sdk.mount()
+    assert(sdk.inspect().systemPrompt === '你是定制助手。', '自定义 systemPrompt 完全覆盖默认')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] 默认 systemPrompt 含能力概述(范围控制/schema 校验/快照/增量 patch)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-default-detail', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(/范围控制|注册表/.test(sp), '默认 systemPrompt 含「范围控制/注册表」能力说明')
+    assert(/schema 校验|校验/.test(sp), '默认 systemPrompt 含「schema 校验」能力说明')
+    assert(/快照|回退/.test(sp), '默认 systemPrompt 含「快照/回退」能力说明')
+    assert(/增量 patch|增量/.test(sp), '默认 systemPrompt 含「增量 patch」能力说明')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] 自定义 systemPrompt + systemPromptHelpers.reliableWriteRules 拼接(常见用法)')
+  {
+    const custom = '你是商品页编辑助手。'
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-custom-merge', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      systemPrompt: `${custom}\n${systemPromptHelpers.reliableWriteRules}`,
+      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(sp.startsWith('你是商品页编辑助手。'), '自定义 systemPrompt 保留(拼在前)')
+    assert(/reliableWriteRules|改前先|增量 patch/.test(sp), '拼接后含 reliableWriteRules(用户自行拼入)')
+    sdk.unmount()
+  }
+
+  return { pass: ctx.pass, fail: ctx.fail }
+}

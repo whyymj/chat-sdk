@@ -154,9 +154,17 @@ npm test            # tsx 跑 src/__tests__/selftest.ts,364 项断言
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs,120 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),120 项断言
 ```
-用构建产物 dist 验证 createChatSdk 顶层 API:**默认 systemPrompt / 自定义覆盖 / 动态注册 add·remove·list / inspect().windowProps 反映 / windowOps 关闭 no-op / sdk.hook 返回取消函数**。覆盖 selftest 触不到的顶层 `return` 对象作用域(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 `ReferenceError`,由 e2e 捕获)。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词后必跑**。
+**按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
+- `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + windowOps 关闭 no-op)
+- `inspect.mjs`(tools/middleware/id/model/subagent/verify/mcp/初始状态 反映配置)、`subagents.mjs`(预声明 + 详细配置)
+- `events.mjs`(hook/onEvent/多监听器)、`storage.mjs`(switchSession/后端/对象配置/shareContext 开关)
+- `exports.mjs`(39+ 导出 + 工具函数可用 + source=builtin)、`window-props.mjs`(8 种 schema + 嵌套/空/多/不传)
+- `presets.mjs`(三预设)、`boundary.mjs`(checkpoint 空操作/messages 初始/id 不传/mount 边界)、`custom-injection.mjs`(自定义 tools/middleware/skills/memory/配置项/llm)
+- 共享 stub/断言在 `tests/e2e/_helpers.mjs`(setupEnv/createAssert/FAKE_LLM/MIN_CAPS/makeStore)
+
+覆盖 selftest 触不到的顶层 `return` 对象作用域(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 `ReferenceError`,由 e2e 捕获)。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。新增功能时按「新增功能测试同步约定」在对应模块文件追加用例,或新建模块并在 runner 注册。
 
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 ```bash
