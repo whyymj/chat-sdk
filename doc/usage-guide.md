@@ -456,13 +456,12 @@ createChatSdk({
 //      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → edit_window_prop 落地
 ```
 
-> 路由由主 agent 自判(usageHints 提示词引导);若误判率高,可升级为路由中间件(`beforeModel` 跑轻量 router 判模式,`augmentPrompt` 注入模式指令)。`planner-demo`(`/planner.html`)演示完整闭环。
+> 路由由主 agent 自判(usageHints 提示词引导);若误判率高,可升级为路由中间件(`beforeModel` 跑轻量 router 判模式,`augmentPrompt` 注入模式指令)。`planner-demo`(`/examples/planner-demo/`)演示完整闭环。
 
 > 子 agent 边界:默认**只读**(不改页面)、**过程隔离**(只回结论)、**递归物理切断**(maxDepth)、**signal 继承**(主停则子停)。
 
 **示例**:`npm run dev` 后访问
-- `/subagent.html` —— 方案并行调研(spawn_agents 基础)
-- `/custom.html` —— 多角色自定义评审(role + allowedTools,安全/性能/UX 三视角)
+- `/examples/subagent-demo/` —— 方案并行调研(spawn_agents 基础)
 
 ### 6.10 Verify 自检(Agent 返回前验证 + 自纠)
 
@@ -542,8 +541,8 @@ createChatSdk({
 > - 主动征询的「何时该调」由 `usageHints` 中间件自动注入默认提示词,无需自己写 prompt。
 
 > **与 verify 区别**:approval = 执行**前**人工把关(防误改);verify = 返回**后**自动自纠(防错答)。二者可叠加。
-> - `nested-demo`(`/nested.html`):综合演示嵌套树编辑 + 写操作被动确认 + checkpoint。
-> - `human-confirm-demo`(`/human-confirm.html`):聚焦 AI 主动征询——开放性需求 → 弹可点选方案按钮 → 用户选定 → 落地写操作再弹一次被动确认,两层 human-in-the-loop 一次看清。
+> - `nested-demo`(`/examples/nested-demo/`):综合演示嵌套树编辑 + 写操作被动确认 + checkpoint。
+> - `human-confirm-demo`(`/examples/human-confirm-demo/`):聚焦 AI 主动征询——开放性需求 → 弹可点选方案按钮 → 用户选定 → 落地写操作再弹一次被动确认,两层 human-in-the-loop 一次看清。
 
 ### 6.12 Checkpoint 会话级回滚(回到上次正常时)
 

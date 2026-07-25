@@ -56,7 +56,8 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── composables/                # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 ├── presets.ts / types/index.ts / index.ts
-examples/                       # 各 demo(page-demo/subagent-demo/mcp-demo 等)
+examples/                       # 各 demo(page-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo)
+                                # 每个 demo 目录自带 index.html(dev 入口)+ main.ts;根目录仅 index.html(主入口→page-demo)
 doc/                            # architecture.md + README.md(索引)
 demo/plain.html                 # 框架无关集成示例
 ```

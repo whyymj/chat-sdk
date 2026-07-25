@@ -260,11 +260,11 @@ createChatSdk({
 | 示例 | 入口 | 演示 |
 |---|---|---|
 | page-demo | `/` | 自举 demo：左 JSON 响应式页面 + 右对话框 |
-| nested-demo | `/nested.html` | 嵌套区块树 + 人工确认 + checkpoint |
-| human-confirm-demo | `/human-confirm.html` | AI 主动征询（多方案点选）+ 写前确认 |
-| planner-demo | `/planner.html` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
-| subagent-demo | `/subagent.html` | 子 agent 并行编排 |
-| mcp-demo | `/mcp.html` | MCP 远程工具（需 `npm run mcp:mock`） |
+| nested-demo | `/examples/nested-demo/` | 嵌套区块树 + 人工确认 + checkpoint |
+| human-confirm-demo | `/examples/human-confirm-demo/` | AI 主动征询（多方案点选）+ 写前确认 |
+| planner-demo | `/examples/planner-demo/` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
+| subagent-demo | `/examples/subagent-demo/` | 子 agent 并行编排 |
+| mcp-demo | `/examples/mcp-demo/` | MCP 远程工具（需 `npm run mcp:mock`） |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 

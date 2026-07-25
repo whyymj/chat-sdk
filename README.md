@@ -315,11 +315,11 @@ After `npm run dev`, visit the corresponding page:
 | Example | Entry | Demonstrates |
 |---|---|---|
 | page-demo | `/` | Self-bootstrapping demo: left JSON reactive page + right chat |
-| nested-demo | `/nested.html` | Nested block tree + human confirm + checkpoint |
-| human-confirm-demo | `/human-confirm.html` | AI proactive inquiry (multi-plan pick) + pre-write confirm |
-| planner-demo | `/planner.html` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
-| subagent-demo | `/subagent.html` | Subagent parallel orchestration |
-| mcp-demo | `/mcp.html` | MCP remote tools (needs `npm run mcp:mock`) |
+| nested-demo | `/examples/nested-demo/` | Nested block tree + human confirm + checkpoint |
+| human-confirm-demo | `/examples/human-confirm-demo/` | AI proactive inquiry (multi-plan pick) + pre-write confirm |
+| planner-demo | `/examples/planner-demo/` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
+| subagent-demo | `/examples/subagent-demo/` | Subagent parallel orchestration |
+| mcp-demo | `/examples/mcp-demo/` | MCP remote tools (needs `npm run mcp:mock`) |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
