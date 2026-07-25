@@ -8,7 +8,7 @@ import { run as runSubagents } from './e2e/subagents.mjs'
 import { run as runEvents } from './e2e/events.mjs'
 import { run as runStorage } from './e2e/storage.mjs'
 import { run as runExports } from './e2e/exports.mjs'
-import { run as runWindowProps } from './e2e/window-props.mjs'
+import { run as runDataSlots } from './e2e/data-slots.mjs'
 import { run as runPresets } from './e2e/presets.mjs'
 import { run as runBoundary } from './e2e/boundary.mjs'
 import { run as runCustomInjection } from './e2e/custom-injection.mjs'
@@ -22,7 +22,7 @@ const modules = [
   ['events', runEvents],
   ['storage', runStorage],
   ['exports', runExports],
-  ['window-props', runWindowProps],
+  ['data-slots', runDataSlots],
   ['presets', runPresets],
   ['boundary', runBoundary],
   ['custom-injection', runCustomInjection],

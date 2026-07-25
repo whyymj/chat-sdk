@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -65,14 +65,14 @@ export async function run(ctx: TestCtx): Promise<void> {
         ],
       },
     }
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'page.components', description: '组件树(递归 children)', schema: z.array(TreeNode) },
     ])
     const t = byName(tools)
     const w = (globalThis as any).window
 
     // 递归查所有 card(任意深度):$..*[?(@.type=="card")]
-    let r = await invoke(t['query_window_prop'], { path: 'page.components', expr: '$..*[?(@.type=="card")]' })
+    let r = await invoke(t['query_data_slot'], { path: 'page.components', expr: '$..*[?(@.type=="card")]' })
     let parsed = JSON.parse(r)
     assert(parsed.matched === 3, '树查询: $..*[?(@.type=="card")] 递归找全部 3 个 card(任意深度)')
     // 父子同现不误判 [Circular]
@@ -80,15 +80,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(parsed.results.some((x: any) => x.value.id === 4), '树查询: 最深 card#4 值完整返回(id=4)')
 
     // 增量改深层节点文本(jsonPath 定位)
-    r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'set', jsonPath: '0.children.0.children.0.text', value: '"A1-改"' })
+    r = await invoke(t['edit_data_slot'], { path: 'page.components', op: 'set', jsonPath: '0.children.0.children.0.text', value: '"A1-改"' })
     assert(/已 edit/.test(r) && w.page.components[0].children[0].children[0].text === 'A1-改', 'edit: jsonPath 深层定位改子节点文本')
 
     // 递归 schema 校验:append 缺 id 的非法节点被拒
-    r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'append', jsonPath: '0.children', value: '{"type":"bad"}' })
+    r = await invoke(t['edit_data_slot'], { path: 'page.components', op: 'append', jsonPath: '0.children', value: '{"type":"bad"}' })
     assert(/SCHEMA_INVALID/.test(r), 'edit: 递归 schema 拒绝非法节点(缺 id),校验穿透到 children')
 
     // passthrough:节点可有未声明字段(extra/style)
-    r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'merge', jsonPath: '1', value: '{"extra":"ok","style":{"color":"red"}}' })
+    r = await invoke(t['edit_data_slot'], { path: 'page.components', op: 'merge', jsonPath: '1', value: '{"extra":"ok","style":{"color":"red"}}' })
     assert(w.page.components[1].extra === 'ok' && w.page.components[1].style?.color === 'red', 'edit: passthrough 保留未声明的额外字段')
   }
 }

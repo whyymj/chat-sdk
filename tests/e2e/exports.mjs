@@ -26,7 +26,7 @@ export async function run() {
       'createCheckpointManager', 'createCheckpointMiddleware',
       'createUsageHintsMiddleware', 'createVfs',
       'createSessionStore', 'createMemoryBackend', 'createWebStorageBackend', 'isQuotaError',
-      'createWindowOps', 'fetchDocTools', 'fetchTools', 'defineWindowToolset', 'selectBuiltinTools',
+      'createDataSlotOps', 'fetchDocTools', 'fetchTools', 'defineDataSlotToolset', 'selectBuiltinTools',
       'connectMcp', 'extractText',
       'resolveContextOptions', 'resolveModelCaps', 'estimateTokens', 'offloadThresholdChars', 'offloadPassThroughChars',
       'jpEval', 'searchJson', 'runSandboxedScript',
@@ -61,15 +61,15 @@ export async function run() {
     } catch (e) { assert(false, 'searchJson 执行失败:' + e.message) }
   }
 
-  console.log('[e2e:exports] windowOps 工具 source=builtin / fetch_document source=builtin')
+  console.log('[e2e:exports] dataSlotOps 工具 source=builtin / fetch_document source=builtin')
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-source', storage: 'memory', llm: FAKE_LLM,
       capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
     })
     await sdk.mount()
-    const setTool = sdk.inspect().tools.find((t) => t.name === 'set_window_prop')
-    assert(setTool?.source === 'builtin', 'set_window_prop source=builtin')
+    const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data_slot')
+    assert(setTool?.source === 'builtin', 'set_data_slot source=builtin')
     const fetchTool = sdk.inspect().tools.find((t) => t.name === 'fetch_document')
     assert(fetchTool?.source === 'builtin', 'fetch_document source=builtin')
     sdk.unmount()

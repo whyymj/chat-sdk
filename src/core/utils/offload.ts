@@ -1,7 +1,7 @@
 /**
  * 大结果外存 —— 工具结果超阈值时转存 vfs,只留预览 + vfs_read 引用
  *
- * 落实 OpenSpec「Context 管理 + 大结果外存」:原 get_window_prop 的 safeStringify 硬截断
+ * 落实 OpenSpec「Context 管理 + 大结果外存」:原 get_data_slot 的 safeStringify 硬截断
  * 会丢失深层数据,改为外存到 vfs 可按需回读(完整 vfs_read / 局部 vfs_grep)。
  * 由 createAgent 的 coreExecCall 在工具结果唯一收口处调用,所有工具统一受益。
  *

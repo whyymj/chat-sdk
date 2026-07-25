@@ -1,9 +1,9 @@
 /**
  * 会话级 Checkpoint —— 整体回滚到"上次正常时"(human-in-the-loop 的回退侧)
  *
- * 与 windowOps 的 per-path 快照互补:
+ * 与 dataSlotOps 的 per-path 快照互补:
  *  - per-path 快照:精细,单属性回退,自动随 set/edit/delete 入栈
- *  - 会话 checkpoint:整体(对话历史 + 全部注册 window 属性 + vfs + todos),回滚到某轮起点
+ *  - 会话 checkpoint:整体(对话历史 + 全部注册 数据槽 + vfs + todos),回滚到某轮起点
  *
  * 触发:默认每轮 agent 行动前(beforeModel 首次)自动存一个 checkpoint = 上一正常态 + 本轮 user 消息。
  *  回滚后保留 user 消息、撤销 agent 本轮改动,可重试。LLM 也可调 restore_last_checkpoint 自纠。
@@ -41,8 +41,8 @@ export interface CheckpointManager {
 }
 
 export interface CheckpointDeps {
-  /** 注册的 window 属性 path 列表(整体快照这些根) */
-  windowPaths: string[]
+  /** 注册的 数据槽 path 列表(整体快照这些根) */
+  slotPaths: string[]
   /** vfs 工作区(回滚时清空重填) */
   vfsStore: VfsStore
   /** todos 中间件(回滚时 reset) */
@@ -68,7 +68,7 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
 
-// ---- 就地 path 读写(与 windowOps 同思路,保留 reactive 容器引用) ----
+// ---- 就地 path 读写(与 dataSlotOps 同思路,保留 reactive 容器引用) ----
 function getByPath(obj: unknown, path: string): unknown {
   const parts = path.split('.')
   let cur: any = obj
@@ -128,7 +128,7 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
     save(label) {
       const messages = trimTrailingEmptyAssistant(deps.messages)
       const windowVals: Record<string, unknown> = {}
-      for (const p of deps.windowPaths) windowVals[p] = clone(getByPath(window, p))
+      for (const p of deps.slotPaths) windowVals[p] = clone(getByPath(window, p))
       const cp: Checkpoint = {
         id: nextId++,
         label,
@@ -157,7 +157,7 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
       if (!cp) return false
       // 1. 对话历史:splice 替换内容(保留同一响应式数组引用,UI 自动更新)
       deps.messages.splice(0, deps.messages.length, ...clone(cp.messages))
-      // 2. window 注册属性:就地还原(保留 reactive 容器引用)
+      // 2. 数据槽注册项:就地还原(保留 reactive 容器引用)
       for (const [p, v] of Object.entries(cp.windowVals)) restorePath(p, clone(v))
       // 3. vfs:清空重填
       const files = deps.vfsStore.files

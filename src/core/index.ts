@@ -2,9 +2,9 @@
  * page-agent-sdk 通用 SDK 入口(框架无关)
  *
  * 只导出通用核心 —— createChatSdk(命令式入口)/ createAgent(harness)/ 中间件契约类型 /
- * window 操作类型 / vfs / 通用消息类型。不含任何业务定制或旧链路,可整体迁移到任意项目复用。
+ * 数据槽操作类型 / vfs / 通用消息类型。不含任何业务定制或旧链路,可整体迁移到任意项目复用。
  */
-// zod:随 SDK 暴露(IIFE 全量模式下消费者从 ChatSdk.z 取用,构造 windowProps schema)
+// zod:随 SDK 暴露(IIFE 全量模式下消费者从 ChatSdk.z 取用,构造 dataSlots schema)
 export { z } from 'zod'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
@@ -29,16 +29,16 @@ export { createCheckpointManager, createCheckpointMiddleware } from './harness/c
 export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harness/checkpoint'
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
-// window 操作类型(属性注册表 + 增量编辑 + 快照)
-export type { WindowPropSpec, WindowOpsOptions, WindowOpsController, WindowAuditEntry, WindowSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/windowOps'
-// 内置工具集(可独立导出 + 手动注入,配合 capabilities.windowOps/fetch 关闭默认自动装配)
-export { createWindowOps } from './tools/windowOps'
-export { jpEval, searchJson, runSandboxedScript } from './tools/windowQuery'
-export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/windowQuery'
+// 数据槽操作类型(属性注册表 + 增量编辑 + 快照)
+export type { DataSlotSpec, DataSlotOpsOptions, DataSlotOpsController, DataSlotAuditEntry, DataSlotSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/dataSlotOps'
+// 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataSlotOps/fetch 关闭默认自动装配)
+export { createDataSlotOps } from './tools/dataSlotOps'
+export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
+export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
 export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'
 export type { ToolErrorInput } from './tools/toolError'
 export { fetchDocTools } from './tools/fetchDoc'
-export { fetchTools, defineWindowToolset, selectBuiltinTools } from './toolsets'
+export { fetchTools, defineDataSlotToolset, selectBuiltinTools } from './toolsets'
 export { createUsageHintsMiddleware } from './harness/usageHints'
 export type { PermissionRule, PermissionOp } from './harness/permissions'
 // 虚拟工作区
@@ -48,7 +48,7 @@ export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuo
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, ToolStep } from './types'
-export type { AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo } from './types'
+export type { AgentInfo, ToolInfo, SkillInfo, DataSlotInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from './utils/modelCaps'
 export type { ModelCaps } from './utils/modelCaps'

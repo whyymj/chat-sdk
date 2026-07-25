@@ -51,7 +51,7 @@ export function zodError(path: string, issues: unknown[]): string {
     code: 'SCHEMA_INVALID',
     path,
     message: `值不符合 "${path}" 的 schema(${issues.length} 处问题)`,
-    hint: `按 describe_window_prop("${path}") 查看格式,修正后重试;改大对象优先用 edit_window_prop 增量 patch(只发改动部分)`,
+    hint: `按 describe_data_slot("${path}") 查看格式,修正后重试;改大对象优先用 edit_data_slot 增量 patch(只发改动部分)`,
     details: formatZodIssues(issues),
   })
 }

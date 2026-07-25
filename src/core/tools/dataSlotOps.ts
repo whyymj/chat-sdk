@@ -1,27 +1,27 @@
 /**
- * window 操作工具 —— 属性注册表 + schema 校验 + 增量编辑 + 快照回退(无人工审批)
+ * 数据槽操作工具 —— 属性注册表 + schema 校验 + 增量编辑 + 快照回退(无人工审批)
  *
  * 设计(见 specs/page-agent-core.md):
  *  - 属性注册表:集成方声明 { path, description, schema };所有读写只经工具 → 范围(仅注册表内)+ 校验(按 schema)
- *  - 属性说明文档:list_window_props / describe_window_prop
- *  - 增量编辑 edit_window_prop:按 op(set/remove/merge/append)+ jsonPath 改局部,避免 LLM 重传整个大 JSON
- *  - 快照回退:set/edit/delete 前自动存快照;snapshot/list/restore_window_snapshot 支持手动检查点与快速回退
+ *  - 属性说明文档:list_data_slots / describe_data_slot
+ *  - 增量编辑 edit_data_slot:按 op(set/remove/merge/append)+ jsonPath 改局部,避免 LLM 重传整个大 JSON
+ *  - 快照回退:set/edit/delete 前自动存快照;snapshot/list/restore_data_snapshot 支持手动检查点与快速回退
  *  - 就地写回:edit/restore 改子属性,绝不替换注册属性根引用 → 兼容 Vue reactive(window.page = reactive())
  *  - 零桥接:工具函数体 window = 宿主页面主 window(无 iframe/shadow 隔离)
  *  - 审计:每次 set/edit/delete/restore 记日志(可选 onAudit 回调)
  *
  * 注:大结果的外存/截断不在本文件,统一由 createAgent 的 coreExecTool 经 offloadLargeResult 处理;
- *     get_window_prop 返回完整安全序列化(不截断),交由 offload 决定外存 vfs 或截断。
+ *     get_data_slot 返回完整安全序列化(不截断),交由 offload 决定外存 vfs 或截断。
  */
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
-import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './windowQuery'
+import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './dataSlotQuery'
 import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 
 /** 可操作属性注册项 */
-export interface WindowPropSpec {
+export interface DataSlotSpec {
   /** window 上的路径,支持点号嵌套,如 'app.theme' 或 'app.user.name' */
   path: string
   /** 属性说明,供 Agent 理解用途与格式 */
@@ -30,7 +30,7 @@ export interface WindowPropSpec {
   schema: ZodType
 }
 
-export interface WindowAuditEntry {
+export interface DataSlotAuditEntry {
   op: 'set' | 'edit' | 'delete' | 'restore' | 'snapshot'
   path: string
   value?: unknown
@@ -61,16 +61,16 @@ export type ConflictResolution =
   | { action: 'overwrite' }
   | { action: 'restore' }
 
-export interface WindowOpsOptions {
+export interface DataSlotOpsOptions {
   /** 审计回调(如写入 DebugDrawer) */
-  onAudit?: (entry: WindowAuditEntry) => void
+  onAudit?: (entry: DataSlotAuditEntry) => void
   /** 是否开放只读探测任意路径(默认 false,只能读注册表内) */
   allowRawRead?: boolean
   /** 每个注册属性最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
   /**
    * 字段白名单读模式(默认 true):仅允许读「注册 path 自身 / 其后代」,禁止读未注册的祖先,
-   * 防止 LLM 经 get_window_prop('page') 把整个大 JSON 拉进上下文。
+   * 防止 LLM 经 get_data_slot('page') 把整个大 JSON 拉进上下文。
    * 设 false 回退原行为(允许读注册 path 的祖先,即整体读)。
    * 集成方注册「可操作子路径」(如 page.theme.color / page.components)而非顶层时,默认即「LLM 只见声明字段」。
    */
@@ -87,7 +87,7 @@ export interface WindowOpsOptions {
 }
 
 /** 快照条目(per-path 栈) */
-export interface WindowSnapshotEntry {
+export interface DataSlotSnapshotEntry {
   id: number
   ts: number
   op: 'set' | 'edit' | 'delete' | 'manual' | 'restore'
@@ -219,7 +219,7 @@ function hashValue(value: unknown): string {
 /** 在纯副本上应用 patch(用于整体 schema 校验)。返回 null=成功,字符串=错误信息 */
 function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unknown): string | null {
   if (op === 'set') {
-    if (!jsonPath) return 'set 操作需要 jsonPath(整体替换请用 set_window_prop)'
+    if (!jsonPath) return 'set 操作需要 jsonPath(整体替换请用 set_data_slot)'
     setByPath(clone, jsonPath, value)
     return null
   }
@@ -289,30 +289,30 @@ function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: 
 
 // ============ 工具集构建 ============
 
-/** window 属性注册表控制器(运行时动态增删,供 createChatSdk 暴露 sdk.addWindowProp 等) */
-export interface WindowOpsController {
+/** 数据槽注册表控制器(运行时动态增删,供 createChatSdk 暴露 sdk.addDataSlot 等) */
+export interface DataSlotOpsController {
   /** 新增/覆盖一个属性注册项(运行时懒加载组件场景);覆盖时旧快照栈保留 */
-  add(spec: WindowPropSpec): void
+  add(spec: DataSlotSpec): void
   /** 移除一个属性注册项;返回是否确实存在并移除。快照栈一并清理 */
   remove(path: string): boolean
   /** 列出当前所有注册项(反映动态增删后的最新状态,供 inspect() 用) */
-  list(): WindowPropSpec[]
+  list(): DataSlotSpec[]
   /** 是否已注册某 path */
   has(path: string): boolean
 }
 
-/** 基于属性注册表构建 window 操作工具集 */
-export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions = {}): StructuredToolInterface[] {
+/** 基于属性注册表构建 数据槽操作工具集 */
+export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOptions = {}): StructuredToolInterface[] {
   // 注册表:path → spec
-  const registry = new Map<string, WindowPropSpec>()
+  const registry = new Map<string, DataSlotSpec>()
   for (const p of props) registry.set(p.path, p)
 
   // 快照栈:path → 条目数组(会话级,FIFO 限长)
-  const snapshots = new Map<string, WindowSnapshotEntry[]>()
+  const snapshots = new Map<string, DataSlotSnapshotEntry[]>()
   const maxSnapshots = opts.maxSnapshots ?? 20
 
   // 运行时动态注册控制器(操作同一 registry/snapshots 闭包,工具运行时即时生效,无需重 bind)
-  const controller: WindowOpsController = {
+  const controller: DataSlotOpsController = {
     add: (spec) => { registry.set(spec.path, spec) },
     remove: (path) => {
       const had = registry.delete(path)
@@ -323,7 +323,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     has: (path) => registry.has(path),
   }
 
-  const audit = (entry: WindowAuditEntry) => {
+  const audit = (entry: DataSlotAuditEntry) => {
     opts.onAudit?.(entry)
   }
 
@@ -333,7 +333,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     if (!ps.length) return ''
     // 控制长度:超过 8 个 path 或总长 > 240 字符时只报数量,避免提示过长
     const joined = ps.join(', ')
-    if (ps.length > 8 || joined.length > 240) return `\n(当前可操作属性共 ${ps.length} 项,用 list_window_props 查看)`
+    if (ps.length > 8 || joined.length > 240) return `\n(当前可操作属性共 ${ps.length} 项,用 list_data_slots 查看)`
     return `\n(当前可操作 path: ${joined})`
   }
 
@@ -348,7 +348,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   }
 
   /** 写操作前自动存快照(修改前的当前值),返回快照 id */
-  function pushSnapshot(path: string, op: WindowSnapshotEntry['op'], label?: string): number {
+  function pushSnapshot(path: string, op: DataSlotSnapshotEntry['op'], label?: string): number {
     const before = deepClone(getByPath(window, path))
     const stack = snapshots.get(path) || []
     const id = stack.length ? stack[stack.length - 1].id + 1 : 1
@@ -383,7 +383,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
         code: 'VERSION_CONFLICT',
         path,
         message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash}。属性 "${path}" 在你 get 之后已被修改(外部代码/其他 agent/用户手动改)。`,
-        hint: `重新 get_window_prop("${path}") 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(cur, 400)}`,
+        hint: `重新 get_data_slot("${path}") 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(cur, 400)}`,
       })
     }
     const resolution = await opts.onConflict({
@@ -396,7 +396,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       snapshotId: 0,
     })
     if (resolution.action === 'keep_external') {
-      return `已保留外部修改(未写入)。当前值:${safeStringify(cur, 400)} (hash=${curHash})。请重新 get_window_prop("${path}") 拿最新值与 hash 再改。`
+      return `已保留外部修改(未写入)。当前值:${safeStringify(cur, 400)} (hash=${curHash})。请重新 get_data_slot("${path}") 拿最新值与 hash 再改。`
     }
     if (resolution.action === 'restore') {
       // 回退到快照栈顶(最近一次写前快照 = agent 之前操作的检查点);无历史快照则无法回退
@@ -413,20 +413,20 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     return null
   }
 
-  const listWindowProps = tool(
+  const listDataSlots = tool(
     async () => {
-      if (!registry.size) return '当前没有已注册的可操作 window 属性。'
+      if (!registry.size) return '当前没有已注册的可操作 数据槽。'
       const lines = [...registry.values()].map((p) => `- ${p.path}: ${p.description}`)
-      return `可操作的 window 属性(共 ${registry.size} 项):\n${lines.join('\n')}`
+      return `可操作的 数据槽(共 ${registry.size} 项):\n${lines.join('\n')}`
     },
     {
-      name: 'list_window_props',
-      description: '列出所有已注册、可操作的 window 属性(path + 说明)。操作 window 前先调用此工具了解可用范围。',
+      name: 'list_data_slots',
+      description: '列出所有已注册、可操作的 数据槽(path + 说明)。操作数据槽前先调用此工具了解可用范围。',
       schema: z.object({}),
     },
   )
 
-  const describeWindowProp = tool(
+  const describeDataSlot = tool(
     async ({ path }) => {
       const p = registry.get(path)
       if (!p) {
@@ -434,23 +434,23 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       return [
         `路径: ${p.path}`,
         `说明: ${p.description}`,
-        `格式: 写入值需为 JSON,且通过注册时声明的 schema 校验(校验失败时 set_window_prop/edit_window_prop 会返回结构化错误,含具体字段与期望类型)。`,
+        `格式: 写入值需为 JSON,且通过注册时声明的 schema 校验(校验失败时 set_data_slot/edit_data_slot 会返回结构化错误,含具体字段与期望类型)。`,
       ].join('\n')
     },
     {
-      name: 'describe_window_prop',
-      description: '获取单个已注册 window 属性的说明与格式要求。',
+      name: 'describe_data_slot',
+      description: '获取单个已注册 数据槽的说明与格式要求。',
       schema: z.object({ path: z.string().describe('属性路径,如 app.theme') }),
     },
   )
 
-  const getWindowProp = tool(
+  const getDataSlot = tool(
     async ({ path }) => {
       // 字段白名单读模式(默认):仅注册 path 自身/后代可读;非白名单模式另允许祖先读(整体读)
       if (!canRead(path)) {
@@ -458,7 +458,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 不可读取(未注册,且非已注册路径的后代)`,
-          hint: '用 list_window_props 查看可操作字段;字段白名单读模式下未注册的祖先(整体大 JSON)不暴露,需读其声明子路径',
+          hint: '用 list_data_slots 查看可操作字段;字段白名单读模式下未注册的祖先(整体大 JSON)不暴露,需读其声明子路径',
         })
       }
       const val = getByPath(window, path)
@@ -466,14 +466,14 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return `${path} = ${safeStringify(val)} (hash=${hashValue(val)})`
     },
     {
-      name: 'get_window_prop',
+      name: 'get_data_slot',
       description:
-        '读取一个已注册 window 属性的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改属性前先 get 拿 hash,写入时(set/edit/delete)传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"(外部代码/其他 agent/用户手动改过会 CONFLICT,需重新 get 再改)。字段白名单读模式(默认)下仅可读注册 path 自身/后代;未注册祖先(整体大 JSON)不可读,避免大 JSON 拉进上下文。',
+        '读取一个已注册 数据槽的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改属性前先 get 拿 hash,写入时(set/edit/delete)传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"(外部代码/其他 agent/用户手动改过会 CONFLICT,需重新 get 再改)。字段白名单读模式(默认)下仅可读注册 path 自身/后代;未注册祖先(整体大 JSON)不可读,避免大 JSON 拉进上下文。',
       schema: z.object({ path: z.string().describe('已注册的属性路径或其后代') }),
     },
   )
 
-  const setWindowProp = tool(
+  const setDataSlot = tool(
     async ({ path, value, expectedHash }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -481,7 +481,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未在注册表中声明,不可写`,
-          hint: '用 list_window_props 查看可用属性;集成方需先在 windowProps 声明该 path',
+          hint: '用 list_data_slots 查看可用属性;集成方需先在 dataSlots 声明该 path',
         })
       }
       // 乐观锁冲突检测 + 人工介入(若 onConflict 存在则挂起等用户决定;overwrite 时 fall through 继续写入)
@@ -509,18 +509,18 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return `已设置 ${path} = ${safeStringify(res.data, 600)} (新 hash=${hashValue(getByPath(window, path))})${pathsHint()}`
     },
     {
-      name: 'set_window_prop',
+      name: 'set_data_slot',
       description:
-        '设置一个已注册 window 属性的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 get_window_prop 返回的 hash,传入则启用乐观锁——若属性已被改过(外部代码/其他 agent/用户手动)则返回 VERSION_CONFLICT 不写入,需重新 get 再改,防"基于过期值覆盖"。大对象/数组强烈建议改用 edit_window_prop 增量 patch。',
+        '设置一个已注册 数据槽的值(整体替换)。仅能操作注册表内声明的属性;value 为 JSON 字符串,需通过该属性声明的 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 get_data_slot 返回的 hash,传入则启用乐观锁——若属性已被改过(外部代码/其他 agent/用户手动)则返回 VERSION_CONFLICT 不写入,需重新 get 再改,防"基于过期值覆盖"。大对象/数组强烈建议改用 edit_data_slot 增量 patch。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
         value: z.string().describe('JSON 字符串形式的值,需符合该属性 schema'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
       }),
     },
   )
 
-  const editWindowProp = tool(
+  const editDataSlot = tool(
     async ({ path, op, jsonPath, value, expectedHash }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -528,7 +528,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未在注册表中声明,不可写`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const jp = jsonPath || ''
@@ -550,7 +550,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_OBJECT',
           path,
           message: `edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}`,
-          hint: '叶子属性(原始类型)请用 set_window_prop 整体设置',
+          hint: '叶子属性(原始类型)请用 set_data_slot 整体设置',
         })
       }
       // value 解析(set/merge/append 必填)
@@ -592,27 +592,27 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return `已 edit ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(getByPath(window, path), 600)} (新 hash=${hashValue(getByPath(window, path))})${pathsHint()}`
     },
     {
-      name: 'edit_window_prop',
+      name: 'edit_data_slot',
       description:
-        '增量编辑一个已注册的「对象/数组」window 属性,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 get_window_prop 返回的 hash,传入启用乐观锁防"基于过期值覆盖"。',
+        '增量编辑一个已注册的「对象/数组」数据槽,只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对属性根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 get_data_slot 返回的 hash,传入启用乐观锁防"基于过期值覆盖"。',
       schema: z.object({
         path: z.string().describe('已注册的对象/数组属性路径'),
         op: z.enum(['set', 'remove', 'merge', 'append']),
         jsonPath: z.string().optional().describe('相对属性根的点号路径(数组索引用数字,如 components.0.text)。set/remove 必填;merge/append 不填则作用于根'),
         value: z.string().optional().describe('JSON 字符串(set/merge/append 必填)'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝写入防覆盖'),
       }),
     },
   )
 
-  const deleteWindowProp = tool(
+  const deleteDataSlot = tool(
     async ({ path, expectedHash }) => {
       if (!registry.has(path)) {
         return toolError({
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未在注册表中声明,不可删除`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       // 乐观锁冲突检测 + 人工介入(overwrite 时 fall through 继续删除)
@@ -624,31 +624,31 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return ok ? `已删除 ${path}${pathsHint()}` : `${path} 不存在(无需删除)${pathsHint()}`
     },
     {
-      name: 'delete_window_prop',
-      description: '删除一个已注册 window 属性。expectedHash(可选):改前 get_window_prop 返回的 hash,传入启用乐观锁防"基于过期值删除"。',
+      name: 'delete_data_slot',
+      description: '删除一个已注册 数据槽。expectedHash(可选):改前 get_data_slot 返回的 hash,传入启用乐观锁防"基于过期值删除"。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 get_window_prop 返回的 hash;传入则校验,不一致拒绝删除防覆盖'),
+        expectedHash: z.string().optional().describe('乐观锁:改前 get_data_slot 返回的 hash;传入则校验,不一致拒绝删除防覆盖'),
       }),
     },
   )
 
-  const snapshotWindowProp = tool(
+  const snapshotDataSlot = tool(
     async ({ path, label }) => {
       if (!registry.has(path)) {
         return toolError({
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册,无法打快照`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const id = pushSnapshot(path, 'manual', label)
-      return `已为 ${path} 创建快照 #${id}${label ? `(${label})` : ''}。可用 list_window_snapshots 查看、restore_window_snapshot 回退。`
+      return `已为 ${path} 创建快照 #${id}${label ? `(${label})` : ''}。可用 list_data_snapshots 查看、restore_data_snapshot 回退。`
     },
     {
-      name: 'snapshot_window_prop',
-      description: '为已注册 window 属性手动创建一个命名快照(检查点)。set/edit/delete 也会自动存快照。',
+      name: 'snapshot_data_slot',
+      description: '为已注册 数据槽手动创建一个命名快照(检查点)。set/edit/delete 也会自动存快照。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
         label: z.string().optional().describe('可选的快照标签,便于识别'),
@@ -656,7 +656,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
   )
 
-  const listWindowSnapshots = tool(
+  const listDataSnapshots = tool(
     async ({ path }) => {
       const paths = path ? [path] : [...registry.keys()]
       if (path && !registry.has(path)) {
@@ -664,7 +664,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const lines: string[] = []
@@ -683,17 +683,17 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       }
       return (
         lines.join('\n') ||
-        '无快照。set/edit/delete 会自动存快照,也可用 snapshot_window_prop 手动创建检查点。'
+        '无快照。set/edit/delete 会自动存快照,也可用 snapshot_data_slot 手动创建检查点。'
       )
     },
     {
-      name: 'list_window_snapshots',
-      description: '列出 window 属性的快照时间线(序号、操作类型、标签、大小)。不传 path 列出所有属性。',
+      name: 'list_data_snapshots',
+      description: '列出 数据槽的快照时间线(序号、操作类型、标签、大小)。不传 path 列出所有属性。',
       schema: z.object({ path: z.string().optional().describe('限定单个属性,不传则列出全部') }),
     },
   )
 
-  const restoreWindowSnapshot = tool(
+  const restoreDataSnapshot = tool(
     async ({ path, id }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -701,7 +701,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const stack = snapshots.get(path) || []
@@ -710,7 +710,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NO_SNAPSHOT',
           path,
           message: `"${path}" 无快照可回退`,
-          hint: 'set/edit/delete 会自动存快照;也可先 snapshot_window_prop 手动创建检查点',
+          hint: 'set/edit/delete 会自动存快照;也可先 snapshot_data_slot 手动创建检查点',
         })
       }
       const entry = id !== undefined ? stack.find((s) => s.id === id) : stack[stack.length - 1]
@@ -719,7 +719,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'SNAPSHOT_NOT_FOUND',
           path,
           message: `未找到快照 #${id}`,
-          hint: '用 list_window_snapshots 查看可用快照序号',
+          hint: '用 list_data_snapshots 查看可用快照序号',
         })
       }
       // 保险:快照值应符合当前 schema(历史值本应合法)
@@ -739,8 +739,8 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return `已回退 ${path} 到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
     },
     {
-      name: 'restore_window_snapshot',
-      description: '把已注册 window 属性回退到某个快照(就地还原,保留响应式)。不传 id 则回退最近一次(快速回退)。可用 list_window_snapshots 查看快照列表。',
+      name: 'restore_data_snapshot',
+      description: '把已注册 数据槽回退到某个快照(就地还原,保留响应式)。不传 id 则回退最近一次(快速回退)。可用 list_data_snapshots 查看快照列表。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径'),
         id: z.number().int().optional().describe('指定快照序号;不传则回退最近一次'),
@@ -748,12 +748,12 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
   )
 
-  const getWindowPaths = tool(
+  const getSlotPaths = tool(
     async ({ paths }) => {
       const lines: string[] = []
       for (const p of paths) {
         if (!canRead(p)) {
-          lines.push(`- ${p} = ERROR: ${toolError({ code: 'NOT_REGISTERED', path: p, message: `不可读取(未注册,且非已注册路径的后代)`, hint: '用 list_window_props 查看可操作字段' })}`)
+          lines.push(`- ${p} = ERROR: ${toolError({ code: 'NOT_REGISTERED', path: p, message: `不可读取(未注册,且非已注册路径的后代)`, hint: '用 list_data_slots 查看可操作字段' })}`)
           continue
         }
         const val = getByPath(window, p)
@@ -762,9 +762,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return lines.join('\n')
     },
     {
-      name: 'get_window_paths',
+      name: 'get_slot_paths',
       description:
-        '批量按路径读取 window 属性的局部或多个字段(避免对大 JSON 整体读取)。paths 支持注册属性的任意后代路径(如 page.components.0.text)、自身。字段白名单读模式(默认)下未注册祖先不可读。逐行返回 path = value;单个值过大仍由系统自动外存 vfs。',
+        '批量按路径读取 数据槽的局部或多个字段(避免对大 JSON 整体读取)。paths 支持注册属性的任意后代路径(如 page.components.0.text)、自身。字段白名单读模式(默认)下未注册祖先不可读。逐行返回 path = value;单个值过大仍由系统自动外存 vfs。',
       schema: z.object({
         paths: z.array(z.string().describe('路径,如 page.components.0.text')).min(1).max(20),
       }),
@@ -773,7 +773,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
 
   // ============ 大 JSON 查询/搜索/脚本(只读探查为主,transform 写回经 schema 校验) ============
 
-  const queryWindowProp = tool(
+  const queryDataSlot = tool(
     async ({ path, expr, limit }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -781,7 +781,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const root = getByPath(window, path)
@@ -790,7 +790,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_OBJECT',
           path,
           message: `"${path}" 不是对象/数组,无法查询(当前为 ${root === undefined ? 'undefined' : typeof root})`,
-          hint: 'query 仅适用于对象/数组;叶子属性用 get_window_prop 读',
+          hint: 'query 仅适用于对象/数组;叶子属性用 get_data_slot 读',
         })
       }
       let nodes
@@ -816,9 +816,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
     },
     {
-      name: 'query_window_prop',
+      name: 'query_data_slot',
       description:
-        '用 JSONPath 表达式对一个已注册的对象/数组属性做结构化查询(只读,无副作用)。语法子集:$ 根、.key、[n]、["key"]、[*] 通配、[?(filter)] 过滤、..key 递归找后代、..* 全后代。过滤表达式:@.field op literal(op:==/!=/</<=/>/>=),&&/||/() 连接;@ 指当前元素。注意过滤作用于"当前节点的子元素数组",若注册属性是对象需先点出数组字段再过滤,如 $.components[?(@.type=="card" && @.price<100)]。返回匹配元素的 path(相对属性根,数组索引可作后续 edit_window_prop 的 jsonPath)+ index(若父为数组)+ value。适合在大数组里按条件筛选元素,定位后再用 edit_window_prop 增量改。',
+        '用 JSONPath 表达式对一个已注册的对象/数组属性做结构化查询(只读,无副作用)。语法子集:$ 根、.key、[n]、["key"]、[*] 通配、[?(filter)] 过滤、..key 递归找后代、..* 全后代。过滤表达式:@.field op literal(op:==/!=/</<=/>/>=),&&/||/() 连接;@ 指当前元素。注意过滤作用于"当前节点的子元素数组",若注册属性是对象需先点出数组字段再过滤,如 $.components[?(@.type=="card" && @.price<100)]。返回匹配元素的 path(相对属性根,数组索引可作后续 edit_data_slot 的 jsonPath)+ index(若父为数组)+ value。适合在大数组里按条件筛选元素,定位后再用 edit_data_slot 增量改。',
       schema: z.object({
         path: z.string().describe('已注册的对象/数组属性路径'),
         expr: z
@@ -831,7 +831,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
   )
 
-  const searchWindowProp = tool(
+  const searchDataSlot = tool(
     async ({ path, query, mode, fuzzyThreshold, matchKey, limit }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -839,7 +839,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       const root = getByPath(window, path)
@@ -863,9 +863,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       }
     },
     {
-      name: 'search_window_prop',
+      name: 'search_data_slot',
       description:
-        '在一个已注册 window 属性内做文本搜索(只读,无副作用)。mode:substring(子串,默认,大小写不敏感)、regex(正则,i 标志)、fuzzy(模糊:子串命中或 Levenshtein 距离 ≤ fuzzyThreshold)。递归遍历所有叶子值(及可选 key),返回命中元素的 path + value(超 200 字符截断)。适合在大 JSON 里找名字近似、记不清的元素,定位 path 后用 edit_window_prop 改。',
+        '在一个已注册 数据槽内做文本搜索(只读,无副作用)。mode:substring(子串,默认,大小写不敏感)、regex(正则,i 标志)、fuzzy(模糊:子串命中或 Levenshtein 距离 ≤ fuzzyThreshold)。递归遍历所有叶子值(及可选 key),返回命中元素的 path + value(超 200 字符截断)。适合在大 JSON 里找名字近似、记不清的元素,定位 path 后用 edit_data_slot 改。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径(在它的子树内搜索)'),
         query: z.string().describe('搜索词(substring/regex/fuzzy 共用)'),
@@ -877,7 +877,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
     },
   )
 
-  const evalWindowScript = tool(
+  const evalScript = tool(
     async ({ path, script, mode }) => {
       const spec = registry.get(path)
       if (!spec) {
@@ -885,7 +885,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
           code: 'NOT_REGISTERED',
           path,
           message: `属性 "${path}" 未注册`,
-          hint: '用 list_window_props 查看可用属性',
+          hint: '用 list_data_slots 查看可用属性',
         })
       }
       if (script.length > 8000) {
@@ -920,7 +920,7 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
             code: 'SCHEMA_INVALID',
             path,
             message: `脚本返回值校验失败,未写入(transform 模式要求返回该属性的完整新值且符合 schema)`,
-            hint: `确认脚本 return 了完整新值(非部分);按 describe_window_prop("${path}") 查看格式`,
+            hint: `确认脚本 return 了完整新值(非部分);按 describe_data_slot("${path}") 查看格式`,
             details: formatZodIssues(chk.error.issues),
           })
         }
@@ -938,9 +938,9 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
       return safeStringify({ ok: true, result: res.result, elapsedMs: res.elapsedMs })
     },
     {
-      name: 'eval_window_script',
+      name: 'eval_script',
       description:
-        '在隔离的 Web Worker 沙箱里对一个已注册 window 属性跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(该属性的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为该属性的新整体值,经 schema 校验后就地落地,适合批量重写)。注意:transform 需返回完整新值;query 不改 window。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。',
+        '在隔离的 Web Worker 沙箱里对一个已注册 数据槽跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(该属性的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为该属性的新整体值,经 schema 校验后就地落地,适合批量重写)。注意:transform 需返回完整新值;query 不改 window。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。',
       schema: z.object({
         path: z.string().describe('已注册的属性路径,其深拷贝作为脚本的 data 入参'),
         script: z
@@ -954,19 +954,19 @@ export function createWindowOps(props: WindowPropSpec[], opts: WindowOpsOptions 
   )
 
   const tools: StructuredToolInterface[] = [
-    listWindowProps,
-    describeWindowProp,
-    getWindowProp,
-    getWindowPaths,
-    setWindowProp,
-    editWindowProp,
-    deleteWindowProp,
-    snapshotWindowProp,
-    listWindowSnapshots,
-    restoreWindowSnapshot,
-    queryWindowProp,
-    searchWindowProp,
-    evalWindowScript,
+    listDataSlots,
+    describeDataSlot,
+    getDataSlot,
+    getSlotPaths,
+    setDataSlot,
+    editDataSlot,
+    deleteDataSlot,
+    snapshotDataSlot,
+    listDataSnapshots,
+    restoreDataSnapshot,
+    queryDataSlot,
+    searchDataSlot,
+    evalScript,
   ]
   // 挂控制器到工具数组(不可枚举:不影响 selectBuiltinTools 遍历/长度;createChatSdk 经 .controller 取用)
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })

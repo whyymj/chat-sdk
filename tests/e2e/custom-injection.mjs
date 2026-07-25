@@ -59,7 +59,7 @@ export async function run() {
       maxRetries: 5,
       maxParallelTools: 4,
       maxMemoryRounds: 30,
-      contextOptions: { preserveLastToolResults: ['describe_window_prop'] },
+      contextOptions: { preserveLastToolResults: ['describe_data_slot'] },
       vfs: { maxBytes: 2 * 1024 * 1024 },
     })
     await sdk.mount()

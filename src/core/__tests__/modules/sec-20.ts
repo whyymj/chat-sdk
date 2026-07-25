@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -136,9 +136,9 @@ export async function run(ctx: TestCtx): Promise<void> {
       const out: any[] = []
       for (let i = 0; i < n; i++) {
         out.push({ role: 'user', content: 'q' + i, timestamp: i * 2 })
-        // 前 4 轮(将进 older)带 describe_window_prop 步骤;后 2 轮(将进 recent)无步骤
+        // 前 4 轮(将进 older)带 describe_data_slot 步骤;后 2 轮(将进 recent)无步骤
         const steps = i < 4
-          ? [{ name: 'describe_window_prop', args: { path: 'app.x' }, result: '路径: app.x 说明: X属性 {a,b}', status: 'done' }]
+          ? [{ name: 'describe_data_slot', args: { path: 'app.x' }, result: '路径: app.x 说明: X属性 {a,b}', status: 'done' }]
           : []
         out.push({ role: 'assistant', content: 'a' + i + 'y'.repeat(300), steps, timestamp: i * 2 + 1 })
       }
@@ -147,19 +147,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     const cmAC = useContextManager({
       summaryThresholdRounds: 4,
       windowRounds: 2,
-      getRegisteredProps: () => [{ path: 'app.x', description: 'X属性' }],
-      preserveLastToolResults: ['describe_window_prop'],
+      getRegisteredSlots: () => [{ path: 'app.x', description: 'X属性' }],
+      preserveLastToolResults: ['describe_data_slot'],
     })
     const rAC = await cmAC.compress(mkMsgsWithSteps(6))
     assert(rAC.stats.triggered, 'A/C:6 轮触发压缩')
     const sumAC = String(rAC.messages[0].content)
-    assert(sumAC.includes('当前可操作 window 属性'), 'A:摘要含注册表快照段')
+    assert(sumAC.includes('当前可操作数据槽 属性'), 'A:摘要含注册表快照段')
     assert(sumAC.includes('app.x') && sumAC.includes('X属性'), 'A:摘要含注册 path 与 description')
     assert(sumAC.includes('字段提示'), 'C:摘要含 preserve 工具结果片段')
-    assert(sumAC.includes('describe_window_prop'), 'C:摘要含 preserve 工具名')
-    // 未提供 getRegisteredProps 时不注入该段(不污染摘要)
+    assert(sumAC.includes('describe_data_slot'), 'C:摘要含 preserve 工具名')
+    // 未提供 getRegisteredSlots 时不注入该段(不污染摘要)
     const cmNoProps = useContextManager({ summaryThresholdRounds: 4, windowRounds: 2 })
     const rNoProps = await cmNoProps.compress(mkMsgsWithSteps(6))
-    assert(!String(rNoProps.messages[0].content).includes('当前可操作 window 属性'), 'A:未提供 getRegisteredProps 时不注入注册表段')
+    assert(!String(rNoProps.messages[0].content).includes('当前可操作数据槽 属性'), 'A:未提供 getRegisteredSlots 时不注入注册表段')
   }
 }

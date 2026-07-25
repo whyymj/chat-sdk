@@ -40,13 +40,13 @@ export interface ContextManagerOptions {
   /** 保留最近窗口的 token 预算比例(默认 0.4) */
   windowRatio?: number
   /**
-   * 压缩时注入「当前可操作 window 属性」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)。
+   * 压缩时注入「当前可操作数据槽 属性」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)。
    * 提供 getter 则每次压缩把当前注册表 path+description 作为一段附进摘要 system 消息(不进压缩)。
    */
-  getRegisteredProps?: () => { path: string; description: string }[]
+  getRegisteredSlots?: () => { path: string; description: string }[]
   /**
    * 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉)。
-   * 如 ['describe_window_prop','list_window_props'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
+   * 如 ['describe_data_slot','list_data_slots'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
    */
   preserveLastToolResults?: string[]
 }
@@ -255,13 +255,13 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     if (recallBlock) {
       parts.push(`\n【与当前问题可能相关的早期对话】`, recallBlock)
     }
-    // A:注入当前可操作 window 属性快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
-    if (config.getRegisteredProps) {
+    // A:注入当前可操作数据槽 属性快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
+    if (config.getRegisteredSlots) {
       try {
-        const props = config.getRegisteredProps()
+        const props = config.getRegisteredSlots()
         if (props.length) {
           const propLines = props.map((p) => `- ${p.path}: ${p.description}`).join('\n')
-          parts.push(`\n【当前可操作 window 属性(动态增删后的最新状态,操作前以 list_window_props 为准)】`, propLines)
+          parts.push(`\n【当前可操作数据槽 属性(动态增删后的最新状态,操作前以 list_data_slots 为准)】`, propLines)
         }
       } catch {
         /* getter 抛错不影响压缩 */

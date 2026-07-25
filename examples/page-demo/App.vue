@@ -3,7 +3,7 @@
  * 测试模块 demo —— 左侧 JSON 驱动的响应式页面,右侧 Agent 对话框
  *
  * window.page 用 reactive() 创建并挂到 window(在 setup 顶层,早于子组件 mount),
- * Agent 经 set_window_prop 改 page.* 属性 → 左侧 PageRenderer 响应式更新。
+ * Agent 经 set_data_slot 改 page.* 属性 → 左侧 PageRenderer 响应式更新。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, type ChatSdk } from '../../src/core'
@@ -12,7 +12,7 @@ import type { Middleware } from '../../src/core/harness/middleware'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
-import { initialPage, pageWindowProps, pageBuilderSkillContent } from './pageSchema'
+import { initialPage, pageDataSlots, pageBuilderSkillContent } from './pageSchema'
 
 const cfg = useAgentConfig()
 
@@ -68,8 +68,8 @@ onMounted(() => {
     },
     streaming: true,
     systemPrompt:
-      '你是页面构建助手。左侧页面由 window.page 的 JSON 驱动。流程:get_window_prop("page") 读取当前页面 → 用 set_window_prop 修改 page.title / page.theme / page.components,左侧实时更新。组件结构详见 load_skill("page-builder")。',
-    windowProps: pageWindowProps,
+      '你是页面构建助手。左侧页面由 window.page 的 JSON 驱动。流程:get_data_slot("page") 读取当前页面 → 用 set_data_slot 修改 page.title / page.theme / page.components,左侧实时更新。组件结构详见 load_skill("page-builder")。',
+    dataSlots: pageDataSlots,
     skills: [
       defineSkill({
         name: 'page-builder',

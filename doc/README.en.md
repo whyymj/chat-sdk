@@ -9,6 +9,7 @@
 | [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / custom middleware / FAQ |
 | [Architecture](./architecture.md) *(Chinese)* | Layering / assembly & mount / ReAct loop (format self-correction + verify self-correction) / window-op & optimistic lock / **conflict human-in-the-loop (state machine + abort linkage)** / context compression & persistence (6 mermaid diagrams) |
 | [Context & Compression](./context-management.md) *(Chinese)* | Context 3-part composition / 4-layer compression / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
+| [Capability Plugin Architecture](./plugin-architecture.md) *(Chinese, design draft)* | **Draft for review** · extract business capabilities into pluggable plugins / interface / assembly pipeline / dataSlotOps migration example / gradual steps |
 
 ## Other info sources (in repo)
 - **Specs source of truth** (Requirements): [`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
@@ -32,7 +33,7 @@ createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
   systemPrompt: 'You are a page-ops assistant…',
-  windowProps: [
+  dataSlots: [
     { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
   ],
   tools: [], skills: [], memory: '',

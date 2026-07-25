@@ -19,15 +19,15 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | `ui` | `boolean \| 'default'` | `true` | `false` = headless (no built-in dialog; you build UI from `sdk.messages` + `sdk.send`). `'default'` = built-in `ChatDialog`. |
 | `streaming` | `boolean` | `true` | Stream tokens live. `false` = wait for full reply. Headless `sdk.send` always uses invoke (no stream events, but window/message/error still fire). |
 
-## window operation (the core)
+## data slot operation (the core)
 
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
-| `windowProps` | `WindowPropSpec[]` | `[]` | Declare writable `window` paths + zod schemas. The agent can ONLY touch declared paths; `set`/`edit` are schema-validated. **This is the key integration step.** |
-| `maxSnapshots` | `number` | 20 | Per-path snapshot stack depth for `restore_window_snapshot`. |
+| `dataSlots` | `DataSlotSpec[]` | `[]` | Declare writable `window` paths + zod schemas. The agent can ONLY touch declared paths; `set`/`edit` are schema-validated. **This is the key integration step.** |
+| `maxSnapshots` | `number` | 20 | Per-path snapshot stack depth for `restore_data_snapshot`. |
 | `permissions` | `PermissionRule[]` | off | Scope whitelist (first-match-wins) for fine-grained per-path/tool rules. Default off (all declared paths writable). |
 
-`WindowPropSpec = { path: string; description: string; schema?: z.ZodType }`. `description` is shown to the AI — write it clearly so the agent knows what each path means.
+`DataSlotSpec = { path: string; description: string; schema?: z.ZodType }`. `description` is shown to the AI — write it clearly so the agent knows what each path means.
 
 ## Tools, skills, memory
 
@@ -44,8 +44,8 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 
 | Flag | Off when... |
 |---|---|
-| `windowOps` | Pure research agent, no page edits (also drops window tools from subagents). |
-| `fetch` | No web fetching needed. ⚠️ turning off `windowOps` also strips subagent window tools. |
+| `dataSlotOps` | Pure research agent, no page edits (also drops data slot tools from subagents). |
+| `fetch` | No web fetching needed. ⚠️ turning off `dataSlotOps` also strips subagent data slot tools. |
 | `planning` | Don't want `write_todos` planning. |
 | `skills` | Don't want progressive skill loading. |
 | `vfs` | No in-memory workspace; ⚠️ large tool results then truncate instead of offloading. |
@@ -70,7 +70,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `contextPreset` | `'auto'\|'conservative'\|'aggressive'` | `auto` | `conservative` = save cost; `aggressive` = save context. `contextOptions` fine-tunes further. |
-| `contextOptions` | `object` | — | Detailed compression params (overrides preset). `false` disables compression. Key fields: `windowRounds`, `summaryThresholdRounds`, `contextWindow`, `summaryThresholdRatio`, `windowRatio`, `enableRecall`, `recallTopK`, `enableLLMSummary`, `preserveLastToolResults` (default `['describe_window_prop','list_window_props']` — keep these tools' result summaries in the compressed summary so field descriptions survive compression; set `[]` to disable). `getRegisteredProps` is injected internally by the SDK (from `sdk.listWindowProps`) to embed a live registry snapshot in the summary — no need to set it manually. |
+| `contextOptions` | `object` | — | Detailed compression params (overrides preset). `false` disables compression. Key fields: `windowRounds`, `summaryThresholdRounds`, `contextWindow`, `summaryThresholdRatio`, `windowRatio`, `enableRecall`, `recallTopK`, `enableLLMSummary`, `preserveLastToolResults` (default `['describe_data_slot','list_data_slots']` — keep these tools' result summaries in the compressed summary so field descriptions survive compression; set `[]` to disable). `getRegisteredSlots` is injected internally by the SDK (from `sdk.listDataSlots`) to embed a live registry snapshot in the summary — no need to set it manually. |
 | `summaryLlm` | `BaseChatModel \| LLMConfig` | main `llm` | Use a cheaper/faster model for summarization. |
 | `summaryTemperature` | `number` | 0.3 | Summary model temperature. |
 | `summaryMaxTokens` | `number` | 1024 | Summary output cap. |
@@ -97,7 +97,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 
 ## Checkpoint (session rollback)
 
-`checkpoint: true \| { maxCheckpoints?, auto? }` — per-round snapshot of (messages + window props + vfs + todos). `restoreLastCheckpoint()` / LLM tool `restore_last_checkpoint` / UI button. Distinct from windowOps per-path snapshots (checkpoint = whole-session rollback).
+`checkpoint: true \| { maxCheckpoints?, auto? }` — per-round snapshot of (messages + data slots + vfs + todos). `restoreLastCheckpoint()` / LLM tool `restore_last_checkpoint` / UI button. Distinct from dataSlotOps per-path snapshots (checkpoint = whole-session rollback).
 
 ## Persistence (storage)
 

@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -58,40 +58,40 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 2. set 后读回符合 schema → ok
     win = { app: { theme: 'dark', count: 0 } }
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'set_data_slot', args: { path: 'app.theme' } }])], state: createState() })
     assert(r.ok === true, 'set 后读回符合 schema → ok')
 
     // 3. set 后读回为空 → feedback(未生效)
     win = { app: { theme: undefined, count: 0 } }
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'set_data_slot', args: { path: 'app.theme' } }])], state: createState() })
     const fb3 = r.feedback
     assert(r.ok === false && !!fb3 && /读回为空/.test(fb3), 'set 后读回为空 → feedback(未生效)')
 
     // 4. set 后读回不符合 schema → feedback
     win = { app: { theme: 'red', count: 0 } } // 'red' 不在 enum
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'set_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'set_data_slot', args: { path: 'app.theme' } }])], state: createState() })
     const fb4 = r.feedback
     assert(r.ok === false && !!fb4 && /不符合 schema/.test(fb4), 'set 后读回不符合 schema → feedback')
 
     // 5. delete 后读回 undefined → ok(删除成功)
     win = { app: { theme: undefined, count: 0 } }
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'delete_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'delete_data_slot', args: { path: 'app.theme' } }])], state: createState() })
     assert(r.ok === true, 'delete 后读回空 → ok(删除成功)')
 
     // 6. delete 后读回仍有值 → feedback(未删干净)
     win = { app: { theme: 'dark', count: 0 } }
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'delete_window_prop', args: { path: 'app.theme' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'delete_data_slot', args: { path: 'app.theme' } }])], state: createState() })
     const fb6 = r.feedback
     assert(r.ok === false && !!fb6 && /删除后读回仍有值/.test(fb6), 'delete 后读回仍有值 → feedback(未删干净)')
 
-    // 7. edit_window_prop 后读回符合 schema → ok
+    // 7. edit_data_slot 后读回符合 schema → ok
     win = { app: { theme: 'dark', count: 0 } }
     check = createWriteBackCheck({ window: win, schemas })
-    r = await check({ messages: [mkAi([{ name: 'edit_window_prop', args: { path: 'app.theme', jsonPath: '', op: 'set' } }])], state: createState() })
+    r = await check({ messages: [mkAi([{ name: 'edit_data_slot', args: { path: 'app.theme', jsonPath: '', op: 'set' } }])], state: createState() })
     assert(r.ok === true, 'edit 后读回符合 schema → ok')
 
     // 8. 写被合法拒绝(ToolMessage "校验失败")→ 不误报(ok)
@@ -100,7 +100,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     check = createWriteBackCheck({ window: win, schemas })
     r = await check({
       messages: [
-        mkAi([{ id: 'c1', name: 'set_window_prop', args: { path: 'app.theme' } }]),
+        mkAi([{ id: 'c1', name: 'set_data_slot', args: { path: 'app.theme' } }]),
         mkTool('c1', '校验失败:值不符合 enum'),
         mkAi([]),
       ],
@@ -113,9 +113,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     check = createWriteBackCheck({ window: win, schemas })
     r = await check({
       messages: [
-        mkAi([{ id: 'c1', name: 'set_window_prop', args: { path: 'app.theme' } }]),
+        mkAi([{ id: 'c1', name: 'set_data_slot', args: { path: 'app.theme' } }]),
         mkTool('c1', '已设置 app.theme = "dark"'),
-        mkAi([{ id: 'c2', name: 'get_window_prop', args: { path: 'app.count' } }]),
+        mkAi([{ id: 'c2', name: 'get_data_slot', args: { path: 'app.count' } }]),
         mkTool('c2', '0'),
         mkAi([]),
       ],

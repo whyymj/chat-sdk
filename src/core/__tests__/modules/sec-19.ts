@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -60,27 +60,27 @@ export async function run(ctx: TestCtx): Promise<void> {
     // fetchTools 静态预设(工具数组)
     assert(fetchTools.length === fetchDocTools.length && fetchTools[0].name === 'fetch_document', 'fetchTools 静态预设含 fetch_document')
 
-    // defineWindowToolset 工厂(依赖 windowProps,故为工厂)
+    // defineDataSlotToolset 工厂(依赖 dataSlots,故为工厂)
     const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
-    const wt = defineWindowToolset(props)
-    assert(wt.length === 13 && wt[0].name === 'list_window_props', 'defineWindowToolset 工厂产出 13 个 window 工具(10 原有 + query/search/eval)')
+    const wt = defineDataSlotToolset(props)
+    assert(wt.length === 13 && wt[0].name === 'list_data_slots', 'defineDataSlotToolset 工厂产出 13 个 数据槽工具(10 原有 + query/search/eval)')
 
-    // selectBuiltinTools:默认全装(windowOps + fetch)
-    const winOps = createWindowOps(props)
+    // selectBuiltinTools:默认全装(dataSlotOps + fetch)
+    const winOps = createDataSlotOps(props)
     const all = selectBuiltinTools(undefined, winOps, fetchDocTools)
-    assert(all.length === winOps.length + fetchDocTools.length, 'selectBuiltinTools 默认全装(windowOps + fetch)')
+    assert(all.length === winOps.length + fetchDocTools.length, 'selectBuiltinTools 默认全装(dataSlotOps + fetch)')
 
-    // windowOps:false → 不含 window 工具,fetch 仍在
-    const noWin = selectBuiltinTools({ windowOps: false }, winOps, fetchDocTools)
-    assert(noWin.length === fetchDocTools.length && noWin.every((t) => t.name === 'fetch_document'), 'windowOps:false → 只剩 fetch_document')
+    // dataSlotOps:false → 不含 数据槽工具,fetch 仍在
+    const noWin = selectBuiltinTools({ dataSlotOps: false }, winOps, fetchDocTools)
+    assert(noWin.length === fetchDocTools.length && noWin.every((t) => t.name === 'fetch_document'), 'dataSlotOps:false → 只剩 fetch_document')
 
     // fetch:false → 不含 fetch,window 仍在
     const noFetch = selectBuiltinTools({ fetch: false }, winOps, fetchDocTools)
-    assert(noFetch.length === winOps.length && noFetch.every((t) => t.name !== 'fetch_document'), 'fetch:false → 只剩 window 工具')
+    assert(noFetch.length === winOps.length && noFetch.every((t) => t.name !== 'fetch_document'), 'fetch:false → 只剩 数据槽工具')
 
     // 两者都关 → 空
-    const none = selectBuiltinTools({ windowOps: false, fetch: false }, winOps, fetchDocTools)
-    assert(none.length === 0, 'windowOps + fetch 都关 → 工具池空')
+    const none = selectBuiltinTools({ dataSlotOps: false, fetch: false }, winOps, fetchDocTools)
+    assert(none.length === 0, 'dataSlotOps + fetch 都关 → 工具池空')
   }
 
   // ============ usageHints 中间件(能力用法默认提示,克制注入)============
@@ -89,20 +89,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 全开 → 含 planning/snapshot/spawn 三条提示
     const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
     const segFull = mwFull.augmentPrompt?.(createState()) || ''
-    assert(/write_todos/.test(segFull) && /restore_window_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
-    // windowOps 开 → 含 list/describe(查当前可操作属性)与 get(读真实值再改)提示
-    assert(/list_window_props/.test(segFull) && /describe_window_prop/.test(segFull), 'windowOps 开 → 注入 list/describe 用法(动态注册场景关键)')
-    assert(/get_window_prop/.test(segFull), 'windowOps 开 → 注入 get 读真实值再改用法')
+    assert(/write_todos/.test(segFull) && /restore_data_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
+    // dataSlotOps 开 → 含 list/describe(查当前可操作属性)与 get(读真实值再改)提示
+    assert(/list_data_slots/.test(segFull) && /describe_data_slot/.test(segFull), 'dataSlotOps 开 → 注入 list/describe 用法(动态注册场景关键)')
+    assert(/get_data_slot/.test(segFull), 'dataSlotOps 开 → 注入 get 读真实值再改用法')
 
     // planning 关 → 无 write_todos 提示
     const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
     const segNoPlan = mwNoPlan.augmentPrompt?.(createState()) || ''
     assert(!/write_todos/.test(segNoPlan), 'planning 关 → 不注入 write_todos 提示')
 
-    // hasWindowOps=false → 无 snapshot 提示
+    // hasDataSlotOps=false → 无 snapshot 提示
     const mwNoWin = createUsageHintsMiddleware({ planning: true, subagent: true }, false)
     const segNoWin = mwNoWin.augmentPrompt?.(createState()) || ''
-    assert(!/restore_window_snapshot/.test(segNoWin), '无 window 工具 → 不注入 snapshot 提示')
+    assert(!/restore_data_snapshot/.test(segNoWin), '无 数据槽工具 → 不注入 snapshot 提示')
 
     // 全关(planning/subagent 关 + 无 window)→ undefined(不增上下文)
     const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false }, false)

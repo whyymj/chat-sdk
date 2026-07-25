@@ -1,59 +1,59 @@
-// 动态注册:addWindowProp / removeWindowProp / listWindowProps + inspect().windowProps 同步 + windowOps 关闭 no-op
+// 动态注册:addDataSlot / removeDataSlot / listDataSlots + inspect().dataSlots 同步 + dataSlotOps 关闭 no-op
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
   const ctx = createAssert(); const { assert } = ctx
 
-  console.log('[e2e:dynamic-register] 动态注册 addWindowProp / removeWindowProp / listWindowProps')
+  console.log('[e2e:dynamic-register] 动态注册 addDataSlot / removeDataSlot / listDataSlots')
   {
     globalThis.window.app = {}
     const sdk = createChatSdk({
       ui: false, id: 'e2e-dyn', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
-    assert(sdk.listWindowProps().length === 1, '初始 1 个注册属性')
-    sdk.addWindowProp({ path: 'app.count', description: '计数', schema: z.number() })
-    assert(sdk.listWindowProps().length === 2, 'addWindowProp 后 listWindowProps 含 2 个')
-    assert(sdk.listWindowProps().some((p) => p.path === 'app.count'), 'listWindowProps 含动态新增 path')
-    assert(sdk.removeWindowProp('app.count') === true, 'removeWindowProp 存在的 path 返回 true')
-    assert(sdk.listWindowProps().length === 1, 'removeWindowProp 后 listWindowProps 回到 1 个')
-    assert(sdk.removeWindowProp('not.exist') === false, 'removeWindowProp 不存在 path 返回 false')
+    assert(sdk.listDataSlots().length === 1, '初始 1 个注册属性')
+    sdk.addDataSlot({ path: 'app.count', description: '计数', schema: z.number() })
+    assert(sdk.listDataSlots().length === 2, 'addDataSlot 后 listDataSlots 含 2 个')
+    assert(sdk.listDataSlots().some((p) => p.path === 'app.count'), 'listDataSlots 含动态新增 path')
+    assert(sdk.removeDataSlot('app.count') === true, 'removeDataSlot 存在的 path 返回 true')
+    assert(sdk.listDataSlots().length === 1, 'removeDataSlot 后 listDataSlots 回到 1 个')
+    assert(sdk.removeDataSlot('not.exist') === false, 'removeDataSlot 不存在 path 返回 false')
     sdk.unmount()
   }
 
-  console.log('[e2e:dynamic-register] windowOps 关闭时 addWindowProp/removeWindowProp 为 no-op')
+  console.log('[e2e:dynamic-register] dataSlotOps 关闭时 addDataSlot/removeDataSlot 为 no-op')
   {
     globalThis.window.app = {}
     const sdk = createChatSdk({
       ui: false, id: 'e2e-dyn-noop', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, windowOps: false },
+      capabilities: { ...MIN_CAPS, dataSlotOps: false },
     })
     await sdk.mount()
-    sdk.addWindowProp({ path: 'app.x', description: 'x', schema: z.string() })
-    assert(sdk.listWindowProps().length === 0, 'windowOps:false → addWindowProp no-op(list 仍空)')
-    assert(sdk.removeWindowProp('app.x') === false, 'windowOps:false → removeWindowProp 返回 false')
+    sdk.addDataSlot({ path: 'app.x', description: 'x', schema: z.string() })
+    assert(sdk.listDataSlots().length === 0, 'dataSlotOps:false → addDataSlot no-op(list 仍空)')
+    assert(sdk.removeDataSlot('app.x') === false, 'dataSlotOps:false → removeDataSlot 返回 false')
     sdk.unmount()
   }
 
-  console.log('[e2e:dynamic-register] 动态注册与 inspect().windowProps 同步')
+  console.log('[e2e:dynamic-register] 动态注册与 inspect().dataSlots 同步')
   {
     globalThis.window.app = {}
     const sdk = createChatSdk({
       ui: false, id: 'e2e-dyn-sync', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.base', description: '基础', schema: z.string() }],
+      dataSlots: [{ path: 'app.base', description: '基础', schema: z.string() }],
     })
     await sdk.mount()
-    assert(sdk.inspect().windowProps.length === 1, '初始 1 个注册属性')
-    sdk.addWindowProp({ path: 'app.dynamic', description: '动态', schema: z.number() })
+    assert(sdk.inspect().dataSlots.length === 1, '初始 1 个注册属性')
+    sdk.addDataSlot({ path: 'app.dynamic', description: '动态', schema: z.number() })
     let info = sdk.inspect()
-    assert(info.windowProps.length === 2, 'addWindowProp 后 inspect().windowProps 含 2 个')
-    assert(info.windowProps.some((p) => p.path === 'app.dynamic'), 'inspect().windowProps 含动态新增 path')
-    assert(sdk.removeWindowProp('app.dynamic') === true, 'removeWindowProp 存在的 path 返回 true')
-    assert(!sdk.inspect().windowProps.some((p) => p.path === 'app.dynamic'), 'removeWindowProp 后 inspect().windowProps 不再含该 path')
-    assert(sdk.inspect().windowProps.length === 1, 'removeWindowProp 后 inspect().windowProps 回到 1 个')
-    assert(sdk.removeWindowProp('not.exist') === false, 'removeWindowProp 不存在 path 返回 false')
+    assert(info.dataSlots.length === 2, 'addDataSlot 后 inspect().dataSlots 含 2 个')
+    assert(info.dataSlots.some((p) => p.path === 'app.dynamic'), 'inspect().dataSlots 含动态新增 path')
+    assert(sdk.removeDataSlot('app.dynamic') === true, 'removeDataSlot 存在的 path 返回 true')
+    assert(!sdk.inspect().dataSlots.some((p) => p.path === 'app.dynamic'), 'removeDataSlot 后 inspect().dataSlots 不再含该 path')
+    assert(sdk.inspect().dataSlots.length === 1, 'removeDataSlot 后 inspect().dataSlots 回到 1 个')
+    assert(sdk.removeDataSlot('not.exist') === false, 'removeDataSlot 不存在 path 返回 false')
     sdk.unmount()
   }
 

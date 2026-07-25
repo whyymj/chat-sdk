@@ -4,8 +4,8 @@
  *
  * 演示能力:
  *  ① 声明:递归 schema(z.lazy 自引用)+ style 显式 schema + passthrough 放行自定义属性,注册根 path('Editor.PageInfo')
- *  ② 查:query_window_prop 用 $..*[?(@.type=="text")] 递归找任意深度的区块
- *  ③ 改:edit_window_prop 用 jsonPath(如 sections.0.children.0.style.color)深层定位,只发改动
+ *  ② 查:query_data_slot 用 $..*[?(@.type=="text")] 递归找任意深度的区块
+ *  ③ 改:edit_data_slot 用 jsonPath(如 sections.0.children.0.style.color)深层定位,只发改动
  *  ④ 增/删:append 给 section 加 children、remove 删区块;校验自动穿透到 children + style
  *  ⑤ 响应式:左侧树由 window.Editor.PageInfo(reactive)驱动,Agent 改子属性 → 树实时更新
  *
@@ -76,7 +76,7 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     // 递归 schema:注册 window.Editor.PageInfo 根;children 自引用任意深度;style 显式声明,passthrough 放行自定义属性
-    windowProps: [
+    dataSlots: [
       {
         path: 'Editor.PageInfo',
         description: '页面信息(含 title/theme/sections;section 与区块可任意嵌套 children,节点带 style 样式对象)',
@@ -88,8 +88,8 @@ onMounted(() => {
       'sections 是任意深度的区块树:节点有 id/name/type(section|text|button|image|card)/text/style/children。',
       'style 是样式对象,常用键:background/color/fontSize/fontWeight/padding/margin/borderRadius/display;可加自定义键。',
       '操作指南(jsonPath 相对 PageInfo 根,逐级定位,只发改动,不要重传整页):',
-      '1. 查任意深度区块用 query_window_prop,expr 如 $..*[?(@.type=="text")] 找所有文本,$..*[?(@.type=="section")] 找所有分区,$..*[?(@.name=="主标题")] 按名找;',
-      '2. 改深层样式用 edit_window_prop 的 set,如改「顶部 Banner/主标题」颜色:op=set, jsonPath="sections.0.children.0.style.color", value="#ff0000";',
+      '1. 查任意深度区块用 query_data_slot,expr 如 $..*[?(@.type=="text")] 找所有文本,$..*[?(@.type=="section")] 找所有分区,$..*[?(@.name=="主标题")] 按名找;',
+      '2. 改深层样式用 edit_data_slot 的 set,如改「顶部 Banner/主标题」颜色:op=set, jsonPath="sections.0.children.0.style.color", value="#ff0000";',
       '3. 改文案用 set 改对应 jsonPath 的 text,如 jsonPath="sections.0.children.0.text";',
       '4. 加子区块用 append,如给「商品列表」加一张卡:op=append, jsonPath="sections.1.children", value=\'{"id":"c-3","name":"商品卡 3","type":"card","text":"新品","style":{"borderRadius":10,"padding":16}}\';',
       '5. 删区块用 remove,如删「商品卡 2」:op=remove, jsonPath="sections.1.children.1";',
@@ -97,7 +97,7 @@ onMounted(() => {
       '每次操作后用路径描述改了哪个区块(如「顶部 Banner/主标题 的 color」)。',
     ].join('\n'),
     // 人工确认:写操作(set/edit/delete)前弹确认框,用户「允许/拒绝」后才执行(防 AI 误改页面)
-    approval: { tools: ['set_window_prop', 'edit_window_prop', 'delete_window_prop'] },
+    approval: { tools: ['set_data_slot', 'edit_data_slot', 'delete_data_slot'] },
     // 会话级 checkpoint:每轮自动存档,流程异常/改坏页面时可一键回退到上次正常态(↩ 回退按钮 + LLM 的 restore_last_checkpoint 工具)
     checkpoint: true,
     debug: true,
@@ -117,7 +117,7 @@ onUnmounted(() => agent?.unmount())
       <p class="hint">
         <code>window.Editor.PageInfo</code> 是任意深度的页面区块树,用 <code>z.lazy</code> 递归 schema 声明,
         节点带 <code>style</code> 样式对象(显式 schema + <code>passthrough</code> 放行自定义属性)。
-        Agent 经 <code>edit_window_prop</code> 的 <strong>jsonPath 逐级定位</strong>深层节点增删改 ——
+        Agent 经 <code>edit_data_slot</code> 的 <strong>jsonPath 逐级定位</strong>深层节点增删改 ——
         左侧树由 <code>reactive</code> 驱动,改动<strong>实时更新</strong>。
       </p>
       <div class="tree-wrap" :data-theme="pageInfo.theme || 'light'">

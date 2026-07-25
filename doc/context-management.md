@@ -213,7 +213,7 @@ flowchart TB
 
 - `maxMemoryRounds`（默认 50）：超限压缩为摘要 system；`0` 关闭
 - `vfs.maxBytes`（默认 4MB）：超限 LRU 淘汰最旧文件
-- `maxSnapshots`（默认 20）：windowOps per-path 快照栈
+- `maxSnapshots`（默认 20）：dataSlotOps per-path 快照栈
 - `checkpoint.maxCheckpoints`（默认 5）：会话级回滚档
 
 ---

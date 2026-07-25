@@ -9,7 +9,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-hook', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     const off = sdk.hook(() => {})
@@ -24,7 +24,7 @@ export async function run() {
     let onEventCount = 0, hookCount = 0
     const sdk = createChatSdk({
       ui: false, id: 'e2e-events', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
       onEvent: () => { onEventCount++ },
     })
     await sdk.mount()

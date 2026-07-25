@@ -69,10 +69,10 @@ function isChatModel(v: unknown): v is BaseChatModel {
 
 /** 子 agent 默认可用的只读工具(不含写工具 —— 子 agent 只读探查,写回交主 agent) */
 const DEFAULT_READONLY_TOOLS = [
-  'get_window_prop',
-  'get_window_paths',
-  'list_window_props',
-  'describe_window_prop',
+  'get_data_slot',
+  'get_slot_paths',
+  'list_data_slots',
+  'describe_data_slot',
   'fetch_document',
 ]
 const DEFAULT_MAX_DEPTH = 1

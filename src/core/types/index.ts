@@ -48,7 +48,7 @@ export type StreamHandler = (event: StreamEvent) => void
 /**
  * SDK 事件(供 createChatSdk({ onEvent }) 订阅常用时机)。
  * 复用 StreamEvent(round_start/reasoning/text/tool_call/tool_result/subagent/done;approval_request 不外发,UI 已处理)
- * + 额外时机:window_prop_change / message_update / error。
+ * + 额外时机:data_slot_change / message_update / error。
  */
 export type SdkEvent =
   | { type: 'round_start'; round: number }
@@ -58,7 +58,7 @@ export type SdkEvent =
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
   | { type: 'done'; content: string }
-  | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
+  | { type: 'data_slot_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
   | { type: 'conflict'; conflict: import('../sdk/createChatSdk').PendingConflict }
   | { type: 'error'; message: string }
@@ -84,7 +84,7 @@ export interface ChatDialogProps {
 /** agent 检视信息（inspect() 返回，供 debug 窗口展示） */
 export interface ToolInfo { name: string; description: string; schema?: unknown; /** 来源:builtin / mcp:<name> / user */ source?: string }
 export interface SkillInfo { name: string; description: string }
-export interface WindowPropInfo { path: string; description: string; schema?: unknown }
+export interface DataSlotInfo { path: string; description: string; schema?: unknown }
 
 /** 子 agent 配置(subagent 委派能力检视) */
 export interface SubagentInfo {
@@ -100,7 +100,7 @@ export interface AgentInfo {
   systemPrompt: string
   tools: ToolInfo[]
   skills: SkillInfo[]
-  windowProps: WindowPropInfo[]
+  dataSlots: DataSlotInfo[]
   memory: string
   middleware: string[]
   todos: { content: string; status: string }[]

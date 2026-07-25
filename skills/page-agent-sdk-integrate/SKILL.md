@@ -1,6 +1,6 @@
 ---
 name: page-agent-sdk-integrate
-description: Integrate the page-agent-sdk npm package into a web app so an AI agent can read/write structured page data (window props) via schema-validated tools. Use when the user wants to add/embed the SDK, declare windowProps + zod schemas, configure the LLM, mount the chat dialog, subscribe to events (onEvent / sdk.hook), run headless (ui:false) with a custom UI, or troubleshoot common integration issues (DeepSeek 400 tool_call_id, MCP injecting 0 tools, etc).
+description: Integrate the page-agent-sdk npm package into a web app so an AI agent can read/write structured page data (data slots) via schema-validated tools. Use when the user wants to add/embed the SDK, declare dataSlots + zod schemas, configure the LLM, mount the chat dialog, subscribe to events (onEvent / sdk.hook), run headless (ui:false) with a custom UI, or troubleshoot common integration issues (DeepSeek 400 tool_call_id, MCP injecting 0 tools, etc).
 ---
 
 # Integrate page-agent-sdk
@@ -9,7 +9,7 @@ Help the user embed `page-agent-sdk` so an AI agent safely edits their page's st
 
 ## Core concept
 
-The SDK is a **standardized JSON-operation agent**: the integrator declares writable `window` paths + zod schemas; the agent edits them via `set_window_prop` / `edit_window_prop` (jsonPath patches), validated by schema, scoped to the registry, with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text.
+The SDK is a **standardized JSON-operation agent**: the integrator declares writable `window` paths + zod schemas; the agent edits them via `set_data_slot` / `edit_data_slot` (jsonPath patches), validated by schema, scoped to the registry, with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text.
 
 ## Workflow
 
@@ -23,7 +23,7 @@ The SDK is a **standardized JSON-operation agent**: the integrator declares writ
 
 See `demo/plain.html` for a framework-agnostic importmap + esm.sh example.
 
-### 2. Declare windowProps + schemas (the key step)
+### 2. Declare dataSlots + schemas (the key step)
 
 Put the page data on `window` (e.g. `window.app = { title, theme }`), then declare each writable path with a zod schema. The agent can ONLY touch declared paths; `set`/`edit` are schema-validated (invalid → structured error, no write).
 
@@ -39,7 +39,7 @@ createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   systemPrompt: 'You are a page assistant; read/write window.app via tools.',
-  windowProps: [
+  dataSlots: [
     { path: 'app.title',  description: '页面标题',  schema: z.string() },
     { path: 'app.theme',  description: '主题',      schema: z.enum(['light','dark']) },
     { path: 'app.items', description: '列表项数组', schema: z.array(z.object({ name: z.string(), price: z.number() })) },
@@ -47,7 +47,7 @@ createChatSdk({
 }).mount()
 ```
 
-For large JSON, prefer `edit_window_prop` (jsonPath patch: set/remove/merge/append) over `set_window_prop` (whole value) — avoids re-sending the entire blob.
+For large JSON, prefer `edit_data_slot` (jsonPath patch: set/remove/merge/append) over `set_data_slot` (whole value) — avoids re-sending the entire blob.
 
 ### 3. Configure the LLM
 
@@ -59,7 +59,7 @@ Two complementary ways to react to SDK changes from the host page:
 
 ```ts
 const sdk = createChatSdk({
-  onEvent(e) { if (e.type === 'window_prop_change') renderUI() },  // constructor-time, single
+  onEvent(e) { if (e.type === 'data_slot_change') renderUI() },  // constructor-time, single
   // ...
 }).mount()
 
@@ -68,7 +68,7 @@ const off = sdk.hook((e) => { if (e.type === 'tool_call') analytics.track(e.name
 // off() to unsubscribe
 ```
 
-Event types: `window_prop_change` / `message_update` / `tool_call` / `tool_result` / `text` / `round_start` / `done` / `error` (+ stream events in stream mode). `approval_request` is NOT forwarded (UI handles it).
+Event types: `data_slot_change` / `message_update` / `tool_call` / `tool_result` / `text` / `round_start` / `done` / `error` (+ stream events in stream mode). `approval_request` is NOT forwarded (UI handles it).
 
 ### 5. Headless mode (custom UI, framework-agnostic)
 
@@ -76,23 +76,23 @@ Event types: `window_prop_change` / `message_update` / `tool_call` / `tool_resul
 
 ### 6. Capabilities & presets
 
-- `capabilities: { windowOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — turn off unused built-ins to save tokens/size. `verify` is the reverse (off by default; `capabilities.verify:true` enables write-back self-check).
+- `capabilities: { dataSlotOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — turn off unused built-ins to save tokens/size. `verify` is the reverse (off by default; `capabilities.verify:true` enables write-back self-check).
 - `presets.pageBuilder` / `researcher` / `minimal` — spread into `createChatSdk` for common scenarios.
 
 ## Common use cases (match the user's scenario, then read [references/use-cases.md](references/use-cases.md) for full code)
 
 | Scenario | Key setup |
 |---|---|
-| **Low-code page builder** | `windowProps` = component tree; `edit_window_prop` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
-| **Form designer** | `windowProps` = field definitions with enum/required schemas; schema validation prevents malformed forms |
-| **CMS batch ops** | `eval_window_script` for bulk loops; `search_window_prop` to filter; `edit_window_prop` for targeted edits |
+| **Low-code page builder** | `dataSlots` = component tree; `edit_data_slot` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| **Form designer** | `dataSlots` = field definitions with enum/required schemas; schema validation prevents malformed forms |
+| **CMS batch ops** | `eval_script` for bulk loops; `search_data_slot` to filter; `edit_data_slot` for targeted edits |
 | **Ops config console** | `approval:{tools:[set,edit]}` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
-| **AI-native assistant** | `capabilities:{windowOps:false,fetch:false}` + custom `tools` (your product API) |
-| **Research agent** | `capabilities:{windowOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
-| **Headless / server-side** | `ui:false` + `storage:'memory'` + `capabilities:{windowOps:false,fetch:false}`; drive via `sdk.send` |
+| **AI-native assistant** | `capabilities:{dataSlotOps:false,fetch:false}` + custom `tools` (your product API) |
+| **Research agent** | `capabilities:{dataSlotOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
+| **Headless / server-side** | `ui:false` + `storage:'memory'` + `capabilities:{dataSlotOps:false,fetch:false}`; drive via `sdk.send` |
 | **Multi-agent on one page** | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
 | **MCP integration** | `mcp:[{transport,url}]` remote tool servers; `@modelcontextprotocol/sdk` optional peerDep |
-| **Lazy-loaded components (dynamic schemas)** | `sdk.addWindowProp(spec)` on component mount / `removeWindowProp` on unmount; tools pick up new registrations immediately, no rebuild. See [references/advanced.md §0](references/advanced.md) |
+| **Lazy-loaded components (dynamic schemas)** | `sdk.addDataSlot(spec)` on component mount / `removeDataSlot` on unmount; tools pick up new registrations immediately, no rebuild. See [references/advanced.md §0](references/advanced.md) |
 
 When the user describes a scenario, map it to the row above and load `references/use-cases.md` for the matching numbered case (1→10) with copy-paste code. For dynamic/lazy-loaded component schemas, custom tools/skills/subagents/MCP, load [references/advanced.md](references/advanced.md).
 
@@ -102,9 +102,9 @@ Detailed docs live in this skill's `references/` folder — load the one matchin
 
 - **[references/quickstart.md](references/quickstart.md)** — progressive setup from 5-line CDN to full-featured (Stages 0→6). Read when the user wants a step-by-step "from simple to complete" walkthrough.
 - **[references/options.md](references/options.md)** — every `createChatSdk` option: type, default, purpose & when to use. Read when the user asks "what does option X do" or needs to tune behavior.
-- **[references/api.md](references/api.md)** — instance methods (`mount`/`send`/`stream`/`inspect`/`switchSession`/`hook`/checkpoints), `defineTool`/`defineSkill`/`presets`, built-in window tools, and the full `SdkEvent` type table. Read when the user asks about APIs, tools, or events.
+- **[references/api.md](references/api.md)** — instance methods (`mount`/`send`/`stream`/`inspect`/`switchSession`/`hook`/checkpoints), `defineTool`/`defineSkill`/`presets`, built-in data slot tools, and the full `SdkEvent` type table. Read when the user asks about APIs, tools, or events.
 - **[references/use-cases.md](references/use-cases.md)** — 10 end-to-end scenarios (low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP / lazy-loaded dynamic components). Read when the user wants a concrete pattern for their use case.
-- **[references/advanced.md](references/advanced.md)** — detailed examples for the extensibility surfaces: **dynamic windowProps (`sdk.addWindowProp`/`removeWindowProp` for lazy-loaded components)**, custom `defineTool` (with error handling + coexisting with windowOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha). Read when the user asks "how to add custom tools / skills / subagents / MCP" or "lazy-load components with different schemas".
+- **[references/advanced.md](references/advanced.md)** — detailed examples for the extensibility surfaces: **dynamic dataSlots (`sdk.addDataSlot`/`removeDataSlot` for lazy-loaded components)**, custom `defineTool` (with error handling + coexisting with dataSlotOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha). Read when the user asks "how to add custom tools / skills / subagents / MCP" or "lazy-load components with different schemas".
 
 Project-level docs (in the repo, not bundled in this skill):
 - `doc/usage-guide.md` (zh) / `doc/usage-guide.en.md` — full options reference
@@ -118,4 +118,4 @@ Project-level docs (in the repo, not bundled in this skill):
 - **ChatOpenAI params**: use `apiKey` (not `openAIApiKey`), `model` (not `modelName`); `baseUrl` goes via `configuration.baseURL`.
 - **MCP injects 0 tools on first cold visit**: `vite.config.ts` `optimizeDeps.include` pre-declares the SDK sub-paths; if you fork the config, keep those entries or the first MCP page load injects nothing (reload fixes it).
 - **`.env` `VITE_AI_SYSTEM_PROMPT` must be single-line** (dotenv doesn't support multi-line values).
-- **Server-side (Node.js)**: works with `ui:false` + `storage:'memory'` + `capabilities:{windowOps:false,fetch:false}`; `mount()`/`unmount()` guard `window`/`document` access. Provide `globalThis.window` if you enable windowOps in Node.
+- **Server-side (Node.js)**: works with `ui:false` + `storage:'memory'` + `capabilities:{dataSlotOps:false,fetch:false}`; `mount()`/`unmount()` guard `window`/`document` access. Provide `globalThis.window` if you enable dataSlotOps in Node.

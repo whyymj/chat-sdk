@@ -2,7 +2,7 @@
  * 框架无关 SDK 入口 —— createChatSdk
  *
  * 组装:harness(createAgent)+ 内置中间件(todos/skills/vfs/memory/permissions)
- *   + 内置工具(window 操作/fetch 文档)+ 用户工具/skills/memory/windowProps
+ *   + 内置工具(数据槽操作/fetch 文档)+ 用户工具/skills/memory/dataSlots
  *   + 持久化(IndexedDB,降级内存;多 agent id 隔离;全局配额/LRU 淘汰)
  * 对外命令式 API:mount(container) / unmount() / send(message) / switchSession()。
  * 内部用 Vue 渲染 ChatDialog(打包进 SDK,使用者无需安装 Vue)。
@@ -44,7 +44,7 @@ import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
-import { createWindowOps, type WindowPropSpec, type WindowOpsController, type ConflictInfo, type ConflictResolution } from '../tools/windowOps'
+import { createDataSlotOps, type DataSlotSpec, type DataSlotOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataSlotOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -104,14 +104,14 @@ export interface ChatSdkOptions {
   /** AGENTS.md 风格持久指令(加载时优先于持久化的 memory) */
   memory?: string
   /** window 可操作属性注册表(范围 + schema 校验) */
-  windowProps?: WindowPropSpec[]
+  dataSlots?: DataSlotSpec[]
   /** scope 白名单(默认不启用;启用后对 window/vfs 工具生效) */
   permissions?: PermissionRule[]
   /** 自定义中间件(在内置中间件之后注入;可拦截/观察模型调用、工具执行、prompt 增强等) */
   middleware?: Middleware[]
   /** 虚拟工作区:初始文件 + 内存字节上限(默认 4MB,超限 LRU 淘汰最旧) */
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number }
-  /** 每个 window 属性最多保留快照数(默认 20,FIFO 丢最旧) */
+  /** 每个 数据槽最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number
@@ -127,7 +127,7 @@ export interface ChatSdkOptions {
   maxOutputTokens?: number
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
-    windowOps?: boolean      // window 操作工具集(默认 true;关 → 不装 10 个 window 工具,省 token/上下文)
+    dataSlotOps?: boolean      // 数据槽操作工具集(默认 true;关 → 不装 10 个 数据槽工具,省 token/上下文)
     fetch?: boolean          // 文档抓取工具 fetch_document(默认 true;关 → 不装)
     planning?: boolean       // todos 任务规划
     skills?: boolean         // 渐进式披露技能
@@ -161,7 +161,7 @@ export interface ChatSdkOptions {
   humanConfirm?: boolean
   /**
    * 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装)。
-   * tools 指定需确认的工具名(如 ['set_window_prop','edit_window_prop']);confirm 自定义判定;timeoutMs 超时自动拒绝。
+   * tools 指定需确认的工具名(如 ['set_data_slot','edit_data_slot']);confirm 自定义判定;timeoutMs 超时自动拒绝。
    * humanConfirmTool(传 approval 时默认 true;false 关闭):装载 request_human_confirmation 工具,LLM 可在不确定/多方案/高风险时主动征询用户。
    */
   approval?: {
@@ -198,7 +198,7 @@ export interface ChatSdkOptions {
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退零成本索引摘要,不阻塞用户) */
   summaryTimeoutMs?: number
   /**
-   * SDK 事件回调:订阅常用时机(window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * SDK 事件回调:订阅常用时机(数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * UI 与 headless 模式均生效;用于外部联动(如宿主页面响应式刷新、埋点、日志),替代轮询。
    * 注意:approval_request 不外发(UI 已处理,避免双重 resolve)。
    */
@@ -212,7 +212,7 @@ export interface ChatSdkOptions {
 
 /**
  * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
- * 定位:通用「页面操作助手」(规范化 JSON 操作 agent)——通过注册的 window 属性安全读写宿主页面数据。
+ * 定位:通用「页面操作助手」(规范化 JSON 操作 agent)——通过注册的 数据槽安全读写宿主页面数据。
  * 含身份 + 能力概述 + 可靠写入规则(改前先读、动态先查、字段以工具返回为准、写错看校验错误重试、优先增量 patch)。
  * 用户传了 systemPrompt 则完全覆盖此默认(不自动追加 reliableWriteRules,避免重复;需要时自行拼入 systemPromptHelpers.reliableWriteRules)。
  */
@@ -236,27 +236,27 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
-  /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos 等),供 debug 或外部消费 */
+  /** 检视 agent 详细信息(tools/skills/dataSlots/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
-  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
+  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 数据槽注册项 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
   listCheckpoints(): { id: number; label?: string; timestamp: number; messageCount: number }[]
   /**
-   * 运行时订阅 SDK 事件(常用时机:window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * 运行时订阅 SDK 事件(常用时机:数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * 与构造时 `onEvent` 选项互补:可注册多个监听器、运行时动态订阅;返回取消函数。
    * approval_request 不外发(UI 已处理)。流式事件仅 stream 模式(UI 默认 stream;sdk.send 走 invoke 无流式事件)。
    */
   hook(handler: SdkEventHandler): () => void
   /**
-   * 运行时动态新增/覆盖一个 window 属性注册项(懒加载组件场景:组件挂载时注册其 schema)。
-   * 立即对 window 工具生效(无需重建 agent);覆盖时保留旧快照栈。需开启 windowOps(默认开)。
+   * 运行时动态新增/覆盖一个 数据槽注册项(懒加载组件场景:组件挂载时注册其 schema)。
+   * 立即对 数据槽工具生效(无需重建 agent);覆盖时保留旧快照栈。需开启 dataSlotOps(默认开)。
    */
-  addWindowProp(spec: WindowPropSpec): void
-  /** 运行时移除一个 window 属性注册项(组件卸载时调用);返回是否确实存在并移除。快照栈一并清理 */
-  removeWindowProp(path: string): boolean
-  /** 列出当前所有已注册的 window 属性(反映动态增删后的最新状态) */
-  listWindowProps(): WindowPropSpec[]
+  addDataSlot(spec: DataSlotSpec): void
+  /** 运行时移除一个 数据槽注册项(组件卸载时调用);返回是否确实存在并移除。快照栈一并清理 */
+  removeDataSlot(path: string): boolean
+  /** 列出当前所有已注册的 数据槽(反映动态增删后的最新状态) */
+  listDataSlots(): DataSlotSpec[]
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
   pendingConflict: import('vue').Ref<PendingConflict | null>
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
@@ -319,12 +319,12 @@ interface AgentCore {
   mcpServers: { name: string; url: string; toolCount: number }[]
   /** 会话级 checkpoint 管理器(未开启 checkpoint → null) */
   checkpoint: CheckpointManager | null
-  /** windowOps 控制器(动态注册 add/remove/list;windowOps 关闭 → null) */
-  windowOpsController: WindowOpsController | null
+  /** dataSlotOps 控制器(动态注册 add/remove/list;dataSlotOps 关闭 → null) */
+  dataSlotOpsController: DataSlotOpsController | null
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
   pendingConflict: Ref<PendingConflict | null>
-  /** 当前注册的 windowProps(反映动态增删;供 inspect/verify/listWindowProps 读最新状态) */
-  liveWindowProps: () => WindowPropSpec[]
+  /** 当前注册的 dataSlots(反映动态增删;供 inspect/verify/listDataSlots 读最新状态) */
+  liveDataSlots: () => DataSlotSpec[]
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -405,19 +405,19 @@ function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Pr
 }
 
 /**
- * window 写工具名 → operation 映射(供 onEvent 的 window_prop_change 推断操作类型)。
- * 非 window 写工具返回 null。
+ * 数据槽写工具名 → operation 映射(供 onEvent 的 data_slot_change 推断操作类型)。
+ * 非 数据槽写工具返回 null。
  */
 function matchWindowOp(name: string): 'set' | 'edit' | 'delete' | 'restore' | null {
-  if (name === 'set_window_prop') return 'set'
-  if (name === 'edit_window_prop') return 'edit'
-  if (name === 'delete_window_prop') return 'delete'
-  if (name === 'restore_window_snapshot') return 'restore'
+  if (name === 'set_data_slot') return 'set'
+  if (name === 'edit_data_slot') return 'edit'
+  if (name === 'delete_data_slot') return 'delete'
+  if (name === 'restore_data_snapshot') return 'restore'
   return null
 }
 
 /** 按点分路径从 window 读值(如 'app.theme' → window.app.theme);读不到返回 undefined */
-function readWindowPath(path: string): unknown {
+function readSlotPath(path: string): unknown {
   const parts = path.split('.')
   let cur: any = (globalThis as any).window
   for (const p of parts) {
@@ -429,7 +429,7 @@ function readWindowPath(path: string): unknown {
 
 /**
  * 内部事件中间件:把常用时机经 onEvent 外发给集成方。
- * - wrapToolCall:window 写工具(set/edit/delete/restore)执行后发 window_prop_change(path/operation/value)
+ * - wrapToolCall:数据槽写工具(set/edit/delete/restore)执行后发 data_slot_change(path/operation/value)
  * - afterAgent:每轮 agent 结束发 message_update(消息数)
  * stream 事件(round_start/text/tool_call/done 等)由 core.stream 包装层转发(见下)。
  */
@@ -441,7 +441,7 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
       const op = matchWindowOp(ctx.name)
       if (op) {
         const path = String(ctx.args?.path ?? '')
-        emit({ type: 'window_prop_change', path, operation: op, value: path ? readWindowPath(path) : undefined })
+        emit({ type: 'data_slot_change', path, operation: op, value: path ? readSlotPath(path) : undefined })
       }
       return result
     },
@@ -453,7 +453,7 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
-  // ===== 乐观锁冲突人工介入(windowOps 写入时检测到属性已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
+  // ===== 乐观锁冲突人工介入(dataSlotOps 写入时检测到属性已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
   const pendingConflict = ref<PendingConflict | null>(null)
   let conflictSeq = 0
   function setPendingConflict(info: ConflictInfo): Promise<ConflictResolution> {
@@ -518,7 +518,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useCheckpoint = checkpointOpts !== undefined && checkpointOpts !== false
   const checkpointMgr: CheckpointManager | null = useCheckpoint
     ? createCheckpointManager({
-        windowPaths: (options.windowProps ?? []).map((w) => w.path),
+        slotPaths: (options.dataSlots ?? []).map((w) => w.path),
         vfsStore,
         todosMw,
         getTodos: () => agentRef.current?.getState?.()?.todos ?? [],
@@ -531,26 +531,26 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
   const caps = options.capabilities
-  const useWindowOps = caps?.windowOps !== false
+  const useDataSlotOps = caps?.dataSlotOps !== false
 
-  // 工具:window 操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
-  // windowOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
-  const windowOps = useWindowOps
-    ? createWindowOps(options.windowProps || [], {
+  // 工具:数据槽操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
+  // dataSlotOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
+  const dataSlotOps = useDataSlotOps
+    ? createDataSlotOps(options.dataSlots || [], {
         onAudit: options.debug ? (e) => console.log('[page-agent-sdk][window audit]', e) : undefined,
         maxSnapshots: options.maxSnapshots,
         onConflict: setPendingConflict,
       })
     : []
-  // window 属性注册表控制器(运行时动态增删;windowOps 关闭时为 null)
-  const windowOpsController = useWindowOps
-    ? (windowOps as StructuredToolInterface[] & { controller?: WindowOpsController }).controller ?? null
+  // 数据槽注册表控制器(运行时动态增删;dataSlotOps 关闭时为 null)
+  const dataSlotOpsController = useDataSlotOps
+    ? (dataSlotOps as StructuredToolInterface[] & { controller?: DataSlotOpsController }).controller ?? null
     : null
-  /** 当前注册的 windowProps(反映动态增删;供 inspect/verify 等读最新状态) */
-  const liveWindowProps = (): WindowPropSpec[] => windowOpsController?.list() ?? (options.windowProps ?? [])
+  /** 当前注册的 dataSlots(反映动态增删;供 inspect/verify 等读最新状态) */
+  const liveDataSlots = (): DataSlotSpec[] => dataSlotOpsController?.list() ?? (options.dataSlots ?? [])
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  const builtinTools = selectBuiltinTools(caps, windowOps, fetchDocTools)
+  const builtinTools = selectBuiltinTools(caps, dataSlotOps, fetchDocTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   const userTools: StructuredToolInterface[] = [
     ...(options.tools || []),
@@ -570,10 +570,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             if (!list.length) return '无可用 checkpoint,无法回退。'
             const ok = checkpointMgr.restore()
             return ok
-              ? `已回退到最近一次正常状态(checkpoint #${list[list.length - 1].id})。对话历史、window 注册属性、vfs、todos 已整体还原。请基于回退后的状态重新判断并继续。`
+              ? `已回退到最近一次正常状态(checkpoint #${list[list.length - 1].id})。对话历史、数据槽注册项、vfs、todos 已整体还原。请基于回退后的状态重新判断并继续。`
               : '回退失败:无可用 checkpoint。'
           },
-          { name: 'restore_last_checkpoint', description: '回退到最近一次正常状态(整体还原对话历史 + window 注册属性 + vfs + todos)。当本轮操作出错、页面被改坏、或走偏时调用,回到本轮起点重新来过。不传参数即回退最近一次。', schema: z.object({}).optional() },
+          { name: 'restore_last_checkpoint', description: '回退到最近一次正常状态(整体还原对话历史 + 数据槽注册项 + vfs + todos)。当本轮操作出错、页面被改坏、或走偏时调用,回到本轮起点重新来过。不传参数即回退最近一次。', schema: z.object({}).optional() },
         ),
         tool(
           async () => {
@@ -633,14 +633,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools, debug: options.debug })
     : undefined
 
-  // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回 window 检查而非臆测;windowOps 关闭则不含 window 工具)
-  const READONLY_FOR_ADVERSARIAL = ['get_window_prop', 'get_window_paths', 'list_window_props', 'describe_window_prop', 'fetch_document']
+  // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回 window 检查而非臆测;dataSlotOps 关闭则不含 数据槽工具)
+  const READONLY_FOR_ADVERSARIAL = ['get_data_slot', 'get_slot_paths', 'list_data_slots', 'describe_data_slot', 'fetch_document']
   const readonlyTools = allTools.filter((t) => READONLY_FOR_ADVERSARIAL.includes(t.name))
   // verify 中间件(check 省略时默认 createWriteBackCheck 写后读回验证)。maxAttempts 经 maxVerifyAttempts 透传 createAgent,非中间件字段
   const verifyMw = useVerify
     ? createVerifyMiddleware({
         check: options.verify!.check ?? createWriteBackCheck({
-          schemas: () => Object.fromEntries(liveWindowProps().map((p) => [p.path, p.schema])),  // 动态取最新(适配 sdk.addWindowProp)
+          schemas: () => Object.fromEntries(liveDataSlots().map((p) => [p.path, p.schema])),  // 动态取最新(适配 sdk.addDataSlot)
         }),
         adversarial: options.verify?.adversarial ? { llm: options.llm, tools: readonlyTools } : undefined,
       })
@@ -654,9 +654,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: options.subagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
     },
-    useWindowOps && !!(options.windowProps?.length),
+    useDataSlotOps && !!(options.dataSlots?.length),
   )
-  // SDK 事件回调:把常用时机外发给集成方(window 属性变化 / 消息更新 / 流式事件 / 错误)
+  // SDK 事件回调:把常用时机外发给集成方(数据槽变化 / 消息更新 / 流式事件 / 错误)
   const userOnEvent = options.onEvent
   // 运行时动态订阅(sdk.hook 注册,可多个监听器,各自可取消)
   const listeners = new Set<SdkEventHandler>()
@@ -686,13 +686,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底
             ...resolveContextOptions(options, modelCaps.contextWindow),
             llmInvoke: summaryLlmInvoke,
-            // A:压缩时注入当前 windowProps 注册表快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件);
-            //   windowOps 关闭时 liveWindowProps() 返回空,无影响
-            getRegisteredProps: () => liveWindowProps().map((p) => ({ path: p.path, description: p.description })),
+            // A:压缩时注入当前 dataSlots 注册表快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件);
+            //   dataSlotOps 关闭时 liveDataSlots() 返回空,无影响
+            getRegisteredSlots: () => liveDataSlots().map((p) => ({ path: p.path, description: p.description })),
             // C:跨轮摘要时保留 describe/list 工具的 result 摘要(防字段描述被摘要掉);用户可在 contextOptions 覆盖
             preserveLastToolResults:
               (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
-              ['describe_window_prop', 'list_window_props'],
+              ['describe_data_slot', 'list_data_slots'],
           }),
         ]
       : []),
@@ -710,7 +710,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
     ...(options.middleware || []),
-    // SDK 事件中间件(最末,最后观察):window 写后发 window_prop_change;每轮结束发 message_update
+    // SDK 事件中间件(最末,最后观察):数据槽写后发 data_slot_change;每轮结束发 message_update
     // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
     createSdkEventMiddleware(emit, messages),
   ]
@@ -732,9 +732,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     mcpClosers: [],
     mcpServers: [],
     checkpoint: checkpointMgr,
-    windowOpsController,
+    dataSlotOpsController,
     pendingConflict,
-    liveWindowProps,
+    liveDataSlots,
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -827,7 +827,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     resolveConflict,
 
-    /** 检视 agent 详情:tools/skills/windowProps/memory/middleware/todos(inspect() 与 debug 窗口消费) */
+    /** 检视 agent 详情:tools/skills/dataSlots/memory/middleware/todos(inspect() 与 debug 窗口消费) */
     getInfo(): AgentInfo {
       return {
         id: agentId,
@@ -835,7 +835,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
-        windowProps: liveWindowProps().map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
+        dataSlots: liveDataSlots().map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
         memory: options.memory ?? '',
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),
@@ -1095,7 +1095,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     stream: core.stream,
     inspect: core.getInfo,
     messages: core.messages,
-    /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);无可用 checkpoint 返回 false */
+    /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 数据槽注册项 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,
     /** 列出可用 checkpoint(回退点) */
     listCheckpoints: () => core.checkpoint?.list() ?? [],
@@ -1104,21 +1104,21 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       core.listeners.add(handler)
       return () => core.listeners.delete(handler)
     },
-    /** 运行时动态新增/覆盖 window 属性注册(懒加载组件场景) */
-    addWindowProp: (spec: WindowPropSpec) => {
-      if (!core.windowOpsController) {
-        console.warn('[page-agent-sdk] addWindowProp 忽略:windowOps 已关闭(capabilities.windowOps:false)')
+    /** 运行时动态新增/覆盖 数据槽注册(懒加载组件场景) */
+    addDataSlot: (spec: DataSlotSpec) => {
+      if (!core.dataSlotOpsController) {
+        console.warn('[page-agent-sdk] addDataSlot 忽略:dataSlotOps 已关闭(capabilities.dataSlotOps:false)')
         return
       }
-      core.windowOpsController.add(spec)
+      core.dataSlotOpsController.add(spec)
     },
-    /** 运行时移除 window 属性注册(组件卸载);返回是否曾存在 */
-    removeWindowProp: (path: string) => {
-      if (!core.windowOpsController) return false
-      return core.windowOpsController.remove(path)
+    /** 运行时移除 数据槽注册(组件卸载);返回是否曾存在 */
+    removeDataSlot: (path: string) => {
+      if (!core.dataSlotOpsController) return false
+      return core.dataSlotOpsController.remove(path)
     },
-    /** 列出当前所有已注册 window 属性(反映动态增删) */
-    listWindowProps: () => core.liveWindowProps(),
+    /** 列出当前所有已注册 数据槽(反映动态增删) */
+    listDataSlots: () => core.liveDataSlots(),
     /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
     pendingConflict: core.pendingConflict,
     /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */

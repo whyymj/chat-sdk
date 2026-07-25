@@ -1,16 +1,16 @@
-# Advanced examples — custom tools, skills, subagents, MCP, dynamic windowProps
+# Advanced examples — custom tools, skills, subagents, MCP, dynamic dataSlots
 
 Detailed, copy-paste examples for the extensibility surfaces. Read the section matching the user's need.
 
-## 0. Dynamic windowProps (lazy-loaded components) — `sdk.addWindowProp` / `removeWindowProp`
+## 0. Dynamic dataSlots (lazy-loaded components) — `sdk.addDataSlot` / `removeDataSlot`
 
-When components are lazy-loaded with **different schemas each**, don't declare all `windowProps` upfront. Register them at runtime as components mount/unmount. The agent's window tools pick up new registrations immediately (no agent rebuild).
+When components are lazy-loaded with **different schemas each**, don't declare all `dataSlots` upfront. Register them at runtime as components mount/unmount. The agent's data slot tools pick up new registrations immediately (no agent rebuild).
 
 ```ts
 const sdk = createChatSdk({
   container: '#chat', llm: { ... },
-  systemPrompt: '你是页面助手,按组件类型操作 window.app.components.<id>。',
-  windowProps: [
+  systemPrompt: '你是页面助手,按组件类型操作数据槽.app.components.<id>。',
+  dataSlots: [
     // statically-declared ones (always present)
     { path: 'app.config', description: '全局配置', schema: z.record(z.any()) },
   ],
@@ -18,40 +18,40 @@ const sdk = createChatSdk({
 
 // 组件懒加载时动态注册其 schema(结构各异)
 function onComponentMount(comp: { id: string; type: string; schema: z.ZodType }) {
-  sdk.addWindowProp({ path: `app.components.${comp.id}`, description: `${comp.type} 组件`, schema: comp.schema })
-  // 立即生效:AI 现在能 set/edit_window_prop 这个 path,按其 schema 校验
+  sdk.addDataSlot({ path: `app.components.${comp.id}`, description: `${comp.type} 组件`, schema: comp.schema })
+  // 立即生效:AI 现在能 set/edit_data_slot 这个 path,按其 schema 校验
 }
 
 // 组件卸载时移除(快照栈一并清理)
 function onComponentUnmount(id: string) {
-  sdk.removeWindowProp(`app.components.${id}`)
+  sdk.removeDataSlot(`app.components.${id}`)
 }
 
 // 查看当前所有注册项(反映动态增删)
-const current: WindowPropSpec[] = sdk.listWindowProps()
+const current: DataSlotSpec[] = sdk.listDataSlots()
 ```
 
 Notes:
-- `addWindowProp` 覆盖同名 path 时保留旧快照栈;按新 schema 校验。
-- 动态注册的属性**不自动纳入 checkpoint 快照**(checkpoint 的 windowPaths 在构造时固定);如需回滚动态组件,自行管理或重建。
-- `inspect().windowProps` 与 `verify`(默认 `createWriteBackCheck`)均反映动态注册的最新 schemas(verify 每次 check 实时取 `listWindowProps()`)。
-- `capabilities.windowOps:false` 时 `addWindowProp`/`removeWindowProp` 为 no-op(并 warn)。
+- `addDataSlot` 覆盖同名 path 时保留旧快照栈;按新 schema 校验。
+- 动态注册的属性**不自动纳入 checkpoint 快照**(checkpoint 的 slotPaths 在构造时固定);如需回滚动态组件,自行管理或重建。
+- `inspect().dataSlots` 与 `verify`(默认 `createWriteBackCheck`)均反映动态注册的最新 schemas(verify 每次 check 实时取 `listDataSlots()`)。
+- `capabilities.dataSlotOps:false` 时 `addDataSlot`/`removeDataSlot` 为 no-op(并 warn)。
 
-**完整可运行示例**:`examples/dynamic-demo/`(dev 启动后访问 `/examples/dynamic-demo/`)—— 演示加载/卸载结构各异的组件(banner/card/stat/chart),挂载即 `addWindowProp` 注册其 schema,AI 立即可按各自 schema 操作,卸载即 `removeWindowProp`;右侧实时显示 `sdk.listWindowProps()` 反映动态增删。
+**完整可运行示例**:`examples/dynamic-demo/`(dev 启动后访问 `/examples/dynamic-demo/`)—— 演示加载/卸载结构各异的组件(banner/card/stat/chart),挂载即 `addDataSlot` 注册其 schema,AI 立即可按各自 schema 操作,卸载即 `removeDataSlot`;右侧实时显示 `sdk.listDataSlots()` 反映动态增删。
 
 ### 动态场景下「压缩后不丢信息」的保障(内置,无需额外配置)
 
 动态组件随时增删,长会话压缩后 LLM 可能基于过时记忆操作已卸载的组件、或不知道新组件已注册。SDK 内置两道保障:
 
-- **A. 压缩时注入注册表快照**:`summarization` 中间件压缩 older 轮次时,自动把当前 `listWindowProps()` 的 `path + description` 作为一段附进摘要 system 消息(不进压缩)。LLM 即便忘了历史 `describe`,每轮仍看得到「当前有哪些可操作 path」,不会再去操作已卸载的组件。`windowOps` 关闭时返回空,无影响。
-- **C. preserveLastToolResults**:`contextOptions.preserveLastToolResults`(默认 `['describe_window_prop','list_window_props']`)指定这些工具的步骤 `result` 在跨轮摘要时额外保留摘要片段进 summaryMsg。即便 older 轮被摘要,关键字段说明仍在摘要里,LLM 不必反复 `describe`。设为 `[]` 关闭。
+- **A. 压缩时注入注册表快照**:`summarization` 中间件压缩 older 轮次时,自动把当前 `listDataSlots()` 的 `path + description` 作为一段附进摘要 system 消息(不进压缩)。LLM 即便忘了历史 `describe`,每轮仍看得到「当前有哪些可操作 path」,不会再去操作已卸载的组件。`dataSlotOps` 关闭时返回空,无影响。
+- **C. preserveLastToolResults**:`contextOptions.preserveLastToolResults`(默认 `['describe_data_slot','list_data_slots']`)指定这些工具的步骤 `result` 在跨轮摘要时额外保留摘要片段进 summaryMsg。即便 older 轮被摘要,关键字段说明仍在摘要里,LLM 不必反复 `describe`。设为 `[]` 关闭。
 
 ```ts
 // 默认即开启 A + C;如需关闭或自定义:
 createChatSdk({
   contextOptions: {
     preserveLastToolResults: [],  // 关闭 C(不保留工具结果摘要)
-    // getRegisteredProps 由 SDK 内部注入(来自 sdk.listWindowProps),无需手动传
+    // getRegisteredSlots 由 SDK 内部注入(来自 sdk.listDataSlots),无需手动传
   },
   // ...
 })
@@ -71,7 +71,7 @@ createChatSdk({
 
 ## 1. Custom tools (`defineTool`)
 
-Custom tools extend the agent beyond built-in `windowOps`/`fetch`. Use them to expose your product's API to the AI.
+Custom tools extend the agent beyond built-in `dataSlotOps`/`fetch`. Use them to expose your product's API to the AI.
 
 ### Minimal
 
@@ -105,25 +105,25 @@ const updatePrice = defineTool({
 })
 ```
 
-### Coexisting with windowOps
+### Coexisting with dataSlotOps
 
-Mix custom tools with built-in window tools:
+Mix custom tools with built-in data slot tools:
 
 ```ts
 createChatSdk({
   container: '#chat', llm: { ... },
-  windowProps: [{ path: 'app.config', description: '配置', schema: z.record(z.any()) }],
-  tools: [lookupOrder, updatePrice],   // custom + built-in windowOps together
+  dataSlots: [{ path: 'app.config', description: '配置', schema: z.record(z.any()) }],
+  tools: [lookupOrder, updatePrice],   // custom + built-in dataSlotOps together
 }).mount()
 ```
 
-### Pure custom-tool agent (no windowOps)
+### Pure custom-tool agent (no dataSlotOps)
 
 ```ts
 createChatSdk({
   container: '#chat', llm: { ... },
   tools: [lookupOrder, updatePrice],
-  capabilities: { windowOps: false, fetch: false },   // drop built-ins
+  capabilities: { dataSlotOps: false, fetch: false },   // drop built-ins
 }).mount()
 ```
 
@@ -177,7 +177,7 @@ createChatSdk({
   container: '#chat', llm: { ... },
   systemPrompt: '多源对比时用 spawn_agents 并行委派。',
   subagent: {
-    allowedTools: ['fetch_document', 'get_window_prop'],  // read-only subset (no spawn → no recursion)
+    allowedTools: ['fetch_document', 'get_data_slot'],  // read-only subset (no spawn → no recursion)
     maxDepth: 1,           // physical recursion cut (default 1)
     maxParallel: 3,        // max parallel subagents in spawn_agents
     temperature: 0.2,      // subagent temperature (default inherits main)
@@ -199,13 +199,13 @@ createChatSdk({
     {
       id: 'researcher',
       description: '调研专家:搜集资料、对比方案(只读)',
-      tools: ['fetch_document', 'get_window_prop'],   // read-only
+      tools: ['fetch_document', 'get_data_slot'],   // read-only
       temperature: 0.2,
     },
     {
       id: 'reviewer',
       description: '审查专家:检查代码/配置的安全与性能问题',
-      tools: ['get_window_prop', 'search_window_prop'],
+      tools: ['get_data_slot', 'search_data_slot'],
       systemPrompt: '你是审查专家,只报告问题不改数据。',
       temperature: 0.1,
     },
@@ -270,13 +270,13 @@ createChatSdk({
   container: '#chat',
   llm: { apiKey, baseUrl, model },
   systemPrompt: '...',
-  windowProps: [{ path: 'app.data', description: '...', schema: z.record(z.any()) }],
+  dataSlots: [{ path: 'app.data', description: '...', schema: z.record(z.any()) }],
   tools: [lookupOrder, updatePrice],          // custom tools
   skills: [apiDesignSkill, brandSkill],         // progressive skills
   subagents: [{ id: 'researcher', description: '...', tools: ['fetch_document'] }],  // pre-declared
   mcp: [{ transport: 'http', url: '...' }],     // external tools
   capabilities: { verify: true },               // self-check
-  approval: { tools: ['set_window_prop'] },     // human confirm writes
+  approval: { tools: ['set_data_slot'] },     // human confirm writes
   checkpoint: true,                             // rollback
 }).mount()
 ```

@@ -343,9 +343,9 @@ function flowNodeDetail(lg: DebugLog): string {
                   </div>
                 </div>
 
-                <div v-if="agentInfo.windowProps.length" class="info-section">
-                  <div class="info-title">🪟 可操作属性 ({{ agentInfo.windowProps.length }})</div>
-                  <div v-for="w in agentInfo.windowProps" :key="w.path" class="info-item">
+                <div v-if="agentInfo.dataSlots.length" class="info-section">
+                  <div class="info-title">🪟 可操作属性 ({{ agentInfo.dataSlots.length }})</div>
+                  <div v-for="w in agentInfo.dataSlots" :key="w.path" class="info-item">
                     <div class="info-name">{{ w.path }}</div>
                     <div class="info-desc">{{ w.description }}</div>
                   </div>

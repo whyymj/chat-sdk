@@ -7,7 +7,7 @@ import DebugDrawer from './DebugDrawer.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
-import type { ConflictResolution } from '../tools/windowOps'
+import type { ConflictResolution } from '../tools/dataSlotOps'
 
 const props = withDefaults(defineProps<{
   fetchResponse?: (messages: AgentMessage[]) => Promise<string>
@@ -604,7 +604,7 @@ const copiedMsg = ref(false)
 .approval-opt { padding: 5px 14px; border: 1px solid var(--cs-primary); border-radius: 6px; background: #fff; color: var(--cs-primary); font-size: 13px; cursor: pointer; transition: all 0.2s; }
 .approval-opt:hover { background: var(--cs-primary); color: #fff; }
 
-/* 乐观锁冲突条(windowOps 写入时 expectedHash 不匹配,挂起等用户决定) */
+/* 乐观锁冲突条(dataSlotOps 写入时 expectedHash 不匹配,挂起等用户决定) */
 .conflict-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #dc2626; border-radius: 10px; background: #fef2f2; }
 .conflict-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #991b1b; }
 .conflict-icon { font-size: 15px; }

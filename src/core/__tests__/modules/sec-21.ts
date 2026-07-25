@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -86,7 +86,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(falseOpts.enableLLMSummary === true && falseOpts.recallTopK === 3, 'contextOptions:false → 用 auto preset 默认')
   }
 
-  // ============ 大 JSON 查询/搜索(query_window_prop / search_window_prop)============
+  // ============ 大 JSON 查询/搜索(query_data_slot / search_data_slot)============
   console.log('\n[window query + search]')
   {
     const data = {
@@ -98,7 +98,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       meta: { total: 3, owner: { name: '张三', city: '北京' } },
     }
     ;(globalThis as any).window = { page: data }
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'page', description: '页面', schema: z.any() },
     ])
     const t = byName(tools)
@@ -119,18 +119,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     nodes = jpEval(data, '$.components[*].type')
     assert(nodes.length === 3, 'jpEval: $.components[*].type 通配展开')
 
-    // 工具包装:query_window_prop
-    let r = await invoke(t['query_window_prop'], { path: 'page', expr: '$.components[?(@.stock==0)]' })
+    // 工具包装:query_data_slot
+    let r = await invoke(t['query_data_slot'], { path: 'page', expr: '$.components[?(@.stock==0)]' })
     let parsed = JSON.parse(r)
-    assert(parsed.matched === 1 && parsed.results[0].index === 1, 'query_window_prop: stock==0 → 命中 index 1')
+    assert(parsed.matched === 1 && parsed.results[0].index === 1, 'query_data_slot: stock==0 → 命中 index 1')
 
     // 工具包装:未注册属性拒绝
-    r = await invoke(t['query_window_prop'], { path: 'nope', expr: '$' })
-    assert(/未注册/.test(r), 'query_window_prop: 未注册属性被拒')
+    r = await invoke(t['query_data_slot'], { path: 'nope', expr: '$' })
+    assert(/未注册/.test(r), 'query_data_slot: 未注册属性被拒')
 
     // 工具包装:语法错误返回错误信息(不抛)
-    r = await invoke(t['query_window_prop'], { path: 'page', expr: '$[?(@.x==' })
-    assert(/JSONPath/.test(r), 'query_window_prop: 语法错误返回错误信息')
+    r = await invoke(t['query_data_slot'], { path: 'page', expr: '$[?(@.x==' })
+    assert(/JSONPath/.test(r), 'query_data_slot: 语法错误返回错误信息')
 
     // searchJson 子串
     let hits = searchJson(data, '卡片')
@@ -144,17 +144,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     hits = searchJson(data, '^商品', { mode: 'regex' })
     assert(hits.length === 2, 'searchJson: regex ^商品 → 命中 2')
 
-    // 工具包装:search_window_prop
-    r = await invoke(t['search_window_prop'], { path: 'page', query: '北京' })
+    // 工具包装:search_data_slot
+    r = await invoke(t['search_data_slot'], { path: 'page', query: '北京' })
     parsed = JSON.parse(r)
-    assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_window_prop: 命中 owner.city')
+    assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_data_slot: 命中 owner.city')
 
     // 工具数量:10 + 3 新工具 = 13
-    assert(tools.length === 13, 'createWindowOps: 含 13 个工具(10 原有 + query/search/eval)')
+    assert(tools.length === 13, 'createDataSlotOps: 含 13 个工具(10 原有 + query/search/eval)')
 
-    // eval_window_script 工具存在(node 无 Worker,仅校验装配 + 未注册拒绝)
-    assert(!!t['eval_window_script'], 'eval_window_script 工具已装配')
-    r = await invoke(t['eval_window_script'], { path: 'nope', script: 'data' })
-    assert(/未注册/.test(r), 'eval_window_script: 未注册属性被拒')
+    // eval_script 工具存在(node 无 Worker,仅校验装配 + 未注册拒绝)
+    assert(!!t['eval_script'], 'eval_script 工具已装配')
+    r = await invoke(t['eval_script'], { path: 'nope', script: 'data' })
+    assert(/未注册/.test(r), 'eval_script: 未注册属性被拒')
   }
 }

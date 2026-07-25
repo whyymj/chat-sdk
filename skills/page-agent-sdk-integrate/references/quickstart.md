@@ -20,7 +20,7 @@ Drop into any HTML page. The built-in dialog mounts itself. (`systemPrompt` is o
     container: '#root',
     llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     systemPrompt: 'You are a page assistant. Read/write window.app via tools.',
-    windowProps: [
+    dataSlots: [
       { path: 'app.title', description: '标题', schema: ChatSdk.z.string() },
       { path: 'app.theme', description: '主题', schema: ChatSdk.z.enum(['light','dark']) },
     ],
@@ -28,7 +28,7 @@ Drop into any HTML page. The built-in dialog mounts itself. (`systemPrompt` is o
 </script>
 ```
 
-Talk to it: "change theme to dark" → AI calls `set_window_prop` → `window.app.theme === 'dark'`.
+Talk to it: "change theme to dark" → AI calls `set_data_slot` → `window.app.theme === 'dark'`.
 
 ## Stage 2 — npm + module project
 
@@ -46,7 +46,7 @@ const sdk = createChatSdk({
   container: '#root',
   llm: { apiKey: import.meta.env.VITE_AI_API_KEY, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   systemPrompt: 'You are a page assistant. Read/write window.app via tools.',
-  windowProps: [
+  dataSlots: [
     { path: 'app.title',  description: '标题',   schema: z.string() },
     { path: 'app.theme',  description: '主题',   schema: z.enum(['light','dark']) },
     { path: 'app.items',  description: '列表项', schema: z.array(z.object({ name: z.string(), price: z.number() })) },
@@ -61,10 +61,10 @@ Subscribe via `onEvent` (constructor) or `sdk.hook` (runtime, multi-listener, ca
 ```ts
 const sdk = createChatSdk({
   onEvent(e) {
-    if (e.type === 'window_prop_change') renderUI()       // host page reactive refresh
+    if (e.type === 'data_slot_change') renderUI()       // host page reactive refresh
     if (e.type === 'error') console.error(e.message)
   },
-  // ...llm, windowProps...
+  // ...llm, dataSlots...
 }).mount()
 
 // runtime listener (e.g. analytics), cancellable
@@ -79,7 +79,7 @@ No built-in dialog; drive the reactive `messages` array yourself.
 ```ts
 const sdk = createChatSdk({
   ui: false,                                  // headless
-  llm: { ... }, systemPrompt: '...', windowProps: [...],
+  llm: { ... }, systemPrompt: '...', dataSlots: [...],
 }).mount()
 
 // your own UI reads sdk.messages (reactive) and calls sdk.send
@@ -92,10 +92,10 @@ Reusable `ChatDialog` / `MessageContent` / `CodePreview` components + `useChat` 
 
 ```ts
 createChatSdk({
-  // ...llm, windowProps...
+  // ...llm, dataSlots...
   capabilities: { verify: true },             // write-back self-check before agent returns
   verify: { maxAttempts: 2 },                 // auto-correct on failure (default check = write-back read + schema)
-  approval: { tools: ['set_window_prop', 'edit_window_prop'] },  // human-confirm before writes
+  approval: { tools: ['set_data_slot', 'edit_data_slot'] },  // human-confirm before writes
   checkpoint: true,                           // session-level rollback on bad edits
   maxParallelTools: 1,                        // serial tool calls (safe for stateful middleware)
   contextPreset: 'conservative',              // save cost on long sessions
@@ -108,14 +108,14 @@ createChatSdk({
 createChatSdk({
   id: 'my-page-agent',          // STABLE id (multi-agent isolation); omit = random + warn
   storage: 'indexed',           // persist messages/vfs/todos/memory to IndexedDB
-  // ...llm, windowProps...
+  // ...llm, dataSlots...
 }).mount()
 
 // later, switch session:
 await sdk.switchSession('session-abc')   // load or create
 ```
 
-## Stage 7 — Dynamic windowProps (lazy-loaded components)
+## Stage 7 — Dynamic dataSlots (lazy-loaded components)
 
 Components loaded on demand with **different schemas each** — register at mount, unregister at unmount. No need to pre-declare every possible component at `createChatSdk`. The agent picks up new registrations immediately (no rebuild); `summarization` also embeds a live registry snapshot in compressed summaries so the agent won't act on stale memory.
 
@@ -123,13 +123,13 @@ Components loaded on demand with **different schemas each** — register at moun
 const sdk = createChatSdk({
   container: '#root', llm: { ... },
   // only the static container is pre-declared; per-component paths are dynamic
-  windowProps: [{ path: 'app.components', description: '动态组件容器(按 id 存)', schema: z.record(z.string(), z.any()) }],
+  dataSlots: [{ path: 'app.components', description: '动态组件容器(按 id 存)', schema: z.record(z.string(), z.any()) }],
 }).mount()
 
 // component mounts (lazy) → register its schema, immediately operative
 function mountComp(comp: { id: string; type: 'banner' | 'card' | 'stat' | 'chart' }) {
   window.app.components[comp.id] = reactive(comp)
-  sdk.addWindowProp({
+  sdk.addDataSlot({
     path: `app.components.${comp.id}`,
     description: `${typeDescriptions[comp.type]}`,  // ← give the LLM field-level detail (it can't see the zod schema)
     schema: compSchemas[comp.type],                 // ← validation guardrail
@@ -138,9 +138,9 @@ function mountComp(comp: { id: string; type: 'banner' | 'card' | 'stat' | 'chart
 // component unmounts → unregister (snapshot stack cleaned too)
 function unmountComp(id: string) {
   delete window.app.components[id]
-  sdk.removeWindowProp(`app.components.${id}`)
+  sdk.removeDataSlot(`app.components.${id}`)
 }
-sdk.listWindowProps()  // live registry (reflects dynamic add/remove)
+sdk.listDataSlots()  // live registry (reflects dynamic add/remove)
 ```
 
 > Key points: `description` is the LLM's only source of field structure (write it in detail); `schema` is the validation guardrail (the LLM never sees it). Write operations return the current operable path list; long-session compression keeps a live registry snapshot + preserved `describe`/`list` results so the agent never loses track of dynamic components.

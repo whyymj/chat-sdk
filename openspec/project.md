@@ -9,7 +9,7 @@
 - **纯浏览器运行**:无 Node 文件系统依赖;不引入 `langchain` 整包 / LangGraph(规避 [deepagentsjs#292](https://github.com/langchain-ai/deepagentsjs/issues/292) 浏览器打包阻塞)。
 - **架构对齐 Deep Agents**:ReAct 循环 + 可插拔中间件 + 内存 backend,自研实现;仅依赖浏览器可用的 `@langchain/openai` + `@langchain/core`。
 - **框架无关**:对外暴露命令式 API(`createChatSdk`),内部 Vue 打包进 SDK,使用者无需安装/了解 Vue。
-- **安全边界在 tool 层**:window 操作经属性注册表 + schema 校验(无人工审批,但强约束范围与格式)。
+- **安全边界在 tool 层**:数据槽操作经属性注册表 + schema 校验(无人工审批,但强约束范围与格式)。
 
 ## 技术栈
 - Vue 3.5(**打包进 SDK**,非 peer)、Vite 8 库模式、TypeScript

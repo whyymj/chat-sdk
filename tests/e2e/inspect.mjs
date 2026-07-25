@@ -5,29 +5,29 @@ export async function run() {
   setupEnv()
   const ctx = createAssert(); const { assert } = ctx
 
-  console.log('[e2e:inspect] inspect().tools 反映 windowOps 开关 + 工具集完整性')
+  console.log('[e2e:inspect] inspect().tools 反映 dataSlotOps 开关 + 工具集完整性')
   {
     globalThis.window.app = {}
     const sdkOn = createChatSdk({
       ui: false, id: 'e2e-tools-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.x', description: 'x', schema: z.string() }],
+      dataSlots: [{ path: 'app.x', description: 'x', schema: z.string() }],
     })
     await sdkOn.mount()
     const toolsOn = sdkOn.inspect().tools.map((t) => t.name)
-    const expectedWinTools = ['list_window_props', 'describe_window_prop', 'get_window_prop', 'get_window_paths', 'set_window_prop', 'edit_window_prop', 'delete_window_prop', 'snapshot_window_prop', 'list_window_snapshots', 'restore_window_snapshot', 'query_window_prop', 'search_window_prop', 'eval_window_script']
+    const expectedWinTools = ['list_data_slots', 'describe_data_slot', 'get_data_slot', 'get_slot_paths', 'set_data_slot', 'edit_data_slot', 'delete_data_slot', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'query_data_slot', 'search_data_slot', 'eval_script']
     for (const name of expectedWinTools) {
-      assert(toolsOn.includes(name), `windowOps 开启 → 含 ${name}`)
+      assert(toolsOn.includes(name), `dataSlotOps 开启 → 含 ${name}`)
     }
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
     const sdkOff = createChatSdk({
       ui: false, id: 'e2e-tools-off', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, windowOps: false },
+      capabilities: { ...MIN_CAPS, dataSlotOps: false },
     })
     await sdkOff.mount()
     const toolsOff = sdkOff.inspect().tools.map((t) => t.name)
-    assert(!toolsOff.some((n) => n.endsWith('_window_prop') || n.endsWith('_window_snapshot') || n === 'eval_window_script'), 'windowOps:false → 不含任何 window 工具')
+    assert(!toolsOff.some((n) => n.endsWith('_data_slot') || n.endsWith('_data_snapshot') || n === 'eval_script'), 'dataSlotOps:false → 不含任何 data slot 工具')
     sdkOff.unmount()
   }
 
@@ -36,8 +36,8 @@ export async function run() {
     globalThis.window.app = {}
     const sdkFull = createChatSdk({
       ui: false, id: 'e2e-mw-full', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { windowOps: false, fetch: false },
-      windowProps: [{ path: 'app.x', description: 'x', schema: z.string() }],
+      capabilities: { dataSlotOps: false, fetch: false },
+      dataSlots: [{ path: 'app.x', description: 'x', schema: z.string() }],
     })
     await sdkFull.mount()
     const mwFull = sdkFull.inspect().middleware
@@ -49,7 +49,7 @@ export async function run() {
 
     const sdkLean = createChatSdk({
       ui: false, id: 'e2e-mw-lean', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { windowOps: false, fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
+      capabilities: { dataSlotOps: false, fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
     })
     await sdkLean.mount()
     const mwLean = sdkLean.inspect().middleware

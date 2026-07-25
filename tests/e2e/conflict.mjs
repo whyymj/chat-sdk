@@ -10,7 +10,7 @@ export async function run() {
     globalThis.window.app = { title: 'orig' }
     const sdk = createChatSdk({
       ui: false, id: 'e2e-conflict', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     assert(sdk.pendingConflict != null && 'value' in sdk.pendingConflict, 'sdk.pendingConflict 是响应式 ref(有 value)')
@@ -22,15 +22,15 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:conflict] onConflict 经 createWindowOps 独立可用(不接 ChatDialog)')
+  console.log('[e2e:conflict] onConflict 经 createDataSlotOps 独立可用(不接 ChatDialog)')
   {
-    // 直接验证 createWindowOps 的 onConflict 选项存在(集成方可独立用)
-    const { createWindowOps } = await import('../../dist/page-agent-sdk.js')
+    // 直接验证 createDataSlotOps 的 onConflict 选项存在(集成方可独立用)
+    const { createDataSlotOps } = await import('../../dist/page-agent-sdk.js')
     globalThis.window.app = { x: 'a' }
-    const tools = createWindowOps([{ path: 'app.x', description: 'x', schema: z.string() }], {
+    const tools = createDataSlotOps([{ path: 'app.x', description: 'x', schema: z.string() }], {
       onConflict: () => Promise.resolve({ action: 'keep_external' }),
     })
-    assert(Array.isArray(tools) && tools.length > 0, 'createWindowOps 传 onConflict 选项 → 工具数组正常返回')
+    assert(Array.isArray(tools) && tools.length > 0, 'createDataSlotOps 传 onConflict 选项 → 工具数组正常返回')
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

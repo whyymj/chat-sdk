@@ -7,20 +7,20 @@ import {
   createApprovalMiddleware, createHumanConfirmTool, createHumanConfirmMiddleware,
   createCheckpointManager, createCheckpointMiddleware, createUsageHintsMiddleware, createVfs,
   createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError,
-  createWindowOps, fetchDocTools, fetchTools, defineWindowToolset, selectBuiltinTools,
+  createDataSlotOps, fetchDocTools, fetchTools, defineDataSlotToolset, selectBuiltinTools,
   jpEval, searchJson, runSandboxedScript,
   toolError, zodError, jsonParseError, formatZodIssues,
   resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars,
   ChatDialog, MessageContent, CodePreview, useChat,
 } from '../types/index'
 import type {
-  ChatSdk, ChatSdkOptions, LLMConfig, AgentInfo, ToolInfo, SkillInfo, WindowPropInfo, SubagentInfo,
+  ChatSdk, ChatSdkOptions, LLMConfig, AgentInfo, ToolInfo, SkillInfo, DataSlotInfo, SubagentInfo,
   AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, ToolStep,
   Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate,
   VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions,
   SubagentOptions, SubagentLlmConfig, SubagentConfig,
   ApprovalOptions, CheckpointManager, CheckpointMeta, CheckpointDeps,
-  SkillSpec, WindowPropSpec, WindowOpsOptions, WindowOpsController, WindowAuditEntry, WindowSnapshotEntry,
+  SkillSpec, DataSlotSpec, DataSlotOpsOptions, DataSlotOpsController, DataSlotAuditEntry, DataSlotSnapshotEntry,
   JpNode, SearchHit, SearchMode, EvalResult, ToolErrorInput,
   McpServerConfig, McpTransport, McpConnection,
   ContextPreset, ContextManagerOptions, CompressionStats,
@@ -37,7 +37,7 @@ export const _v = {
   createHumanConfirmTool, createHumanConfirmMiddleware,
   createCheckpointManager, createCheckpointMiddleware, createUsageHintsMiddleware, createVfs,
   createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError,
-  createWindowOps, fetchDocTools, fetchTools, defineWindowToolset, selectBuiltinTools,
+  createDataSlotOps, fetchDocTools, fetchTools, defineDataSlotToolset, selectBuiltinTools,
   jpEval, searchJson, runSandboxedScript, toolError, zodError, jsonParseError, formatZodIssues,
   resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars,
   ChatDialog, MessageContent, CodePreview, useChat,
@@ -46,14 +46,14 @@ export const _v = {
 // 类型导出存在(拼错/缺失则 tsc 报错)
 export type _T = {
   a: ChatSdk; b: ChatSdkOptions; c: LLMConfig; d: AgentInfo; e: ToolInfo; f: SkillInfo;
-  g: WindowPropInfo; h: SubagentInfo; i: AgentMessage; j: AgentConfig; k: AgentState;
+  g: DataSlotInfo; h: SubagentInfo; i: AgentMessage; j: AgentConfig; k: AgentState;
   l: StreamEvent; m: StreamHandler; n: SdkEvent; o: SdkEventHandler; p: ToolStep;
   q: Middleware; r: ModelRequest; s: ModelResponse; t: ToolCallContext; u: StateUpdate;
   v: VerifyCheck; w: VerifyCheckContext; x: VerifyCheckResult; y: VerifyMiddlewareOptions; z2: WriteBackCheckOptions;
   a2: SubagentOptions; b2: SubagentLlmConfig; c2: SubagentConfig;
   d2: ApprovalOptions; e2: CheckpointManager; f2: CheckpointMeta; g2: CheckpointDeps;
-  h2: SkillSpec; i2: WindowPropSpec; j2: WindowOpsOptions; k2: WindowOpsController;
-  l2: WindowAuditEntry; m2: WindowSnapshotEntry;
+  h2: SkillSpec; i2: DataSlotSpec; j2: DataSlotOpsOptions; k2: DataSlotOpsController;
+  l2: DataSlotAuditEntry; m2: DataSlotSnapshotEntry;
   n2: JpNode; o2: SearchHit; p2: SearchMode; q2: EvalResult; r2: ToolErrorInput;
   s2: McpServerConfig; t2: McpTransport; u2: McpConnection;
   v2: ContextPreset; w2: ContextManagerOptions; x2: CompressionStats;
@@ -74,7 +74,7 @@ export const _r: string = systemPromptHelpers.reliableWriteRules
 export const _sdk: ChatSdk = null as any as ReturnType<typeof createChatSdk>
 
 // AgentInfo 含关键字段
-export const _ai: Pick<AgentInfo, 'id' | 'model' | 'systemPrompt' | 'tools' | 'skills' | 'windowProps' | 'memory' | 'middleware' | 'todos' | 'subagent' | 'verify' | 'mcp' | 'lastCompression' | 'checkpoints'> = null as any
+export const _ai: Pick<AgentInfo, 'id' | 'model' | 'systemPrompt' | 'tools' | 'skills' | 'dataSlots' | 'memory' | 'middleware' | 'todos' | 'subagent' | 'verify' | 'mcp' | 'lastCompression' | 'checkpoints'> = null as any
 
 // ContextPreset 是字面量联合
 export const _cp: ContextPreset = 'auto'

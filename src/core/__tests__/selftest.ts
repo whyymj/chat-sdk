@@ -33,7 +33,7 @@ import { run as run_sec_26 } from './modules/sec-26'
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
 
-// mock 宿主页面 window(windowOps 工具函数体的 window 解析到此)
+// mock 宿主页面 window(dataSlotOps 工具函数体的 window 解析到此)
 ;(globalThis as any).window = { app: { theme: 'light', count: 0 } }
 
 let passed = 0

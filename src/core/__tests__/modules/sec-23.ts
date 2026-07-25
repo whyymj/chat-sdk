@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -47,14 +47,14 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[security: merge 原型污染 + jsonPath 边界]')
   {
     ;(globalThis as any).window = { page: { a: 1, items: ['x'] } }
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'page', description: 'p', schema: z.object({ a: z.number(), items: z.array(z.string()) }).passthrough() },
     ])
     const t = byName(tools)
     const w = (globalThis as any).window
 
     // merge value 含 __proto__/constructor:不应污染 Object.prototype,不应给目标加 own 危险键
-    let r = await invoke(t['edit_window_prop'], { path: 'page', op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"constructor":{"x":1},"b":2}' })
+    let r = await invoke(t['edit_data_slot'], { path: 'page', op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"constructor":{"x":1},"b":2}' })
     assert(w.page.b === 2, 'merge: 正常键 b 落地')
     assert(!Object.prototype.hasOwnProperty.call(w.page, '__proto__'), 'merge: 目标无 __proto__ own 属性')
     assert(!Object.prototype.hasOwnProperty.call(w.page, 'constructor'), 'merge: 目标无 constructor own 属性')
@@ -62,12 +62,12 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(({} as any).x === undefined, 'merge: 未污染 Object.prototype(constructor 未生效)')
 
     // jsonPath 含 __proto__ 段:一律拒绝(PATH_UNSAFE)
-    r = await invoke(t['edit_window_prop'], { path: 'page', op: 'set', jsonPath: '__proto__.polluted', value: 'true' })
+    r = await invoke(t['edit_data_slot'], { path: 'page', op: 'set', jsonPath: '__proto__.polluted', value: 'true' })
     assert(/PATH_UNSAFE/.test(r), 'edit: jsonPath 含 __proto__ 被拒')
     assert(({} as any).polluted === undefined, 'edit: __proto__ jsonPath 未造成污染')
 
     // set 越界数组索引:schema 校验在副本上拦截稀疏空洞,不写入
-    r = await invoke(t['edit_window_prop'], { path: 'page', op: 'set', jsonPath: 'items.5', value: '"y"' })
+    r = await invoke(t['edit_data_slot'], { path: 'page', op: 'set', jsonPath: 'items.5', value: '"y"' })
     assert(/SCHEMA_INVALID|PATCH_FAILED/.test(r), 'edit: set 越界数组索引被 schema 拦截(不产生稀疏空洞)')
     assert(w.page.items.length === 1 && w.page.items[0] === 'x', 'edit: 越界 set 未改动原数组')
   }

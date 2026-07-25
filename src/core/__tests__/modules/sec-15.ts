@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -46,7 +46,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
   console.log('\n[approval 中间件]')
   {
-    const mw = createApprovalMiddleware({ tools: ['set_window_prop'] })
+    const mw = createApprovalMiddleware({ tools: ['set_data_slot'] })
     assert(mw.name === 'approval', '中间件 name=approval')
 
     let captured: any = null
@@ -59,14 +59,14 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 1. 不需确认的工具 → 直接 next,不发事件
     let nextCalled = false
-    await mw.wrapToolCall!(mkCtx('get_window_prop', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
+    await mw.wrapToolCall!(mkCtx('get_data_slot', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
     assert(nextCalled && !captured, '非确认工具 → 放行 next,不发 approval_request')
 
     // 2. 需确认 → 发 approval_request,resolve(true) → 执行 next
     captured = null
     let execResult = { content: 'written', status: 'done' as const }
-    let p = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'a', value: 1 }), async () => execResult)
-    assert(captured?.type === 'approval_request' && captured.toolName === 'set_window_prop', '确认工具 → 发 approval_request 事件')
+    let p = mw.wrapToolCall!(mkCtx('set_data_slot', { path: 'a', value: 1 }), async () => execResult)
+    assert(captured?.type === 'approval_request' && captured.toolName === 'set_data_slot', '确认工具 → 发 approval_request 事件')
     captured.resolve(true)
     let r = await p
     assert(r.content === 'written' && r.status === 'done', 'resolve(true) → 执行工具,返回真实结果')
@@ -74,7 +74,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 3. resolve(false) → 返回 error(不执行 next)
     captured = null
     let denied = false
-    let p2 = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'b', value: 2 }), async () => { denied = true; return { content: 'x', status: 'done' } })
+    let p2 = mw.wrapToolCall!(mkCtx('set_data_slot', { path: 'b', value: 2 }), async () => { denied = true; return { content: 'x', status: 'done' } })
     captured.resolve(false)
     let r2 = await p2
     assert(r2.status === 'error' && !denied, 'resolve(false) → 返回 error 且不执行工具')
@@ -82,25 +82,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 4. abort 联动:signal 已 aborted → 自动拒绝
     const ac = new AbortController(); ac.abort()
     captured = null
-    let p3 = mw.wrapToolCall!(mkCtx('set_window_prop', { path: 'c' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
+    let p3 = mw.wrapToolCall!(mkCtx('set_data_slot', { path: 'c' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
     let r3 = await p3
     assert(r3.status === 'error', 'signal 已 abort → 自动拒绝')
 
     // 5. 超时自动拒绝
-    const mwT = createApprovalMiddleware({ tools: ['set_window_prop'], timeoutMs: 30 })
+    const mwT = createApprovalMiddleware({ tools: ['set_data_slot'], timeoutMs: 30 })
     captured = null
-    let p4 = mwT.wrapToolCall!(mkCtx('set_window_prop', { path: 'd' }), async () => ({ content: 'x', status: 'done' }))
+    let p4 = mwT.wrapToolCall!(mkCtx('set_data_slot', { path: 'd' }), async () => ({ content: 'x', status: 'done' }))
     let r4 = await p4
     assert(r4.status === 'error', 'timeoutMs 超时 → 自动拒绝')
 
     // 6. confirm 自定义判定(优先于 tools)
-    const mwC = createApprovalMiddleware({ tools: ['set_window_prop'], confirm: (n) => n === 'edit_window_prop' })
+    const mwC = createApprovalMiddleware({ tools: ['set_data_slot'], confirm: (n) => n === 'edit_data_slot' })
     captured = null
-    await mwC.wrapToolCall!(mkCtx('set_window_prop', { path: 'e' }), async () => ({ content: 'ok', status: 'done' }))
-    assert(!captured, 'confirm 优先于 tools:set_window_prop 不在 confirm 命中 → 放行不发事件')
+    await mwC.wrapToolCall!(mkCtx('set_data_slot', { path: 'e' }), async () => ({ content: 'ok', status: 'done' }))
+    assert(!captured, 'confirm 优先于 tools:set_data_slot 不在 confirm 命中 → 放行不发事件')
     captured = null
-    let p5 = mwC.wrapToolCall!(mkCtx('edit_window_prop', { path: 'f' }), async () => ({ content: 'ok', status: 'done' }))
-    assert(captured?.type === 'approval_request', 'confirm 命中 edit_window_prop → 发确认事件')
+    let p5 = mwC.wrapToolCall!(mkCtx('edit_data_slot', { path: 'f' }), async () => ({ content: 'ok', status: 'done' }))
+    assert(captured?.type === 'approval_request', 'confirm 命中 edit_data_slot → 发确认事件')
     captured.resolve(true)
     assert((await p5).content === 'ok', 'confirm 命中后 resolve(true) → 执行')
 

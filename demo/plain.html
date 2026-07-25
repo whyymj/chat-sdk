@@ -38,7 +38,7 @@
 
   <script>
     const { createChatSdk, z } = window.ChatSdk
-    // 预置可操作的 window 属性
+    // 预置可操作的数据槽
     window.app = { theme: 'light', count: 0 }
 
     createChatSdk({
@@ -51,8 +51,8 @@
         model: 'deepseek-chat',
       },
       systemPrompt:
-        '你是页面操作助手。先用 list_window_props 查看可改属性,再用 set_window_prop 修改 window.app 上的属性。',
-      windowProps: [
+        '你是页面操作助手。先用 list_data_slots 查看可改属性,再用 set_data_slot 修改 window.app 上的属性。',
+      dataSlots: [
         { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
         { path: 'app.count', description: '计数器(整数)', schema: z.number().int() },
       ],

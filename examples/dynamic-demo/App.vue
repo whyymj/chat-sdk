@@ -1,19 +1,19 @@
 <script setup lang="ts">
 /**
- * 动态注册组件示例 —— 演示「懒加载、结构各异的组件」如何经 sdk.addWindowProp / removeWindowProp 运行时注册。
+ * 动态注册组件示例 —— 演示「懒加载、结构各异的组件」如何经 sdk.addDataSlot / removeDataSlot 运行时注册。
  *
  * 演示能力:
  *  ① 组件懒加载:点击「加载」按钮动态新增不同类型组件(banner/card/stat/chart),结构各异,schema 各不同
- *  ② 动态注册:组件挂载时 sdk.addWindowProp({ path: `app.components.<id>`, schema }) 注册其 schema
+ *  ② 动态注册:组件挂载时 sdk.addDataSlot({ path: `app.components.<id>`, schema }) 注册其 schema
  *  ③ 即时生效:注册后 AI 立即可 set/edit 该 path,按其 schema 校验(无需重建 agent)
- *  ④ 动态移除:组件卸载时 sdk.removeWindowProp(path),快照栈一并清理
+ *  ④ 动态移除:组件卸载时 sdk.removeDataSlot(path),快照栈一并清理
  *  ⑤ inspect 反映:右侧「已注册属性」实时显示当前注册项(含动态增删)
  *  ⑥ 响应式:左侧组件列表由 window.app.components(reactive)驱动,AI 改子属性 → 实时更新
  *
  * 运行:npm run dev → 访问 /examples/dynamic-demo/
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { createChatSdk, z, systemPromptHelpers, type ChatSdk, type WindowPropSpec } from '../../src/core'
+import { createChatSdk, z, systemPromptHelpers, type ChatSdk, type DataSlotSpec } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 import { compSchemas, compTypeDescriptions, compTypeLabels, createComp, type AnyComp, type CompType } from './componentSchemas'
 
@@ -30,10 +30,10 @@ let agent: ChatSdk | null = null
 const loadedIds = ref<string[]>([])
 const compTypes: CompType[] = ['banner', 'card', 'stat', 'chart']
 
-// 当前已注册的 windowProps(从 sdk.listWindowProps() 实时取,反映动态增删)
-const registeredProps = ref<WindowPropSpec[]>([])
+// 当前已注册的 dataSlots(从 sdk.listDataSlots() 实时取,反映动态增删)
+const registeredProps = ref<DataSlotSpec[]>([])
 function refreshRegistered() {
-  registeredProps.value = agent?.listWindowProps() ?? []
+  registeredProps.value = agent?.listDataSlots() ?? []
 }
 
 // 加载一个组件 → 动态注册其 schema
@@ -45,7 +45,7 @@ function loadComp(type: CompType) {
   loadedIds.value.push(id)
   // ★ 动态注册:组件挂载时注册其 schema,立即对 AI 生效
   //   description 写详细字段(给 LLM 看的字段说明书;LLM 看不到 schema 字段定义,只看 description)
-  agent?.addWindowProp({
+  agent?.addDataSlot({
     path: `app.components.${id}`,
     description: `${compTypeDescriptions[type]}(动态注册,id=${id})`,
     schema: compSchemas[type],
@@ -58,7 +58,7 @@ function unloadComp(id: string) {
   delete components[id]
   loadedIds.value = loadedIds.value.filter((x) => x !== id)
   // ★ 动态移除:组件卸载时移除注册,快照栈一并清理
-  agent?.removeWindowProp(`app.components.${id}`)
+  agent?.removeDataSlot(`app.components.${id}`)
   refreshRegistered()
 }
 
@@ -74,22 +74,22 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    // 静态常驻项:整体容器(宽松 schema,供 AI 了解结构);具体组件 path 由 addWindowProp 动态注册
-    windowProps: [
-      { path: 'app.components', description: '动态组件容器(按 id 存,结构各异;各组件 path 由 sdk.addWindowProp 动态注册)', schema: z.record(z.string(), z.any()) },
+    // 静态常驻项:整体容器(宽松 schema,供 AI 了解结构);具体组件 path 由 addDataSlot 动态注册
+    dataSlots: [
+      { path: 'app.components', description: '动态组件容器(按 id 存,结构各异;各组件 path 由 sdk.addDataSlot 动态注册)', schema: z.record(z.string(), z.any()) },
     ],
     systemPrompt: [
       '你是页面组件助手。window.app.components 是动态组件容器,按组件 id 为键存对象。',
-      '每个组件有自己的 type(banner/card/stat/chart),结构各异;具体组件的 path(如 app.components.banner-1)由集成方动态注册,你可用 list_window_props 查看当前可操作的具体组件 path。',
+      '每个组件有自己的 type(banner/card/stat/chart),结构各异;具体组件的 path(如 app.components.banner-1)由集成方动态注册,你可用 list_data_slots 查看当前可操作的具体组件 path。',
       '操作指南:',
-      '1. 先 list_window_props 查看当前已注册的可操作组件 path(动态增删,实时变化);',
-      '2. 改某组件用 edit_window_prop 的 set,jsonPath 相对 app.components.<id>,如改 banner-1 标题:jsonPath="banner-1.title";',
+      '1. 先 list_data_slots 查看当前已注册的可操作组件 path(动态增删,实时变化);',
+      '2. 改某组件用 edit_data_slot 的 set,jsonPath 相对 app.components.<id>,如改 banner-1 标题:jsonPath="banner-1.title";',
       '3. 各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]};',
-      '4. 改前可用 describe_window_prop 或 get_window_prop 确认字段;非法值会被 schema 校验拒绝。',
+      '4. 改前可用 describe_data_slot 或 get_data_slot 确认字段;非法值会被 schema 校验拒绝。',
       systemPromptHelpers.reliableWriteRules,
     ].join('\n'),
     onEvent(e) {
-      if (e.type === 'window_prop_change') refreshRegistered()
+      if (e.type === 'data_slot_change') refreshRegistered()
     },
     debug: true,
     title: '动态注册组件',
@@ -108,7 +108,7 @@ onUnmounted(() => agent?.unmount())
       <h2>🧩 动态注册组件(window.app.components)</h2>
       <p class="hint">
         组件<strong>懒加载</strong>:点击下方按钮动态新增不同类型组件(结构各异)。<br />
-        组件挂载时调 <code>sdk.addWindowProp</code> 注册其 schema → AI <strong>立即可操作</strong>(无需重建 agent);卸载时 <code>sdk.removeWindowProp</code> 移除。
+        组件挂载时调 <code>sdk.addDataSlot</code> 注册其 schema → AI <strong>立即可操作</strong>(无需重建 agent);卸载时 <code>sdk.removeDataSlot</code> 移除。
       </p>
 
       <div class="load-bar">
@@ -130,8 +130,8 @@ onUnmounted(() => agent?.unmount())
         </li>
       </ul>
 
-      <h3>当前已注册 windowProps({{ registeredProps.length }})</h3>
-      <p class="hint small">来自 <code>sdk.listWindowProps()</code>,反映动态增删的实时状态:</p>
+      <h3>当前已注册 dataSlots({{ registeredProps.length }})</h3>
+      <p class="hint small">来自 <code>sdk.listDataSlots()</code>,反映动态增删的实时状态:</p>
       <ul class="reg-list">
         <li v-for="p in registeredProps" :key="p.path">
           <code>{{ p.path }}</code> — <span class="reg-desc">{{ p.description }}</span>
@@ -140,7 +140,7 @@ onUnmounted(() => agent?.unmount())
 
       <p class="try">
         💡 试试:加载几个组件 → 对话框输入「把 banner-1 标题改成『限时特惠』、背景改成 #b91c1c」<br />
-        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>edit_window_prop</code> 按 jsonPath 改,左侧实时更新
+        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>edit_data_slot</code> 按 jsonPath 改,左侧实时更新
       </p>
     </aside>
     <section ref="root" class="pane pane-right"></section>

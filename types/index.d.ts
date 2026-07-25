@@ -45,7 +45,7 @@ export type StreamHandler = (event: StreamEvent) => void;
 /**
  * SDK 事件(供 createChatSdk({ onEvent }) 订阅常用时机)。
  * 复用 StreamEvent(round_start/reasoning/text/tool_call/tool_result/subagent/done;approval_request 不外发)
- * + 额外时机:window_prop_change / message_update / error。
+ * + 额外时机:data_slot_change / message_update / error。
  */
 export type SdkEvent =
   | { type: 'round_start'; round: number }
@@ -55,7 +55,7 @@ export type SdkEvent =
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
   | { type: 'done'; content: string }
-  | { type: 'window_prop_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
+  | { type: 'data_slot_change'; path: string; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
   | { type: 'conflict'; conflict: PendingConflict }
   | { type: 'error'; message: string };
@@ -80,7 +80,7 @@ export interface ChatDialogProps {
 
 export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
 export interface SkillInfo { name: string; description: string }
-export interface WindowPropInfo { path: string; description: string; schema?: unknown }
+export interface DataSlotInfo { path: string; description: string; schema?: unknown }
 export interface SubagentInfo {
   enabled: boolean;
   maxDepth: number;
@@ -108,7 +108,7 @@ export interface AgentInfo {
   systemPrompt: string;
   tools: ToolInfo[];
   skills: SkillInfo[];
-  windowProps: WindowPropInfo[];
+  dataSlots: DataSlotInfo[];
   memory: string;
   middleware: string[];
   todos: { content: string; status: string }[];
@@ -149,35 +149,35 @@ export type ChatModelLike = {
   bindTools: (tools: any[]) => any;
 };
 
-export interface WindowPropSpec {
+export interface DataSlotSpec {
   /** window 上的路径,支持点号嵌套 */
   path: string;
   description: string;
   /** 值的 zod schema(写入时校验) */
   schema: any;
 }
-/** createWindowOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读) */
-export interface WindowOpsOptions {
+/** createDataSlotOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读) */
+export interface DataSlotOpsOptions {
   onAudit?: (entry: { op: string; path: string; value?: any; detail?: string; timestamp: number }) => void;
   allowRawRead?: boolean;
   maxSnapshots?: number;
   /**
    * 字段白名单读模式(默认 true):仅允许读「注册 path 自身 / 其后代」,禁止读未注册的祖先,
-   * 防止 LLM 经 get_window_prop('page') 把整个大 JSON 拉进上下文。
+   * 防止 LLM 经 get_data_slot('page') 把整个大 JSON 拉进上下文。
    * 集成方注册「可操作子路径」(如 page.theme.color / page.components)而非顶层时,默认即「LLM 只见声明字段」。
    * 设 false 回退原行为(允许读注册 path 的祖先,即整体读)。
    */
   whitelist?: boolean;
 }
 
-/** window 属性注册表控制器(运行时动态增删;createWindowOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
-export interface WindowOpsController {
+/** 数据槽注册表控制器(运行时动态增删;createDataSlotOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
+export interface DataSlotOpsController {
   /** 新增/覆盖一个属性注册项(运行时懒加载组件场景);覆盖时旧快照栈保留 */
-  add(spec: WindowPropSpec): void;
+  add(spec: DataSlotSpec): void;
   /** 移除一个属性注册项;返回是否确实存在并移除。快照栈一并清理 */
   remove(path: string): boolean;
   /** 列出当前所有注册项(反映动态增删后的最新状态) */
-  list(): WindowPropSpec[];
+  list(): DataSlotSpec[];
   /** 是否已注册某 path */
   has(path: string): boolean;
 }
@@ -217,7 +217,7 @@ export interface VerifyMiddlewareOptions {
 }
 /** createWriteBackCheck 选项 */
 export interface WriteBackCheckOptions {
-  /** path → zod schema(由 createChatSdk 从 windowProps 构造注入);省略则只校验「读回非空」 */
+  /** path → zod schema(由 createChatSdk 从 dataSlots 构造注入);省略则只校验「读回非空」 */
   schemas?: Record<string, any>;
   /** 读 window 的根对象(默认 globalThis.window) */
   window?: unknown;
@@ -325,12 +325,12 @@ export interface ChatSdkOptions {
   tools?: any[];
   skills?: SkillSpec[];
   memory?: string;
-  windowProps?: WindowPropSpec[];
+  dataSlots?: DataSlotSpec[];
   permissions?: PermissionRule[];
   /** 自定义中间件(注入到内置中间件之后;可拦截/观察模型调用、工具、prompt) */
   middleware?: any[];
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
-  /** 每个 window 属性最多保留快照数(默认 20) */
+  /** 每个 数据槽最多保留快照数(默认 20) */
   maxSnapshots?: number;
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
@@ -345,7 +345,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { windowOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
+  capabilities?: { dataSlotOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -370,7 +370,7 @@ export interface ChatSdkOptions {
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退索引摘要) */
   summaryTimeoutMs?: number;
   /**
-   * SDK 事件回调:订阅常用时机(window 属性变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
+   * SDK 事件回调:订阅常用时机(数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * UI 与 headless 模式均生效;用于外部联动(宿主页面响应式刷新、埋点、日志),替代轮询。
    * approval_request 不外发(UI 已处理)。
    */
@@ -389,27 +389,27 @@ export interface ChatSdk {
   send(message: string): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
-  /** 检视 agent 详细信息(tools/skills/windowProps/middleware/todos) */
+  /** 检视 agent 详细信息(tools/skills/dataSlots/middleware/todos) */
   inspect(): AgentInfo;
-  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + window 注册属性 + vfs + todos);需开启 checkpoint,无可用返回 false */
+  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 数据槽注册项 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */
   listCheckpoints(): CheckpointMeta[];
   /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
   hook(handler: SdkEventHandler): () => void;
-  /** 运行时动态新增/覆盖一个 window 属性注册项(懒加载组件:组件挂载时注册其 schema);立即对 window 工具生效,无需重建 agent。需开启 windowOps */
-  addWindowProp(spec: WindowPropSpec): void;
-  /** 运行时移除一个 window 属性注册项(组件卸载);返回是否确实存在并移除。快照栈一并清理 */
-  removeWindowProp(path: string): boolean;
-  /** 列出当前所有已注册 window 属性(反映动态增删后的最新状态) */
-  listWindowProps(): WindowPropSpec[];
+  /** 运行时动态新增/覆盖一个 数据槽注册项(懒加载组件:组件挂载时注册其 schema);立即对 数据槽工具生效,无需重建 agent。需开启 dataSlotOps */
+  addDataSlot(spec: DataSlotSpec): void;
+  /** 运行时移除一个 数据槽注册项(组件卸载);返回是否确实存在并移除。快照栈一并清理 */
+  removeDataSlot(path: string): boolean;
+  /** 列出当前所有已注册 数据槽(反映动态增删后的最新状态) */
+  listDataSlots(): DataSlotSpec[];
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */
   pendingConflict: Ref<PendingConflict | null>;
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
   resolveConflict(action: ConflictResolution['action']): void;
 }
 
-/** 乐观锁冲突挂起(windowOps 写入时 expectedHash 不匹配,挂起等用户决定) */
+/** 乐观锁冲突挂起(dataSlotOps 写入时 expectedHash 不匹配,挂起等用户决定) */
 export interface PendingConflict {
   id: number;
   path: string;
@@ -428,7 +428,7 @@ export type ConflictResolution =
   | { action: 'overwrite' }
   | { action: 'restore' };
 
-/** 乐观锁冲突信息(windowOps onConflict 回调参数) */
+/** 乐观锁冲突信息(dataSlotOps onConflict 回调参数) */
 export interface ConflictInfo {
   path: string;
   op: 'set' | 'edit' | 'delete';
@@ -446,12 +446,12 @@ export declare function defineTool(opts: {
   schema: any;
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
-export declare function createWindowOps(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
-export declare function selectBuiltinTools(caps: { windowOps?: boolean; fetch?: boolean } | undefined, windowOps: any[], fetchDocs: any[]): any[];
-export declare function createUsageHintsMiddleware(caps: { planning?: boolean; windowOps?: boolean; subagent?: boolean } | undefined, hasWindowOps: boolean): any;
+export declare function createDataSlotOps(props: DataSlotSpec[], opts?: DataSlotOpsOptions): any[];
+export declare function selectBuiltinTools(caps: { dataSlotOps?: boolean; fetch?: boolean } | undefined, dataSlotOps: any[], fetchDocs: any[]): any[];
+export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataSlotOps?: boolean; subagent?: boolean } | undefined, hasDataSlotOps: boolean): any;
 export declare const fetchDocTools: any[];
 export declare const fetchTools: any[];
-export declare function defineWindowToolset(props: WindowPropSpec[], opts?: WindowOpsOptions): any[];
+export declare function defineDataSlotToolset(props: DataSlotSpec[], opts?: DataSlotOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
 export declare function createAgent(options: any): any;
 /** 检测模型把工具调用写成文本(伪 XML/标签)而非标准 tool_calls 的异常格式;主循环据此回灌 feedback 自纠 */
@@ -470,13 +470,13 @@ export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
 export declare function isQuotaError(err: unknown): boolean;
 
-// ============ 大 JSON 查询/搜索/沙箱脚本(windowQuery)============
+// ============ 大 JSON 查询/搜索/沙箱脚本(dataSlotQuery)============
 export interface JpNode {
   /** 相对属性根的点号路径(数组索引用数字,如 components.0.text) */
   path: string;
   /** 匹配元素值 */
   value: unknown;
-  /** 父为数组时的索引(便于后续 edit_window_prop 的 jsonPath 定位) */
+  /** 父为数组时的索引(便于后续 edit_data_slot 的 jsonPath 定位) */
   index?: number;
 }
 export interface SearchHit {
@@ -550,10 +550,10 @@ export declare function createSubagentsMiddleware(opts: any): any;
 export interface SubagentOptions { [k: string]: any }
 export interface SubagentLlmConfig { [k: string]: any }
 
-// checkpoint / windowOps / permissions
+// checkpoint / dataSlotOps / permissions
 export interface CheckpointDeps { [k: string]: any }
-export interface WindowAuditEntry { [k: string]: any }
-export interface WindowSnapshotEntry { [k: string]: any }
+export interface DataSlotAuditEntry { [k: string]: any }
+export interface DataSlotSnapshotEntry { [k: string]: any }
 export type PermissionOp = string;
 
 // vfs

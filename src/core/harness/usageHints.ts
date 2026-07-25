@@ -12,7 +12,7 @@ import type { Middleware } from './middleware'
 /** capabilities 子集(仅用法提示相关开关) */
 type HintCapabilityFlags = {
   planning?: boolean
-  windowOps?: boolean
+  dataSlotOps?: boolean
   subagent?: boolean
   humanConfirm?: boolean
   /** 预声明子 agent(用于注入"规划-反思-执行"路由提示;空则不注入) */
@@ -23,23 +23,23 @@ type HintCapabilityFlags = {
 const CREATIVE_TEMP = 0.7
 
 /**
- * @param caps 能力开关(planning / windowOps / subagent / humanConfirm / subagents)
- * @param hasWindowOps 是否实际装了 window 操作工具(用于判断 snapshot 回退提示是否有意义)
+ * @param caps 能力开关(planning / dataSlotOps / subagent / humanConfirm / subagents)
+ * @param hasDataSlotOps 是否实际装了 数据槽操作工具(用于判断 snapshot 回退提示是否有意义)
  */
-export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasWindowOps: boolean): Middleware {
+export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataSlotOps: boolean): Middleware {
   return {
     name: 'usageHints',
     augmentPrompt: () => {
       const hints: string[] = []
       if (caps?.planning !== false) hints.push('多步任务建议先 write_todos 拆解为步骤并逐步推进。')
-      if (hasWindowOps) {
-        hints.push('改属性前先 get_window_prop(path) 读其当前真实值与 hash(返回末尾 hash=xxx),基于真实值改,不要凭记忆。写入(set/edit/delete)时回传 expectedHash=该 hash 启用乐观锁——若属性在你 get 之后被外部代码/其他 agent/用户手动改过,会触发冲突:集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值与 hash 再改。')
-        hints.push('不确定可操作哪些属性时用 list_window_props 查看(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);不确定某属性字段结构时用 describe_window_prop。')
-        hints.push('修改大对象/数组属性优先用 edit_window_prop 增量 patch(只发改动部分),避免 set 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
-        hints.push('修改属性出错时可用 restore_window_snapshot(path) 回退最近一次。')
-        hints.push('在大数组里按条件筛选元素用 query_window_prop(JSONPath,如 $[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 edit_window_prop 改。')
-        hints.push('找名字记不清的元素用 search_window_prop(支持 substring/regex/fuzzy 模糊搜索)。')
-        hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_window_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
+      if (hasDataSlotOps) {
+        hints.push('改属性前先 get_data_slot(path) 读其当前真实值与 hash(返回末尾 hash=xxx),基于真实值改,不要凭记忆。写入(set/edit/delete)时回传 expectedHash=该 hash 启用乐观锁——若属性在你 get 之后被外部代码/其他 agent/用户手动改过,会触发冲突:集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值与 hash 再改。')
+        hints.push('不确定可操作哪些属性时用 list_data_slots 查看(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);不确定某属性字段结构时用 describe_data_slot。')
+        hints.push('修改大对象/数组属性优先用 edit_data_slot 增量 patch(只发改动部分),避免 set 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
+        hints.push('修改属性出错时可用 restore_data_snapshot(path) 回退最近一次。')
+        hints.push('在大数组里按条件筛选元素用 query_data_slot(JSONPath,如 $[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 edit_data_slot 改。')
+        hints.push('找名字记不清的元素用 search_data_slot(支持 substring/regex/fuzzy 模糊搜索)。')
+        hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
       }
       if (caps?.subagent !== false) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
       if (caps?.subagents?.length) {
@@ -56,7 +56,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         if (reflectors.length) {
           hints.push(`  · 严谨/易错/校验类 → 可先调 ${reflectors.map((s) => 'use_' + s.id).join('/')} 反思挑刺(低温审查),据反馈修订。`)
         }
-        hints.push('  · 方案定稿后,由你(主 agent)用 edit_window_prop 落地成 JSON(低温度执行 + schema 校验 + 写前确认)。')
+        hints.push('  · 方案定稿后,由你(主 agent)用 edit_data_slot 落地成 JSON(低温度执行 + schema 校验 + 写前确认)。')
         hints.push('  · 简单/明确任务(如"标题改红色")直接执行,不必走规划-反思。')
       }
       if (caps?.humanConfirm) {

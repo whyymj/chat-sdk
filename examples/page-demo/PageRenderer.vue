@@ -3,7 +3,7 @@
  * 页面渲染器 —— 读取并渲染 window.page(reactive)
  *
  * window.page 由 App.vue 在 setup 顶层以 reactive() 创建并挂载,
- * 此处取其引用;Agent 经 set_window_prop 改的是该 reactive 对象的属性
+ * 此处取其引用;Agent 经 set_data_slot 改的是该 reactive 对象的属性
  * (不替换引用),故 template 对 page.* 的依赖会响应式更新。
  */
 import { reactive } from 'vue'

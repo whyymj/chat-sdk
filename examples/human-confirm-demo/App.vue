@@ -49,7 +49,7 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    windowProps: [
+    dataSlots: [
       {
         path: 'appConfig',
         description: '界面配置:theme(清新蓝/暗夜紫/暖橙)、density(compact/cozy/spacious)、radius(圆角 px)',
@@ -65,11 +65,11 @@ onMounted(() => {
       '当用户给开放性需求(如「帮我设计风格」「换个感觉」「给几个方案我挑」)时:',
       '  必须先调 request_human_confirmation 征询——把候选方案作为 options 数组传进去(做成可点选按钮),',
       '  并用 recommendation 给出你的推荐;不要只回文字罗列方案让用户自己回复。',
-      '用户选定方案后,再用 edit_window_prop 的 set 落地(如 jsonPath="theme" value="night-purple")。',
+      '用户选定方案后,再用 edit_data_slot 的 set 落地(如 jsonPath="theme" value="night-purple")。',
       'density/radius 同理(jsonPath="density" / jsonPath="radius")。',
     ].join('\n'),
     // approval 一行同时开启两侧:被动(set/edit 前弹允许/拒绝)+ 主动(request_human_confirmation 默认随附)
-    approval: { tools: ['set_window_prop', 'edit_window_prop'] },
+    approval: { tools: ['set_data_slot', 'edit_data_slot'] },
     debug: true,
     title: '人工确认 · AI 主动征询',
     placeholder: '试试:帮我设计个界面风格;换个感觉,给几个方案我挑',
@@ -86,7 +86,7 @@ onUnmounted(() => agent?.unmount())
       <h2>✋ 人工确认 · AI 主动征询</h2>
       <p class="hint">
         用户给开放性需求时,AI 不自行拍板,调 <code>request_human_confirmation</code> 把候选方案做成<strong>可点选按钮</strong>;
-        用户选完再用 <code>edit_window_prop</code> 落地(写前再弹一次被动确认)。两层 human-in-the-loop 一次看清。
+        用户选完再用 <code>edit_data_slot</code> 落地(写前再弹一次被动确认)。两层 human-in-the-loop 一次看清。
       </p>
 
       <!-- 实时预览:由 window.appConfig(reactive)驱动,Agent 改 → 立即刷新 -->

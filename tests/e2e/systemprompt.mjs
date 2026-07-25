@@ -9,7 +9,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     const info = sdk.inspect()
@@ -24,7 +24,7 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-custom', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: '你是定制助手。',
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     assert(sdk.inspect().systemPrompt === '你是定制助手。', '自定义 systemPrompt 完全覆盖默认')
@@ -35,7 +35,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-default-detail', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
@@ -52,7 +52,7 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-custom-merge', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: `${custom}\n${systemPromptHelpers.reliableWriteRules}`,
-      windowProps: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt

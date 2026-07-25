@@ -24,9 +24,9 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 | Constraint | Mechanism | Effect |
 |---|---|---|
-| **Scope control** | Property registry (`windowProps`) — only declared paths are writable | AI touching undeclared fields → rejected |
+| **Scope control** | Property registry (`dataSlots`) — only declared paths are writable | AI touching undeclared fields → rejected |
 | **Validity check** | zod schema — `set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
-| **Incremental op** | `edit_window_prop` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
+| **Incremental op** | `edit_data_slot` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
 | **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 
@@ -64,16 +64,16 @@ createChatSdk({
   container: '#chat',
   llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   systemPrompt: 'You are a page-builder assistant; read/write window.page via tools.',
-  windowProps: [
+  dataSlots: [
     { path: 'page.title', description: 'Page title', schema: z.string() },
     { path: 'page.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
   ],
-  approval: { tools: ['set_window_prop', 'edit_window_prop'] }, // confirm writes
+  approval: { tools: ['set_data_slot', 'edit_data_slot'] }, // confirm writes
   checkpoint: true, // one-click rollback on mistake
 }).mount()
 ```
 
-User says "title → 'Summer New', theme → dark" → AI calls `edit_window_prop` (incremental) → schema validation → pre-write confirm → reactive refresh. Said wrong? Click "↩ Undo".
+User says "title → 'Summer New', theme → dark" → AI calls `edit_data_slot` (incremental) → schema validation → pre-write confirm → reactive refresh. Said wrong? Click "↩ Undo".
 
 CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → `ChatSdk.createChatSdk({...})`.
 
@@ -81,7 +81,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 
 | Capability | Description | Option |
 |---|---|---|
-| 🛠 window ops | Read/write registered props, schema validation + incremental patch + snapshot rollback | `windowProps` |
+| 🛠 window ops | Read/write registered props, schema validation + incremental patch + snapshot rollback | `dataSlots` |
 | 🧠 ReAct harness | Pluggable middleware (8 hooks), in-house (no LangGraph) | `middleware` |
 | 📋 planning/skills/memory | `write_todos` / `define_skill` / AGENTS.md directives | `capabilities.*` |
 | 🗄 virtual workspace | In-memory file system; large results offloaded (won't blow context) | `capabilities.vfs` |
@@ -91,7 +91,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🤖 subagents | Delegate subtasks; process stays out of main context | `subagent` |
 | 🔌 MCP | Connect remote MCP servers, inject tools dynamically | `mcp` |
 | 📦 context compression | 4-layer adaptive compression, presets + LLM summary | `contextPreset` |
-| 🛡️ compression-safe | Live windowProps snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
+| 🛡️ compression-safe | Live dataSlots snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
 | 💾 persistence | IndexedDB multi-session + quota eviction + switch | `storage` |
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
@@ -109,14 +109,14 @@ createChatSdk, defineTool, defineSkill, presets, z
 createAgent, createSubagentMiddleware, createSubagentsMiddleware,
 createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
 createHumanConfirmMiddleware, createHumanConfirmTool, createCheckpointMiddleware, createCheckpointManager,
-createUsageHintsMiddleware, createWindowOps, createVfs, connectMcp
+createUsageHintsMiddleware, createDataSlotOps, createVfs, connectMcp
 // context & model
 resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
 // storage
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI (reuse when headless)
 ChatDialog, MessageContent, CodePreview, useChat
-// types (omitted): ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, WindowPropSpec, AgentMessage, StreamEvent …
+// types (omitted): ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataSlotSpec, AgentMessage, StreamEvent …
 ```
 
 ### `createChatSdk` options cheat sheet
@@ -128,9 +128,9 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `llm` | `LLMConfig \| BaseChatModel` · **required** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`; OpenAI-compatible (default DeepSeek) |
 | | `id` | `string` | Stable id (multi-agent isolation + persistence resume; random+warn if omitted) |
 | | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (page assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it |
-| **Page data** | `windowProps` | `{path,description,schema}[]` | Register window props readable/writable by tools + zod schema |
+| **Page data** | `dataSlots` | `{path,description,schema}[]` | Register data slots readable/writable by tools + zod schema |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
-| **Capability toggles** | `capabilities` | `{planning?,windowOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | Default all on (`verify` default off); `false` to turn off |
+| **Capability toggles** | `capabilities` | `{planning?,dataSlotOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | Default all on (`verify` default off); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · default off | Passive confirm whitelist (pre-write allow/deny) |
@@ -139,7 +139,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · default `auto` | Compression preset |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_window_prop','list_window_props']` — keep field descriptions in compressed summary) |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_data_slot','list_data_slots']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `50` | Dialog history memory round cap (`0` disables trim) |
 | | `vfs` | `{initialFiles?,maxBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
@@ -175,8 +175,8 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **window ops** (after `windowProps` registered): `list_window_props` / `describe_window_prop` / `get_window_prop` / `get_window_paths` / `set_window_prop` / `edit_window_prop` (jsonPath incremental patch) / `delete_window_prop` / `snapshot_window_prop` / `list_window_snapshots` / `restore_window_snapshot`
-- **window query**: `query_window_prop` (JSONPath) / `search_window_prop` (fuzzy) / `eval_window_script` (sandboxed)
+- **window ops** (after `dataSlots` registered): `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
+- **window query**: `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
 - **planning/skills**: `write_todos` / `define_skill` / `load_skill`
@@ -195,7 +195,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # windowOps (registry + incremental edit + snapshot) / windowQuery / fetchDoc
+├── tools/                      # dataSlotOps (registry + incremental edit + snapshot) / dataSlotQuery / fetchDoc
 ├── backends/                   # vfs (memory) / storage (IndexedDB + multi-backend + quota eviction)
 ├── mcp/client.ts              # remote MCP tool integration
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -230,8 +230,8 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **window ops** (after `windowProps` registered): `list_window_props` / `describe_window_prop` / `get_window_prop` / `get_window_paths` / `set_window_prop` / `edit_window_prop` (jsonPath incremental patch) / `delete_window_prop` / `snapshot_window_prop` / `list_window_snapshots` / `restore_window_snapshot`
-- **window query**: `query_window_prop` (JSONPath) / `search_window_prop` (fuzzy) / `eval_window_script` (sandboxed)
+- **window ops** (after `dataSlots` registered): `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
+- **window query**: `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
 - **planning/skills**: `write_todos` / `define_skill` / `load_skill`
@@ -250,7 +250,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # windowOps (registry + incremental edit + snapshot) / windowQuery / fetchDoc
+├── tools/                      # dataSlotOps (registry + incremental edit + snapshot) / dataSlotQuery / fetchDoc
 ├── backends/                   # vfs (memory) / storage (IndexedDB + multi-backend + quota eviction)
 ├── mcp/client.ts              # remote MCP tool integration
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -267,7 +267,7 @@ A ready-to-use Agent Skill is bundled for integrators using Claude Code / Cursor
 
 | Skill | When it triggers |
 |---|---|
-| `page-agent-sdk-integrate` | Embedding the SDK — choose install method, declare `windowProps` + zod schemas, configure the LLM, mount, subscribe to events (`onEvent` / `sdk.hook`), run headless, troubleshoot common pitfalls |
+| `page-agent-sdk-integrate` | Embedding the SDK — choose install method, declare `dataSlots` + zod schemas, configure the LLM, mount, subscribe to events (`onEvent` / `sdk.hook`), run headless, troubleshoot common pitfalls |
 
 **Install** (pick one):
 
@@ -293,13 +293,13 @@ flowchart TD
     SDK --> CORE[AgentCore<br/>messages / vfs / store / checkpoint]
     CORE --> AGENT[createAgent<br/>ReAct loop + middleware stack]
     AGENT --> MW[Middleware stack<br/>usageHints→todos→skills→vfs→summarization<br/>→memory→permissions→checkpoint→approval<br/>→humanConfirm→verify→subagent→user]
-    AGENT --> TOOLS[Tools<br/>windowOps / fetchDoc / vfs / MCP / user]
+    AGENT --> TOOLS[Tools<br/>dataSlotOps / fetchDoc / vfs / MCP / user]
     TOOLS -->|zero-bridge| WIN[Host page window<br/>read/write registered props directly]
     AGENT --> LLM[LLM<br/>OpenAI-compatible / any ChatModel]
     SDK --> UI[ChatDialog UI<br/>Vue bundled in / or headless]
 ```
 
-- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless — and runs in **Node.js** as a backend Agent (custom tools / subagents / verify; disable `windowOps`+`fetch`, use `storage:'memory'`)
+- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless — and runs in **Node.js** as a backend Agent (custom tools / subagents / verify; disable `dataSlotOps`+`fetch`, use `storage:'memory'`)
 - **Provider-agnostic**: `llm` accepts any LangChain `BaseChatModel`, or `LLMConfig` (builds `ChatOpenAI` internally, OpenAI-compatible, default DeepSeek)
 - **In-house harness**: no LangGraph/langchain full bundle; avoids browser bundling blockers
 
@@ -320,20 +320,20 @@ createChatSdk({
   llm: { apiKey, baseUrl, model },
   id: 'my-agent',              // stable id (multi-agent isolation + persistence resume)
   systemPrompt: '...',
-  windowProps: [{ path, description, schema }],
+  dataSlots: [{ path, description, schema }],
   storage: 'indexed',          // persistence (default off)
   streaming: true, ui: 'default',
   capabilities: { verify: true },        // capability toggles
   humanConfirm: true,           // proactive inquiry (default on)
-  approval: { tools: ['set_window_prop','edit_window_prop'] }, // passive confirm whitelist (default off)
+  approval: { tools: ['set_data_slot','edit_data_slot'] }, // passive confirm whitelist (default off)
   checkpoint: true,
   contextPreset: 'auto',       // auto/conservative/aggressive
   summaryLlm: { ... },         // summary-dedicated LLM (defaults to main llm)
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* custom middleware */],
-  onEvent(e) {                 // SDK event callback: subscribe to common moments (window prop change / message update / tool call / error), replaces polling
-    if (e.type === 'window_prop_change') refreshUI()
+  onEvent(e) {                 // SDK event callback: subscribe to common moments (data slot change / message update / tool call / error), replaces polling
+    if (e.type === 'data_slot_change') refreshUI()
   },
 }).mount()
 ```
@@ -346,7 +346,7 @@ After `npm run dev`, visit the corresponding page:
 |---|---|---|
 | page-demo | `/` | Self-bootstrapping demo: left JSON reactive page + right chat |
 | nested-demo | `/examples/nested-demo/` | Nested block tree + human confirm + checkpoint |
-| dynamic-demo | `/examples/dynamic-demo/` | Lazy-loaded components with dynamic schemas (`sdk.addWindowProp`/`removeWindowProp`) |
+| dynamic-demo | `/examples/dynamic-demo/` | Lazy-loaded components with dynamic schemas (`sdk.addDataSlot`/`removeDataSlot`) |
 | human-confirm-demo | `/examples/human-confirm-demo/` | AI proactive inquiry (multi-plan pick) + pre-write confirm |
 | planner-demo | `/examples/planner-demo/` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
 | subagent-demo | `/examples/subagent-demo/` | Subagent parallel orchestration |
@@ -399,14 +399,14 @@ createChatSdk({
   container: '#root',
   llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   systemPrompt: 'You are a page assistant; read/write window.app via tools.',
-  windowProps: [
+  dataSlots: [
     { path: 'app.title', description: 'Title', schema: z.string() },
     { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
   ],
 }).mount()
 ```
 
-`npx vite` → type "change app.theme to dark" in the dialog → AI calls `set_window_prop` → `window.app.theme` becomes `dark` → verified.
+`npx vite` → type "change app.theme to dark" in the dialog → AI calls `set_data_slot` → `window.app.theme` becomes `dark` → verified.
 
 > Add this test dir to `.gitignore` (local only, not in repo) to avoid committing `.env` with real keys to remotes.
 
@@ -423,7 +423,7 @@ The package ships three builds — pick by integration scenario:
 `sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
 
 - **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`).
-- **Disable unused capabilities**: `capabilities:{ windowOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
+- **Disable unused capabilities**: `capabilities:{ dataSlotOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
 - **CDN via esm.sh**: `import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` — peer deps (`zod`, `@langchain/*`) are resolved and deduped by esm.sh automatically; smallest for module scenarios.
 - **IIFE only for zero-config**: the all-inlined single file is convenient but heaviest; prefer ESM when the host supports modules.
 - **MCP is an optional peer**: `@modelcontextprotocol/sdk` is dynamically imported only when `options.mcp` is passed — omit it to avoid loading the MCP runtime entirely.

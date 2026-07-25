@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -46,7 +46,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
   console.log('\n[checkpoint 中间件]')
   {
-    // 模拟 window 注册属性 + vfs + todos + messages
+    // 模拟 数据槽注册项 + vfs + todos + messages
     ;(globalThis as any).window = globalThis
     ;(globalThis as any).CP = { page: { title: '原标题', theme: 'light', list: [1, 2, 3] } }
     const messages: any[] = [
@@ -57,7 +57,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     let curTodos = [{ content: 't1', status: 'pending' }]
     const todosMw = { reset: (t: any[]) => { curTodos = t.map((x) => ({ ...x })) } }
     const mgr = createCheckpointManager({
-      windowPaths: ['CP.page'],
+      slotPaths: ['CP.page'],
       vfsStore,
       todosMw: todosMw as any,
       getTodos: () => curTodos,
@@ -101,11 +101,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(true, 'restore(id) 不抛')
 
     // 6. 无 checkpoint 时 restore 返回 false
-    const mgr2 = createCheckpointManager({ windowPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+    const mgr2 = createCheckpointManager({ slotPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
     assert(mgr2.restore() === false, '无 checkpoint 时 restore 返回 false')
 
     // 7. 自动存档中间件:beforeAgent 重置标记,beforeModel 首次触发 save
-    const autoMgr = createCheckpointManager({ windowPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+    const autoMgr = createCheckpointManager({ slotPaths: [], vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
     const cpMw = createCheckpointMiddleware(autoMgr)
     assert(cpMw.name === 'checkpoint', '中间件 name=checkpoint')
     // beforeAgent 返回 undefined(不修改 state)

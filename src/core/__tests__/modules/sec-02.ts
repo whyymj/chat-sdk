@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -41,17 +41,17 @@ import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } f
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 import type { TestCtx } from './_ctx'
 
-// windowOps:edit + 快照
+// dataSlotOps:edit + 快照
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
-  console.log('\n[windowOps edit + snapshot]')
+  console.log('\n[dataSlotOps edit + snapshot]')
   {
     const w = (globalThis as any).window
     // 扩展 mock window:加对象/数组容器(edit 仅作用于对象/数组)
     w.app.list = [{ id: 1, text: 'a' }, { id: 2, text: 'b' }]
     w.app.cfg = { a: 1, name: 'x' }
 
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'app.cfg', description: '配置对象', schema: z.object({ a: z.number(), name: z.string(), extra: z.string().optional() }) },
       { path: 'app.list', description: '数组', schema: z.array(z.object({ id: z.number(), text: z.string() })) },
       { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
@@ -60,70 +60,70 @@ export async function run(ctx: TestCtx): Promise<void> {
     let r: string
 
     // edit set 子字段
-    r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'set', jsonPath: 'a', value: '99' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.cfg', op: 'set', jsonPath: 'a', value: '99' })
     assert(w.app.cfg.a === 99 && /已 edit/.test(r), 'edit set 子字段生效')
 
     // edit merge 合并
-    r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'merge', value: '{"extra":"hi"}' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.cfg', op: 'merge', value: '{"extra":"hi"}' })
     assert(w.app.cfg.extra === 'hi', 'edit merge 合并字段')
 
     // edit append 追加
-    r = await invoke(t['edit_window_prop'], { path: 'app.list', op: 'append', value: '{"id":3,"text":"c"}' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.list', op: 'append', value: '{"id":3,"text":"c"}' })
     assert(w.app.list.length === 3 && w.app.list[2].id === 3, 'edit append 追加元素')
 
     // edit remove 删字段
-    r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'remove', jsonPath: 'extra' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.cfg', op: 'remove', jsonPath: 'extra' })
     assert(!('extra' in w.app.cfg), 'edit remove 删字段')
 
     // edit schema 失败 → live 不变(校验在副本,失败不入栈不落地)
     const beforeA = w.app.cfg.a
-    r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'set', jsonPath: 'a', value: '"not a number"' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.cfg', op: 'set', jsonPath: 'a', value: '"not a number"' })
     assert(/SCHEMA_INVALID/.test(r) && w.app.cfg.a === beforeA, 'edit 校验失败 live 未变(结构化错误码)')
 
     // edit 未注册拒绝
-    r = await invoke(t['edit_window_prop'], { path: 'app.unknown', op: 'set', jsonPath: 'x', value: '1' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.unknown', op: 'set', jsonPath: 'x', value: '1' })
     assert(/未在注册表中声明/.test(r), 'edit 未注册属性被拒')
 
-    // edit 叶子属性拒绝(提示用 set_window_prop)
-    r = await invoke(t['edit_window_prop'], { path: 'app.theme', op: 'set', jsonPath: 'x', value: '1' })
+    // edit 叶子属性拒绝(提示用 set_data_slot)
+    r = await invoke(t['edit_data_slot'], { path: 'app.theme', op: 'set', jsonPath: 'x', value: '1' })
     assert(/仅适用于对象\/数组/.test(r), 'edit 叶子属性被拒')
 
     // 自动快照:set/edit 前自动入栈 → list 有记录
-    r = await invoke(t['list_window_snapshots'], { path: 'app.cfg' })
-    assert(/#1/.test(r) && /app\.cfg/.test(r), 'list_window_snapshots 列出自动快照')
+    r = await invoke(t['list_data_snapshots'], { path: 'app.cfg' })
+    assert(/#1/.test(r) && /app\.cfg/.test(r), 'list_data_snapshots 列出自动快照')
 
     // 手动快照(命名检查点)
-    r = await invoke(t['snapshot_window_prop'], { path: 'app.cfg', label: '检查点A' })
-    assert(/检查点A/.test(r), 'snapshot_window_prop 手动快照')
+    r = await invoke(t['snapshot_data_slot'], { path: 'app.cfg', label: '检查点A' })
+    assert(/检查点A/.test(r), 'snapshot_data_slot 手动快照')
 
     // restore 到 #1(初始 a=1),先破坏再回退
     w.app.cfg.a = 99999
-    r = await invoke(t['restore_window_snapshot'], { path: 'app.cfg', id: 1 })
-    assert(w.app.cfg.a === 1, 'restore_window_snapshot 回退到指定快照(初始 a=1)')
+    r = await invoke(t['restore_data_snapshot'], { path: 'app.cfg', id: 1 })
+    assert(w.app.cfg.a === 1, 'restore_data_snapshot 回退到指定快照(初始 a=1)')
 
     // restore 不入栈:已有快照(含检查点A)保留
-    r = await invoke(t['list_window_snapshots'], { path: 'app.cfg' })
+    r = await invoke(t['list_data_snapshots'], { path: 'app.cfg' })
     assert(/检查点A/.test(r), 'restore 不入栈(已有快照保留)')
 
-    // get_window_prop 支持读后代子路径(精确读局部,而非整体)
-    r = await invoke(t['get_window_prop'], { path: 'app.cfg.a' })
-    assert(/app\.cfg\.a = 1/.test(r), 'get_window_prop 读后代子路径(局部)')
+    // get_data_slot 支持读后代子路径(精确读局部,而非整体)
+    r = await invoke(t['get_data_slot'], { path: 'app.cfg.a' })
+    assert(/app\.cfg\.a = 1/.test(r), 'get_data_slot 读后代子路径(局部)')
 
-    // get_window_paths 批量读多路径
-    r = await invoke(t['get_window_paths'], { paths: ['app.cfg.a', 'app.cfg.name', 'app.theme'] })
-    assert(/app\.cfg\.a/.test(r) && /app\.cfg\.name/.test(r) && /app\.theme/.test(r), 'get_window_paths 批量读取多路径')
+    // get_slot_paths 批量读多路径
+    r = await invoke(t['get_slot_paths'], { paths: ['app.cfg.a', 'app.cfg.name', 'app.theme'] })
+    assert(/app\.cfg\.a/.test(r) && /app\.cfg\.name/.test(r) && /app\.theme/.test(r), 'get_slot_paths 批量读取多路径')
 
-    // get_window_paths 未注册路径被拒并标记
-    r = await invoke(t['get_window_paths'], { paths: ['app.unknown.x'] })
-    assert(/未注册/.test(r), 'get_window_paths 未注册路径被拒并标记')
+    // get_slot_paths 未注册路径被拒并标记
+    r = await invoke(t['get_slot_paths'], { paths: ['app.unknown.x'] })
+    assert(/未注册/.test(r), 'get_slot_paths 未注册路径被拒并标记')
 
     // 清理 mock window 扩展字段,避免污染后续
     delete w.app.list
     delete w.app.cfg
   }
 
-  // ============ windowOps:字段白名单读模式(子路径注册,LLM 不见完整 JSON)============
-  console.log('\n[windowOps whitelist]')
+  // ============ dataSlotOps:字段白名单读模式(子路径注册,LLM 不见完整 JSON)============
+  console.log('\n[dataSlotOps whitelist]')
   {
     // 模拟大 JSON:page 含很多字段,集成方只声明可操作的子路径
     ;(globalThis as any).window = {
@@ -138,7 +138,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       },
     }
     // 集成方只声明必要字段:叶子 + 数组(元素 schema 用 passthrough 只校验必要 key)
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'page.title', description: '页面标题', schema: z.string() },
       { path: 'page.theme.color', description: '主题色', schema: z.string() },
       {
@@ -151,44 +151,44 @@ export async function run(ctx: TestCtx): Promise<void> {
     const w = (globalThis as any).window
 
     // list 只列声明字段(不含 secret/internal)
-    let r = await invoke(t['list_window_props'], {})
+    let r = await invoke(t['list_data_slots'], {})
     assert(/page\.title/.test(r) && /page\.theme\.color/.test(r) && /page\.components/.test(r), 'list 只列声明的可操作子路径')
 
     // get 声明叶子:可读
-    r = await invoke(t['get_window_prop'], { path: 'page.theme.color' })
+    r = await invoke(t['get_data_slot'], { path: 'page.theme.color' })
     assert(/1f4d3a/.test(r), 'whitelist: get 声明叶子可读')
 
     // get 后代(声明数组的元素字段):可读
-    r = await invoke(t['get_window_prop'], { path: 'page.components.0.price' })
+    r = await invoke(t['get_data_slot'], { path: 'page.components.0.price' })
     assert(/50/.test(r), 'whitelist: get 声明数组的后代字段可读')
 
     // get 未声明的祖先(整个 page):被拒,不暴露 secret
-    r = await invoke(t['get_window_prop'], { path: 'page' })
+    r = await invoke(t['get_data_slot'], { path: 'page' })
     assert(!/secret/.test(r) && /未注册|不可读|不暴露/.test(r), 'whitelist: get 未声明祖先(page)被拒,不暴露 secret')
 
     // get 未声明的兄弟字段(page.secret):被拒
-    r = await invoke(t['get_window_prop'], { path: 'page.secret' })
+    r = await invoke(t['get_data_slot'], { path: 'page.secret' })
     assert(/未注册|不可读/.test(r), 'whitelist: get 未声明字段(secret)被拒')
 
     // set 声明叶子:只写该叶子,只校验其 schema,不传完整 JSON
-    r = await invoke(t['set_window_prop'], { path: 'page.theme.color', value: '"#000000"' })
+    r = await invoke(t['set_data_slot'], { path: 'page.theme.color', value: '"#000000"' })
     assert(w.page.theme.color === '#000000' && /已设置/.test(r), 'whitelist: set 声明叶子生效(只写叶子)')
 
     // edit 声明数组的元素字段:增量 patch,元素 schema 用 passthrough 放行 internal
-    r = await invoke(t['edit_window_prop'], { path: 'page.components', op: 'set', jsonPath: '1.price', value: '180' })
+    r = await invoke(t['edit_data_slot'], { path: 'page.components', op: 'set', jsonPath: '1.price', value: '180' })
     assert(w.page.components[1].price === 180 && w.page.components[1].internal === 'y', 'whitelist: edit 增量改元素字段,passthrough 保留未声明字段')
 
     // set 未声明字段:被拒
-    r = await invoke(t['set_window_prop'], { path: 'page.secret', value: '"leaked"' })
+    r = await invoke(t['set_data_slot'], { path: 'page.secret', value: '"leaked"' })
     assert(/未在注册表中声明/.test(r) && w.page.secret === '不应暴露的内部数据', 'whitelist: set 未声明字段被拒(不泄露)')
 
     // whitelist:false 回退原行为:祖先读可用
-    const toolsLegacy = createWindowOps(
+    const toolsLegacy = createDataSlotOps(
       [{ path: 'page.title', description: '标题', schema: z.string() }],
       { whitelist: false },
     )
     const tLegacy = byName(toolsLegacy)
-    r = await invoke(tLegacy['get_window_prop'], { path: 'page' })
+    r = await invoke(tLegacy['get_data_slot'], { path: 'page' })
     assert(/title/.test(r), 'whitelist:false → 祖先读回退可用(整体读)')
   }
 
@@ -196,7 +196,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[tool errors]')
   {
     ;(globalThis as any).window = { app: { theme: 'dark', count: 5, cfg: { a: 1 } } }
-    const tools = createWindowOps([
+    const tools = createDataSlotOps([
       { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
       { path: 'app.count', description: '计数', schema: z.number().int().min(0) },
       { path: 'app.cfg', description: '配置', schema: z.object({ a: z.number(), name: z.string().optional() }) },
@@ -204,34 +204,34 @@ export async function run(ctx: TestCtx): Promise<void> {
     const t = byName(tools)
 
     // 未注册:结构化错误码 + hint
-    let r = await invoke(t['set_window_prop'], { path: 'app.unknown', value: '1' })
+    let r = await invoke(t['set_data_slot'], { path: 'app.unknown', value: '1' })
     assert(/^ERROR: \{.*"error":\s*"NOT_REGISTERED"/.test(r), '未注册 → ERROR json 含 error=NOT_REGISTERED')
     assert(/"hint"/.test(r), '错误含 hint(可操作建议)')
 
     // schema 失败:details 含 zod issues(path/expected/received)
-    r = await invoke(t['set_window_prop'], { path: 'app.count', value: '"x"' })
+    r = await invoke(t['set_data_slot'], { path: 'app.count', value: '"x"' })
     assert(/"error":\s*"SCHEMA_INVALID"/.test(r), 'schema 失败 → error=SCHEMA_INVALID')
     const detailMatch = r.match(/"details":\s*(\[[^\]]*\])/)
     assert(detailMatch && /expected/.test(detailMatch[1]) && /received/.test(detailMatch[1]), 'schema 失败 details 含 zod issue 的 expected/received')
 
     // JSON 解析失败:带原解析错误 + 预览
-    r = await invoke(t['set_window_prop'], { path: 'app.count', value: '{bad' })
+    r = await invoke(t['set_data_slot'], { path: 'app.count', value: '{bad' })
     assert(/"error":\s*"JSON_PARSE"/.test(r) && /预览|bad/.test(r), 'JSON 解析失败 → error=JSON_PARSE + 预览')
 
     // edit 非对象:NOT_OBJECT + hint 指向 set
-    r = await invoke(t['edit_window_prop'], { path: 'app.theme', op: 'set', jsonPath: 'x', value: '1' })
-    assert(/"error":\s*"NOT_OBJECT"/.test(r) && /set_window_prop/.test(r), 'edit 叶子 → NOT_OBJECT + hint 指向 set_window_prop')
+    r = await invoke(t['edit_data_slot'], { path: 'app.theme', op: 'set', jsonPath: 'x', value: '1' })
+    assert(/"error":\s*"NOT_OBJECT"/.test(r) && /set_data_slot/.test(r), 'edit 叶子 → NOT_OBJECT + hint 指向 set_data_slot')
 
     // edit 不安全路径:PATH_UNSAFE
-    r = await invoke(t['edit_window_prop'], { path: 'app.cfg', op: 'set', jsonPath: '__proto__.x', value: '1' })
+    r = await invoke(t['edit_data_slot'], { path: 'app.cfg', op: 'set', jsonPath: '__proto__.x', value: '1' })
     assert(/"error":\s*"PATH_UNSAFE"/.test(r), 'edit __proto__ → PATH_UNSAFE')
 
     // query 语法错误:JSONPATH_SYNTAX + details.expr
-    r = await invoke(t['query_window_prop'], { path: 'app.cfg', expr: '$[?(@.x==' })
+    r = await invoke(t['query_data_slot'], { path: 'app.cfg', expr: '$[?(@.x==' })
     assert(/"error":\s*"JSONPATH_SYNTAX"/.test(r) && /"expr"/.test(r), 'query 语法错 → JSONPATH_SYNTAX + details.expr')
 
     // 正常成功:不是 ERROR 前缀
-    r = await invoke(t['get_window_prop'], { path: 'app.theme' })
+    r = await invoke(t['get_data_slot'], { path: 'app.theme' })
     assert(!/^ERROR:/.test(r) && /dark/.test(r), '正常读不返回 ERROR 前缀')
   }
 

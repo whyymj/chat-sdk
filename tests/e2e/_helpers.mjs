@@ -6,7 +6,7 @@ export { createChatSdk, z, defineTool, defineSkill, presets, systemPromptHelpers
 export const FAKE_LLM = { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake' }
 export const MIN_CAPS = { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false }
 
-// node 环境构造 window/document stub(windowOps 工具函数体用 window;mount 的 pagehide/visibility guard 需 addEventListener)
+// node 环境构造 window/document stub(dataSlotOps 工具函数体用 window;mount 的 pagehide/visibility guard 需 addEventListener)
 export function setupEnv() {
   if (typeof globalThis.window === 'undefined') globalThis.window = { addEventListener() {}, removeEventListener() {}, app: {} }
   if (typeof globalThis.document === 'undefined') globalThis.document = { addEventListener() {}, removeEventListener() {}, visibilityState: 'visible' }

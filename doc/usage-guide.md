@@ -14,7 +14,7 @@
 - [4. 核心概念](#4-核心概念)
 - [5. 配置项参考](#5-配置项参考)
 - [6. 能力详解](#6-能力详解)
-  - [6.1 window 操作(让 Agent 改你的页面)](#61-window-操作让-agent-改你的页面)
+  - [6.1 数据槽操作(让 Agent 改你的页面)](#61-window-操作让-agent-改你的页面)
   - [6.2 自定义工具](#62-自定义工具)
   - [6.3 Skills(渐进式披露)](#63-skills渐进式披露)
   - [6.4 Memory(持久指令)](#64-memory持久指令)
@@ -96,26 +96,26 @@ createChatSdk({
     model: 'deepseek-chat',
   },
   systemPrompt: '你是页面助手。可读改 window.app 的 title / theme。',
-  windowProps: [
+  dataSlots: [
     { path: 'app.title', description: '页面标题', schema: z.string() },
     { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
   ],
 }).mount()
 ```
 
-打开页面,在对话框输入「把主题改成 dark」→ Agent 调用 `set_window_prop` 直接改 `window.app.theme`。完。
+打开页面,在对话框输入「把主题改成 dark」→ Agent 调用 `set_data_slot` 直接改 `window.app.theme`。完。
 
 ## 4. 核心概念
 
 | 概念 | 说明 |
 |---|---|
 | **Agent** | ReAct 循环:思考 → 调工具 → 观察 → 再思考,直到给出最终回复 |
-| **windowProps** | 你声明「Agent 可以读写 window 上哪些属性 + 值的 schema」。Agent 只能动这些(范围控制) |
+| **dataSlots** | 你声明「Agent 可以读写 window 上哪些属性 + 值的 schema」。Agent 只能动这些(范围控制) |
 | **工具(tool)** | Agent 的手脚。内置 window/vfs/文档抓取工具 + 你用 `defineTool` 加的 |
 | **中间件(middleware)** | 插入 Agent 生命周期的钩子。内置 todos/skills/vfs/summarization/memory/permissions/verify,也可自定义 |
 | **持久化(storage)** | 对话/工作区/todos/memory 落盘(IndexedDB 等),刷新可恢复 |
 
-**心智模型**:你只负责 ① 声明 `windowProps`(Agent 能碰什么)② 写 `systemPrompt`(Agent 该干嘛)③ 可选加 `tools`/`skills`/`middleware`。其余交给 Agent。
+**心智模型**:你只负责 ① 声明 `dataSlots`(Agent 能碰什么)② 写 `systemPrompt`(Agent 该干嘛)③ 可选加 `tools`/`skills`/`middleware`。其余交给 Agent。
 
 ## 5. 配置项参考
 
@@ -139,7 +139,7 @@ createChatSdk({
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
 
   /* ===== 能力注入 ===== */
-  windowProps: [...],           // 可读写的 window 属性(范围 + schema 校验)
+  dataSlots: [...],           // 可读写的 数据槽(范围 + schema 校验)
   tools: [...],                 // 自定义工具(defineTool)
   skills: [...],                // 渐进式披露技能(defineSkill)
   memory: '...',                // AGENTS.md 风格持久指令
@@ -152,11 +152,11 @@ createChatSdk({
 
   /* ===== 容量与鲁棒性 ===== */
   vfs: { initialFiles?, maxBytes? },      // 虚拟工作区(默认内存上限 4MB,LRU 淘汰)
-  maxSnapshots: 20,             // 每个 window 属性快照数(默认 20,FIFO)
+  maxSnapshots: 20,             // 每个 数据槽快照数(默认 20,FIFO)
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { windowOps: true, fetch: true, planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。windowOps/fetch 控制内置工具装载;verify 反向:默认关,需显式 verify:true)
+  capabilities: { dataSlotOps: true, fetch: true, planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。dataSlotOps/fetch 控制内置工具装载;verify 反向:默认关,需显式 verify:true)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -175,12 +175,12 @@ createChatSdk({
 
 ## 6. 能力详解
 
-### 6.1 window 操作(让 Agent 改你的页面)
+### 6.1 数据槽操作(让 Agent 改你的页面)
 
-这是 SDK 的核心。你用 `windowProps` 声明 Agent 能碰的属性:
+这是 SDK 的核心。你用 `dataSlots` 声明 Agent 能碰的属性:
 
 ```ts
-windowProps: [
+dataSlots: [
   {
     path: 'app.theme',          // window 上的路径,支持点号嵌套(app.user.name)
     description: '页面主题',     // Agent 据此判断何时用
@@ -193,29 +193,29 @@ Agent 自主调用这些内置工具(无需你写):
 
 | 工具 | 作用 |
 |---|---|
-| `list_window_props` / `describe_window_prop` | 列出 / 查看可操作属性 |
-| `get_window_prop` / `get_window_paths` | 读属性(支持后代路径精确读局部;字段白名单读模式默认禁止祖先整体读,避免大 JSON 进上下文) |
-| `set_window_prop` | 写属性(**按 schema 校验**,不合法返回错误不写入) |
-| `edit_window_prop` | 增量 patch(`components.0.text`),避免重传整个大 JSON |
-| `delete_window_prop` | 删属性 |
-| `snapshot_window_prop` / `list_window_snapshots` / `restore_window_snapshot` | 快照 / 回退 |
+| `list_data_slots` / `describe_data_slot` | 列出 / 查看可操作属性 |
+| `get_data_slot` / `get_slot_paths` | 读属性(支持后代路径精确读局部;字段白名单读模式默认禁止祖先整体读,避免大 JSON 进上下文) |
+| `set_data_slot` | 写属性(**按 schema 校验**,不合法返回错误不写入) |
+| `edit_data_slot` | 增量 patch(`components.0.text`),避免重传整个大 JSON |
+| `delete_data_slot` | 删属性 |
+| `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot` | 快照 / 回退 |
 
 **要点**:
-- **范围控制**:Agent 只能动 `windowProps` 里声明的路径,其它一律拒绝。
+- **范围控制**:Agent 只能动 `dataSlots` 里声明的路径,其它一律拒绝。
 - **schema 校验**:`set`/`edit` 不合法值会被拦截(不写入),返回结构化错误给 Agent 自纠。
-- **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_window_snapshot` 一键回退。
+- **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_data_snapshot` 一键回退。
   - 自动快照:写操作前自动入栈(per-path,默认 20,FIFO 丢最旧)
-  - 手动检查点:`snapshot_window_prop(path, label?)` 命名快照
-  - 查看时间线:`list_window_snapshots(path?)` —— 序号 / op / 标签 / 大小
-  - 回退:`restore_window_snapshot(path, id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈
-  - 例:Agent 误改 `page.theme`,对话「回退 page.theme 最近一次修改」→ Agent 调 `restore_window_snapshot({ path: 'page.theme' })`
+  - 手动检查点:`snapshot_data_slot(path, label?)` 命名快照
+  - 查看时间线:`list_data_snapshots(path?)` —— 序号 / op / 标签 / 大小
+  - 回退:`restore_data_snapshot(path, id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈
+  - 例:Agent 误改 `page.theme`,对话「回退 page.theme 最近一次修改」→ Agent 调 `restore_data_snapshot({ path: 'page.theme' })`
 - **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **零桥接**:工具直接操作宿主页面主 `window`,无 iframe/shadow 隔离。
 - **大 JSON 只暴露声明字段**(字段白名单读模式,默认开启):当宿主有个大 JSON(如 `window.page` 含上百字段),你不必声明完整 schema,也无需让 Agent 看到全貌。做法:
   - 注册「可操作子路径」而非顶层,各自 schema;数组元素用 `.passthrough()` 只校验必要 key、其余放行:
 
     ```ts
-    windowProps: [
+    dataSlots: [
       { path: 'page.title', description: '页面标题', schema: z.string() },
       { path: 'page.theme.color', description: '主题色', schema: z.string() },
       { path: 'page.components', description: '组件数组',
@@ -225,9 +225,9 @@ Agent 自主调用这些内置工具(无需你写):
     ],
     ```
 
-  - Agent 只能 `get`/`set`/`edit` 这些声明字段;`get_window_prop('page')`(未注册祖先)被拒 → 完整 JSON 不进上下文,省 token、防泄露。
-  - 改数组元素某字段用 `edit_window_prop('page.components', { op:'set', jsonPath:'1.price', value:'180' })` 增量 patch,只发改动、不重传整个数组。
-  - 需整体读祖先时设 `createChatSdk({ ..., })` 内 `windowOps` 选项 `whitelist:false`(回退原行为)。
+  - Agent 只能 `get`/`set`/`edit` 这些声明字段;`get_data_slot('page')`(未注册祖先)被拒 → 完整 JSON 不进上下文,省 token、防泄露。
+  - 改数组元素某字段用 `edit_data_slot('page.components', { op:'set', jsonPath:'1.price', value:'180' })` 增量 patch,只发改动、不重传整个数组。
+  - 需整体读祖先时设 `createChatSdk({ ..., })` 内 `dataSlotOps` 选项 `whitelist:false`(回退原行为)。
 - **树形/递归 children 结构**:节点含 `children` 自引用时,用 zod `z.lazy(() => TreeNode)` 声明递归 schema,`.passthrough()` 让节点可带未声明字段:
 
   ```ts
@@ -238,24 +238,24 @@ Agent 自主调用这些内置工具(无需你写):
     children: z.array(z.lazy(() => TreeNode)).optional(),  // 自引用 → 任意深度
   }).passthrough()
 
-  windowProps: [
+  dataSlots: [
     { path: 'page.components', description: '组件树(递归 children)', schema: z.array(TreeNode) },
   ],
   ```
 
-  - **查**:递归找任意深度的节点用 `query_window_prop` 的 `$..*[?(@.type=="card")]`(找所有 card);精确定位用 `$.components.0.children.0.children.0.text`
-  - **改**:增量改深层节点用 `edit_window_prop('page.components', { op:'set', jsonPath:'0.children.0.children.0.text', value:'"新文本"' })` —— jsonPath 逐级定位,只发改动,无需重传整棵树
+  - **查**:递归找任意深度的节点用 `query_data_slot` 的 `$..*[?(@.type=="card")]`(找所有 card);精确定位用 `$.components.0.children.0.children.0.text`
+  - **改**:增量改深层节点用 `edit_data_slot('page.components', { op:'set', jsonPath:'0.children.0.children.0.text', value:'"新文本"' })` —— jsonPath 逐级定位,只发改动,无需重传整棵树
   - **校验**:递归 schema 自动穿透到 children,append 非法节点(如缺 `id`)被拒;passthrough 保留节点的额外字段(extra/style 等)
-  - **复杂遍历**(如带父路径聚合、按多条件递归筛选)用 `eval_window_script` 写递归 visit 函数最直观
+  - **复杂遍历**(如带父路径聚合、按多条件递归筛选)用 `eval_script` 写递归 visit 函数最直观
 
 #### 乐观锁(防"基于过期值覆盖")与冲突人工介入
 
-当属性可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:Agent `get_window_prop` 返回值末尾附 `hash=xxx`,写入时回传 `expectedHash` 校验。
+当属性可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:Agent `get_data_slot` 返回值末尾附 `hash=xxx`,写入时回传 `expectedHash` 校验。
 
 ```ts
 // Agent 工作流(由 LLM 自动执行,集成方无需写)
 // 1. get → "page.title = old (hash=a1b2)"
-// 2. set_window_prop({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
+// 2. set_data_slot({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
 //    若期间外部改过 → hash 不匹配 → 触发冲突
 ```
 
@@ -287,7 +287,7 @@ sdk.hook((e) => {
 
 **挂起自动收口(防永久挂起):** 用户停止生成(abort)/ `unmount()` / `switchSession()` 时,自动按「保留外部」收口挂起的冲突。
 
-> 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createWindowOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
+> 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createDataSlotOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
 
 ### 6.2 自定义工具
 
@@ -491,10 +491,10 @@ createChatSdk({
       temperature: 0.3,
       systemPrompt: '你是设计反思审查员。对方案挑刺并给修订建议,不要重写整个方案。' },
   ],
-  approval: { tools: ['set_window_prop', 'edit_window_prop'] }, // 落地写前确认
+  approval: { tools: ['set_data_slot', 'edit_data_slot'] }, // 落地写前确认
 })
 // 流程:用户"设计夏日主题" → 主 agent 识别创作类 → use_planner 出方案
-//      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → edit_window_prop 落地
+//      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → edit_data_slot 落地
 ```
 
 > 路由由主 agent 自判(usageHints 提示词引导);若误判率高,可升级为路由中间件(`beforeModel` 跑轻量 router 判模式,`augmentPrompt` 注入模式指令)。`planner-demo`(`/examples/planner-demo/`)演示完整闭环。
@@ -518,11 +518,11 @@ createChatSdk({
 })
 ```
 
-**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`set/edit/delete_window_prop`)后,读回值确认写入生效 + 符合 schema:
+**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`set/edit/delete_data_slot`)后,读回值确认写入生效 + 符合 schema:
 - **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈
 - **delete 语义**:delete 后读回空 = 删除成功(放行);仍有值 → 「未删干净」
 - **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝)时**不误报**(读回无值是预期)
-- windowOps 写入同步,check 读回无需 `await`
+- dataSlotOps 写入同步,check 读回无需 `await`
 
 **自定义 check**:写领域相关的验证(业务规则、不变量)。好 check 返回**具体可操作**的 feedback:
 ```ts
@@ -535,7 +535,7 @@ verify: {
 }
 ```
 
-**何时用**:Agent 改页面(window 写)后想确保写入生效 / 符合预期。**何时不用**:纯问答(无写操作,check 自动放行)、对延迟敏感(自纠多跑 LLM 轮次)。
+**何时用**:Agent 改页面(数据槽写)后想确保写入生效 / 符合预期。**何时不用**:纯问答(无写操作,check 自动放行)、对延迟敏感(自纠多跑 LLM 轮次)。
 
 **查看状态**:`agent.inspect().verify` → `{ enabled, maxAttempts }`。
 
@@ -555,7 +555,7 @@ createChatSdk({
   // ... 其他配置
   // humanConfirm: true,  // 主动征询(默认开启,不传也开;false 关闭)
   approval: {
-    tools: ['set_window_prop', 'edit_window_prop', 'delete_window_prop'], // 被动:需确认的工具名
+    tools: ['set_data_slot', 'edit_data_slot', 'delete_data_slot'], // 被动:需确认的工具名
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
     // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
@@ -593,27 +593,27 @@ createChatSdk({
 const sdk = createChatSdk({
   // ... 其他配置
   checkpoint: true,            // 或 { maxCheckpoints: 5, auto: true }
-  windowProps: [{ path: 'Editor.PageInfo', schema, ... }],  // checkpoint 整体快照这些注册属性
+  dataSlots: [{ path: 'Editor.PageInfo', schema, ... }],  // checkpoint 整体快照这些注册属性
 })
 sdk.mount()
 
-// 一键回退(对话历史 + 注册 window 属性 + vfs + todos 整体还原)
+// 一键回退(对话历史 + 注册 数据槽 + vfs + todos 整体还原)
 sdk.restoreLastCheckpoint()
 sdk.listCheckpoints()  // 查看可用回退点
 ```
 
 **自动存档**(`auto` 默认 true):每轮 agent 行动前(beforeModel 首次)自动存一个 checkpoint = 上一正常态 + 本轮 user 消息。回滚后**保留 user 消息、撤销 agent 本轮改动**,可直接重试本轮。
 
-**快照内容**(整体,区别于 windowOps 的 per-path 精细快照):对话历史 + 全部注册 window 属性 + vfs + todos。仅存内存(会话级,非持久化);FIFO 限长(默认 5)。
+**快照内容**(整体,区别于 dataSlotOps 的 per-path 精细快照):对话历史 + 全部注册 数据槽 + vfs + todos。仅存内存(会话级,非持久化);FIFO 限长(默认 5)。
 
 **三个回滚入口**:
 - **UI**:ChatDialog error-bar「↩ 回退」按钮 + footer 常驻回退按钮(`canUndo` 时显示)——用户一键回退
 - **LLM 工具**:`restore_last_checkpoint`(流程异常/改坏页面时 AI 自纠回退)、`list_checkpoints`
 - **SDK API**:`sdk.restoreLastCheckpoint()` / `sdk.listCheckpoints()`(headless 自建 UI 用)
 
-**就地还原**:window 注册属性就地清空+重填(保留 Vue reactive 容器引用,UI 自动更新);messages 用 splice 替换内容(保留同一响应式数组引用);vfs 清空重填;todos reset。
+**就地还原**:数据槽注册项就地清空+重填(保留 Vue reactive 容器引用,UI 自动更新);messages 用 splice 替换内容(保留同一响应式数组引用);vfs 清空重填;todos reset。
 
-> **与 windowOps 快照区别**:per-path 快照(`restore_window_snapshot`)精细,单属性回退,自动随 set/edit/delete 入栈;checkpoint 整体,回滚到某轮起点(跨多属性 + 对话 + vfs + todos)。二者叠加:小错用 per-path 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
+> **与 dataSlotOps 快照区别**:per-path 快照(`restore_data_snapshot`)精细,单属性回退,自动随 set/edit/delete 入栈;checkpoint 整体,回滚到某轮起点(跨多属性 + 对话 + vfs + todos)。二者叠加:小错用 per-path 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
 
 ### 6.10 MCP(外部工具接入)
 
@@ -642,7 +642,7 @@ createChatSdk({
 
 | 事件 | 时机 | 字段 |
 |---|---|---|
-| `window_prop_change` | Agent 调 `set`/`edit`/`delete`/`restore_window_*` 后 | `path` / `operation` / `value`(改后值) |
+| `data_slot_change` | Agent 调 `set`/`edit`/`delete`/`restore_window_*` 后 | `path` / `operation` / `value`(改后值) |
 | `message_update` | 每轮 Agent 结束 | `count`(消息数) |
 | `tool_call` | 工具调用前(stream 模式) | `name` / `args` |
 | `tool_result` | 工具返回后(stream 模式) | `name` / `result` / `status` |
@@ -653,7 +653,7 @@ createChatSdk({
 | `error` | 模型调用/工具抛错 | `message` |
 
 > ⚠️ `approval_request` 不外发(UI 已处理,避免集成方误调 `resolve` 双重收口)。
-> ⚠️ `tool_call`/`tool_result`/`text`/`done` 等流式事件仅在 **stream 模式**触发(UI 默认走 stream;命令式 `sdk.send` 走 invoke 无流式事件,但 `window_prop_change`/`message_update`/`error` 仍会发)。
+> ⚠️ `tool_call`/`tool_result`/`text`/`done` 等流式事件仅在 **stream 模式**触发(UI 默认走 stream;命令式 `sdk.send` 走 invoke 无流式事件,但 `data_slot_change`/`message_update`/`error` 仍会发)。
 
 **示例**(宿主页面响应式刷新,替代 `setInterval` 轮询):
 
@@ -661,8 +661,8 @@ createChatSdk({
 createChatSdk({
   /* ... */
   onEvent(event) {
-    if (event.type === 'window_prop_change') {
-      // Agent 改了 window 属性 → 实时刷新你的 UI 镜像
+    if (event.type === 'data_slot_change') {
+      // Agent 改了 数据槽 → 实时刷新你的 UI 镜像
       renderState()
     } else if (event.type === 'tool_call') {
       analytics.track('agent_tool_call', { name: event.name })
@@ -684,7 +684,7 @@ const sdk = createChatSdk({ /* 不必传 onEvent */ }).mount()
 
 // 订阅 1:宿主页面响应式刷新
 const off1 = sdk.hook((event) => {
-  if (event.type === 'window_prop_change') renderUI()
+  if (event.type === 'data_slot_change') renderUI()
 })
 
 // 订阅 2:埋点(与订阅 1 共存,互不影响)
@@ -755,7 +755,7 @@ const injectCtx: Middleware = {
 const guard: Middleware = {
   name: 'guard',
   wrapToolCall: async (ctx, next) => {
-    if (ctx.name === 'set_window_prop' && ctx.args.path === 'app.critical') {
+    if (ctx.name === 'set_data_slot' && ctx.args.path === 'app.critical') {
       return { content: '该字段禁止 Agent 修改', status: 'error' }  // 不调 next = 拦截
     }
     return next(ctx)
@@ -805,9 +805,9 @@ agent.unmount()
 **预设**(常见场景一键装载):
 ```ts
 import { createChatSdk, presets } from 'page-agent-sdk'
-createChatSdk({ ...presets.pageBuilder, container: '#root', llm, windowProps })  // 页面构建助手
+createChatSdk({ ...presets.pageBuilder, container: '#root', llm, dataSlots })  // 页面构建助手
 createChatSdk({ ...presets.researcher, container, llm })                         // 并行调研
-createChatSdk({ ...presets.minimal, container, llm, windowProps })               // 极简(关高级能力)
+createChatSdk({ ...presets.minimal, container, llm, dataSlots })               // 极简(关高级能力)
 ```
 可用预设:`pageBuilder`(读写 window 驱动页面)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
 
@@ -817,7 +817,7 @@ SDK 核心是**框架无关的 JS**,可在 Node.js 服务端跑(headless 模式)
 
 **服务端配置要点**:
 - `ui: false` —— headless,不渲染 ChatDialog(服务端无 DOM)
-- `capabilities: { windowOps: false, fetch: false }` —— 关浏览器依赖工具(windowOps 需 `window` 对象;`fetch_document` 需 `fetch`,Node 18+ 有全局 fetch,可保留)
+- `capabilities: { dataSlotOps: false, fetch: false }` —— 关浏览器依赖工具(dataSlotOps 需 `window` 对象;`fetch_document` 需 `fetch`,Node 18+ 有全局 fetch,可保留)
 - `storage: 'memory'` —— 用内存后端(服务端无 IndexedDB/localStorage);不传则纯内存不持久化
 - 用 `tools` 注入你的业务工具(`defineTool`),`send`/`stream` 命令式驱动
 
@@ -837,7 +837,7 @@ const sdk = createChatSdk({
   storage: 'memory',
   llm: { apiKey: process.env.AI_API_KEY, baseUrl: '...', model: '...' },
   systemPrompt: '你是计算助手,用 add 工具做加法。',
-  capabilities: { windowOps: false, fetch: false },
+  capabilities: { dataSlotOps: false, fetch: false },
   tools: [add],
 })
 await sdk.mount()
@@ -846,9 +846,9 @@ console.log(reply) // AI 调 add 工具 → "3 + 5 = 8"
 ```
 
 **服务端可用能力**:自定义工具 / `fetch_document`(Node 18+)/ 子 agent / verify 自检 / vfs 工作区 / context 压缩 / memory / onEvent 事件回调
-**服务端不可用**:windowOps(需 `window`)/ ChatDialog UI(需 DOM)/ IndexedDB·localStorage·sessionStorage 持久化(用 `memory` 替代)
+**服务端不可用**:dataSlotOps(需 `window`)/ ChatDialog UI(需 DOM)/ IndexedDB·localStorage·sessionStorage 持久化(用 `memory` 替代)
 
-> 注:`eval_window_script` 依赖 Web Worker,属 windowOps,关掉即不装。MCP 远程工具(http/sse/websocket)在 Node 也可用(动态 import `@modelcontextprotocol/sdk`)。
+> 注:`eval_script` 依赖 Web Worker,属 dataSlotOps,关掉即不装。MCP 远程工具(http/sse/websocket)在 Node 也可用(动态 import `@modelcontextprotocol/sdk`)。
 
 ## 9. 框架无关 / CDN 集成
 
@@ -866,7 +866,7 @@ console.log(reply) // AI 调 add 工具 → "3 + 5 = 8"
     createChatSdk({
       container: '#agent',
       llm: { apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-      windowProps: [{ path: 'app.count', description: '计数', schema: z.number() }],
+      dataSlots: [{ path: 'app.count', description: '计数', schema: z.number() }],
     }).mount()
   </script>
 </body>
@@ -898,14 +898,14 @@ A: 没开持久化。传 `storage: 'indexed'` + 稳定的 `id`(`id` 不传会随
 **Q: Agent 报 `400 missing field tool_call_id`?**
 A: 这是 SDK 内部 LangChain 消息字段约定,已处理。如果你自定义中间件构造 `ToolMessage`,记得用 snake_case 的 `tool_call_id`。
 
-**Q: Agent 改不了某个 window 属性?**
-A: 该属性没在 `windowProps` 里声明(范围控制),或值不符合 `schema`(校验拦截)。检查这两点。
+**Q: Agent 改不了某个 数据槽?**
+A: 该属性没在 `dataSlots` 里声明(范围控制),或值不符合 `schema`(校验拦截)。检查这两点。
 
 **Q: 操作大 JSON 时 Agent 报错 / 截断?**
-A: ① 用 `edit_window_prop` 增量 patch 而非 `set` 重传整体;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
+A: ① 用 `edit_data_slot` 增量 patch 而非 `set` 重传整体;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
 
 **Q: 怎么关闭某项内置能力?**
-A: 用 `capabilities: { windowOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`windowOps:false` → 不装 10 个 window 工具(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+A: 用 `capabilities: { dataSlotOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataSlotOps:false` → 不装 10 个 数据槽工具(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。
@@ -928,8 +928,8 @@ createChatSdk({
   container: '#agent',
   llm: { apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   systemPrompt: '你是页面助手,帮用户改 window.page。',
-  // 声明 agent 能碰的 window 属性(范围 + schema 校验,读写都经工具)
-  windowProps: [
+  // 声明 agent 能碰的 数据槽(范围 + schema 校验,读写都经工具)
+  dataSlots: [
     { path: 'page.title', description: '页面标题', schema: z.string() },
     { path: 'page.theme', description: '主题', schema: z.enum(['light', 'dark']) },
   ],
@@ -956,7 +956,7 @@ createChatSdk({
   storage: 'indexed',             // 持久化(对话 / vfs / todos / memory)
   llm: { apiKey, baseUrl, model: 'deepseek-chat' },
   systemPrompt: '你是商品页编辑助手。复杂任务先 write_todos 拆解。',
-  windowProps: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
+  dataSlots: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
   tools: [searchProduct],
   skills: [
     defineSkill({ name: 'style-guide', description: '设计规范', doc: 'https://host/style.md' }),  // doc 文档源(http 远程 / vfs 本地)
@@ -990,7 +990,7 @@ createChatSdk({
   // —— 主 agent ——
   llm: { apiKey, baseUrl, model: 'deepseek-chat', temperature: 0.3, maxTokens: 16384 },
   systemPrompt: '你是商品页编辑助手。复杂任务先 write_todos;调研用 use_researcher;审查用 use_reviewer。',
-  windowProps: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
+  dataSlots: [{ path: 'page.components', description: '组件树', schema: z.array(z.any()) }],
   tools: [searchProduct],
   skills: [defineSkill({ name: 'style-guide', description: '设计规范', doc: 'vfs://skills/style.md' })],
   memory: '用简体中文;价格显示 ¥。',
@@ -1007,7 +1007,7 @@ createChatSdk({
     { id: 'reviewer', description: '文案审查', systemPrompt: '你是文案审查者,找语病和不合规表述。' },  // 不传 llm → 继承主
   ],
 
-  // —— 自检:返回前验证 window 写入(写后读回 + schema)——
+  // —— 自检:返回前验证 数据槽写入(写后读回 + schema)——
   capabilities: { verify: true },
   verify: { maxAttempts: 2 },
 
@@ -1016,14 +1016,14 @@ createChatSdk({
 }).mount()
 ```
 
-主 LLM 会自动:多步任务先 `write_todos` → 调研调 `use_researcher({task})` → 审查调 `use_reviewer({task})` → 改 `page.components` 前自动 snapshot(误改可 `restore_window_snapshot`)→ 返回前 verify 自检。
+主 LLM 会自动:多步任务先 `write_todos` → 调研调 `use_researcher({task})` → 审查调 `use_reviewer({task})` → 改 `page.components` 前自动 snapshot(误改可 `restore_data_snapshot`)→ 返回前 verify 自检。
 
 ### 12.4 headless 自建 UI(不渲染内置对话框)
 
 ```ts
 import { createChatSdk } from 'page-agent-sdk'
 
-const agent = createChatSdk({ ui: false, llm, windowProps })
+const agent = createChatSdk({ ui: false, llm, dataSlots })
 agent.mount()
 agent.messages        // 响应式数组,自建 UI 读它
 await agent.send('加一个提交按钮')
@@ -1056,16 +1056,16 @@ await agent.send('加一个提交按钮')
 
 | # | 场景 | 关键配置 |
 |---|---|---|
-| 1 | 低代码页面搭建 | `windowProps`=组件树;`edit_window_prop` jsonPath 增量;`onEvent`→画布刷新;`checkpoint`+`approval` |
-| 2 | 表单设计器 | `windowProps`=字段定义(枚举/必填 schema);schema 校验防错 |
-| 3 | CMS 批量运营 | `eval_window_script` 批量循环;`search_window_prop` 筛选;`edit_window_prop` 精确改 |
+| 1 | 低代码页面搭建 | `dataSlots`=组件树;`edit_data_slot` jsonPath 增量;`onEvent`→画布刷新;`checkpoint`+`approval` |
+| 2 | 表单设计器 | `dataSlots`=字段定义(枚举/必填 schema);schema 校验防错 |
+| 3 | CMS 批量运营 | `eval_script` 批量循环;`search_data_slot` 筛选;`edit_data_slot` 精确改 |
 | 4 | 运维配置台 | `approval` 人工确认;`capabilities.verify:true` 写后读回;`checkpoint` |
-| 5 | AI 原生助手 | `capabilities:{windowOps:false,fetch:false}` + 自定义 `tools`(产品 API) |
-| 6 | 调研 agent | `capabilities:{windowOps:false}`;`subagent:{allowedTools:['fetch_document']}`;`contextPreset:'conservative'` |
-| 7 | 服务端 Node.js | `ui:false`+`storage:'memory'`+`capabilities:{windowOps:false,fetch:false}`;`sdk.send` 驱动 |
+| 5 | AI 原生助手 | `capabilities:{dataSlotOps:false,fetch:false}` + 自定义 `tools`(产品 API) |
+| 6 | 调研 agent | `capabilities:{dataSlotOps:false}`;`subagent:{allowedTools:['fetch_document']}`;`contextPreset:'conservative'` |
+| 7 | 服务端 Node.js | `ui:false`+`storage:'memory'`+`capabilities:{dataSlotOps:false,fetch:false}`;`sdk.send` 驱动 |
 | 8 | 同页多 agent | 同 `id`+`shareContext:true`→多对话框共享同一 `AgentCore` |
 | 9 | MCP 集成 | `mcp:[{transport,url}]` 远程工具;`@modelcontextprotocol/sdk` 可选 peerDep |
 
 各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)。
 
-**进阶扩展详细例子**(自定义 tool / skills / subagents / MCP)见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/advanced.md`:含 `defineTool`(错误处理 + 与 windowOps 共存)、`defineSkill`(内联内容 + 远程 doc)、子 agent(ad-hoc `spawn_agent`/`spawn_agents` + 预声明 `subagents`→`use_<id>`)、MCP(http/sse/websocket + 鉴权 + dev 坑)的可复制代码。
+**进阶扩展详细例子**(自定义 tool / skills / subagents / MCP)见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/advanced.md`:含 `defineTool`(错误处理 + 与 dataSlotOps 共存)、`defineSkill`(内联内容 + 远程 doc)、子 agent(ad-hoc `spawn_agent`/`spawn_agents` + 预声明 `subagents`→`use_<id>`)、MCP(http/sse/websocket + 鉴权 + dev 坑)的可复制代码。

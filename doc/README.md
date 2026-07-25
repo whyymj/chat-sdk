@@ -7,8 +7,9 @@
 | 文档 | 内容 |
 |---|---|
 | [**使用手册**](./usage-guide.md) | **入门首选** · 安装 / 快速开始 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
-| [功能架构](./architecture.md) | 分层结构 / 组装挂载 / ReAct 主循环(含格式自纠+verify自纠) / window 操作与乐观锁 / **冲突人工介入(状态机+abort联动)** / 上下文压缩持久化(6 张 mermaid 图) |
+| [功能架构](./architecture.md) | 分层结构 / 组装挂载 / ReAct 主循环(含格式自纠+verify自纠) / 数据槽操作与乐观锁 / **冲突人工介入(状态机+abort联动)** / 上下文压缩持久化(6 张 mermaid 图) |
 | [上下文组成与压缩策略](./context-management.md) | 上下文 3 部分组成 / 4 层压缩策略 / 压缩后结构 / 3 张流程图 / 预设档位 / 与 Deep Agents 差异 |
+| [Capability Plugin 架构设计](./plugin-architecture.md) | **设计稿(待 review)** · 把业务能力抽离为可插拔 plugin / 接口定义 / 装配管线 / dataSlotOps 迁移示例 / 渐进步骤 |
 
 ## 其他信息源(仓库内)
 - **规范真相源**(Requirements):[`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
@@ -32,7 +33,7 @@ createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
   systemPrompt: '你是页面操作助手…',
-  windowProps: [
+  dataSlots: [
     { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
   ],
   tools: [], skills: [], memory: '',

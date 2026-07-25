@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createWindowOps } from '../../tools/windowOps'
+import { createDataSlotOps } from '../../tools/dataSlotOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineWindowToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -31,7 +31,7 @@ import {
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/windowQuery'
+import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
@@ -61,7 +61,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 1. 非 humanConfirm 工具 → 放行 next
     captured = null
     let hit = false
-    await mw.wrapToolCall!(mkCtx('get_window_prop', {}), async () => { hit = true; return { content: 'ok', status: 'done' } })
+    await mw.wrapToolCall!(mkCtx('get_data_slot', {}), async () => { hit = true; return { content: 'ok', status: 'done' } })
     assert(hit && !captured, '非 humanConfirm 工具 → 放行不发事件')
 
     // 2. resolve(true) → 同意

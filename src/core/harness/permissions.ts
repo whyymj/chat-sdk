@@ -17,11 +17,11 @@ export interface PermissionRule {
   mode: 'allow' | 'deny'
 }
 
-const WRITE_TOOLS = new Set(['set_window_prop', 'delete_window_prop', 'vfs_write', 'vfs_edit'])
+const WRITE_TOOLS = new Set(['set_data_slot', 'delete_data_slot', 'vfs_write', 'vfs_edit'])
 const READ_TOOLS = new Set([
-  'get_window_prop',
-  'describe_window_prop',
-  'list_window_props',
+  'get_data_slot',
+  'describe_data_slot',
+  'list_data_slots',
   'vfs_read',
   'vfs_ls',
   'vfs_glob',
