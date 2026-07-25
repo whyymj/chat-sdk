@@ -899,8 +899,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         visHandler = () => {
           if (document.visibilityState === 'hidden') void core.store!.flush()
         }
-        window.addEventListener('pagehide', flushHandler)
-        document.addEventListener('visibilitychange', visHandler)
+        if (typeof window !== 'undefined') window.addEventListener('pagehide', flushHandler)
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visHandler)
       }
       return
     }
@@ -951,14 +951,14 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       visHandler = () => {
         if (document.visibilityState === 'hidden') void core.store!.flush()
       }
-      window.addEventListener('pagehide', flushHandler)
-      document.addEventListener('visibilitychange', visHandler)
+      if (typeof window !== 'undefined') window.addEventListener('pagehide', flushHandler)
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visHandler)
     }
   }
 
   function unmount(): void {
-    if (flushHandler) window.removeEventListener('pagehide', flushHandler)
-    if (visHandler) document.removeEventListener('visibilitychange', visHandler)
+    if (flushHandler && typeof window !== 'undefined') window.removeEventListener('pagehide', flushHandler)
+    if (visHandler && typeof document !== 'undefined') document.removeEventListener('visibilitychange', visHandler)
     flushHandler = null
     visHandler = null
     vueApp?.unmount()

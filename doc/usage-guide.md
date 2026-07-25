@@ -742,6 +742,45 @@ createChatSdk({ ...presets.minimal, container, llm, windowProps })              
 ```
 可用预设:`pageBuilder`(读写 window 驱动页面)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
 
+### 8.5 服务端(Node.js)用法
+
+SDK 核心是**框架无关的 JS**,可在 Node.js 服务端跑(headless 模式),用作后端 Agent(自定义工具编排、文档抓取、子 agent 并行、自检自纠)。
+
+**服务端配置要点**:
+- `ui: false` —— headless,不渲染 ChatDialog(服务端无 DOM)
+- `capabilities: { windowOps: false, fetch: false }` —— 关浏览器依赖工具(windowOps 需 `window` 对象;`fetch_document` 需 `fetch`,Node 18+ 有全局 fetch,可保留)
+- `storage: 'memory'` —— 用内存后端(服务端无 IndexedDB/localStorage);不传则纯内存不持久化
+- 用 `tools` 注入你的业务工具(`defineTool`),`send`/`stream` 命令式驱动
+
+**示例**(Node.js 后端 Agent + 自定义工具):
+
+```ts
+import { createChatSdk, defineTool, z } from 'page-agent-sdk'
+
+const add = defineTool({
+  name: 'add', description: '两数相加',
+  schema: z.object({ a: z.number(), b: z.number() }),
+  handler: (args) => `${args.a + args.b}`,
+})
+
+const sdk = createChatSdk({
+  container: null, ui: false, id: 'server-agent',
+  storage: 'memory',
+  llm: { apiKey: process.env.AI_API_KEY, baseUrl: '...', model: '...' },
+  systemPrompt: '你是计算助手,用 add 工具做加法。',
+  capabilities: { windowOps: false, fetch: false },
+  tools: [add],
+})
+await sdk.mount()
+const reply = await sdk.send('3 加 5 等于多少?')
+console.log(reply) // AI 调 add 工具 → "3 + 5 = 8"
+```
+
+**服务端可用能力**:自定义工具 / `fetch_document`(Node 18+)/ 子 agent / verify 自检 / vfs 工作区 / context 压缩 / memory / onEvent 事件回调
+**服务端不可用**:windowOps(需 `window`)/ ChatDialog UI(需 DOM)/ IndexedDB·localStorage·sessionStorage 持久化(用 `memory` 替代)
+
+> 注:`eval_window_script` 依赖 Web Worker,属 windowOps,关掉即不装。MCP 远程工具(http/sse/websocket)在 Node 也可用(动态 import `@modelcontextprotocol/sdk`)。
+
 ## 9. 框架无关 / CDN 集成
 
 宿主页面无需任何构建链路,用 IIFE 全量包一行接入:

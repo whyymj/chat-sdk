@@ -201,7 +201,7 @@ flowchart TD
     SDK --> UI[ChatDialog UI<br/>Vue 打包进库 / 或 headless]
 ```
 
-- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI
+- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `windowOps`+`fetch`，用 `storage:'memory'`）
 - **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
 - **自研 harness**：不引 LangGraph/langchain 整包，规避浏览器打包阻塞
 

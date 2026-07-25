@@ -256,7 +256,7 @@ flowchart TD
     SDK --> UI[ChatDialog UI<br/>Vue bundled in / or headless]
 ```
 
-- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless
+- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless — and runs in **Node.js** as a backend Agent (custom tools / subagents / verify; disable `windowOps`+`fetch`, use `storage:'memory'`)
 - **Provider-agnostic**: `llm` accepts any LangChain `BaseChatModel`, or `LLMConfig` (builds `ChatOpenAI` internally, OpenAI-compatible, default DeepSeek)
 - **In-house harness**: no LangGraph/langchain full bundle; avoids browser bundling blockers
 

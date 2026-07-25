@@ -297,6 +297,45 @@ createChatSdk({ middleware: [mw], /*...*/ })
 
 > For the full middleware contract & extension patterns, see the [Chinese guide §7](./usage-guide.md#7-高级自定义中间件).
 
+### 7.5 Server-side (Node.js) usage
+
+The SDK core is **framework-agnostic JS** and runs in Node.js (headless mode) as a backend Agent (custom tool orchestration, doc fetching, subagent parallelism, self-verify).
+
+**Server config essentials**:
+- `ui: false` — headless, no ChatDialog (server has no DOM)
+- `capabilities: { windowOps: false, fetch: false }` — disable browser-dependent tools (windowOps needs `window`; `fetch_document` needs `fetch` — Node 18+ has global fetch, can keep)
+- `storage: 'memory'` — memory backend (server has no IndexedDB/localStorage); omit for non-persistent
+- Inject business tools via `tools` (`defineTool`); drive via `send`/`stream`
+
+**Example** (Node.js backend Agent + custom tool):
+
+```ts
+import { createChatSdk, defineTool, z } from 'page-agent-sdk'
+
+const add = defineTool({
+  name: 'add', description: 'Add two numbers',
+  schema: z.object({ a: z.number(), b: z.number() }),
+  handler: (args) => `${args.a + args.b}`,
+})
+
+const sdk = createChatSdk({
+  container: null, ui: false, id: 'server-agent',
+  storage: 'memory',
+  llm: { apiKey: process.env.AI_API_KEY, baseUrl: '...', model: '...' },
+  systemPrompt: 'You are a calc assistant; use add tool.',
+  capabilities: { windowOps: false, fetch: false },
+  tools: [add],
+})
+await sdk.mount()
+const reply = await sdk.send('What is 3 plus 5?')
+console.log(reply) // AI calls add → "3 + 5 = 8"
+```
+
+**Server-available**: custom tools / `fetch_document` (Node 18+) / subagents / verify / vfs / context compression / memory / onEvent
+**Server-unavailable**: windowOps (needs `window`) / ChatDialog UI (needs DOM) / IndexedDB·localStorage·sessionStorage (use `memory`)
+
+> `eval_window_script` relies on Web Worker (part of windowOps, disabled). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
+
 ## 8. Framework-agnostic / CDN
 
 See `demo/plain.html` (importmap + esm.sh providing peer deps). IIFE one-liner:
