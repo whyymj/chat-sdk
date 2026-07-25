@@ -313,7 +313,7 @@ createChatSdk({
 
 ```bash
 npm test            # 364 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 14 项集成断言（node 跑构建产物 dist；createChatSdk 顶层 API：默认 systemPrompt / 动态注册 / inspect / hook）
+npm run test:e2e    # 48 项集成断言（node 跑构建产物 dist；createChatSdk 顶层 API：默认 systemPrompt(含能力概述) / 动态注册 / inspect(tools/middleware 反映 caps) / subagents 预声明 / hook/onEvent 联动）
 ```
 
 ## 本地 npm 包测试
