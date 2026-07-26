@@ -11,7 +11,7 @@ export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict } from './sdk/createChatSdk'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
-export { presets, systemPromptHelpers } from './presets'
+export { presets, systemPromptHelpers, extractSchemaHint } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
@@ -30,9 +30,9 @@ export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harnes
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // 数据槽操作类型(属性注册表 + 增量编辑 + 快照)
-export type { DataSlotSpec, DataSlotOpsOptions, DataSlotOpsController, DataSlotAuditEntry, DataSlotSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/dataSlotOps'
+export type { DataSlotSpec, DataSlotOpsOptions, DataSlotOpsController, DataSlotAuditEntry, DataSlotSnapshotEntry, ConflictInfo, ConflictResolution, DataSlotInterceptors, ToolMode } from './tools/dataSlotOps'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataSlotOps/fetch 关闭默认自动装配)
-export { createDataSlotOps } from './tools/dataSlotOps'
+export { createDataSlotOps, filterByToolMode } from './tools/dataSlotOps'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
 export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'

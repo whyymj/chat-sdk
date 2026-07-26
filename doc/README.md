@@ -10,7 +10,6 @@
 | [功能架构](./architecture.md) | 分层结构 / 组装挂载 / ReAct 主循环(含格式自纠+verify自纠) / 数据槽操作与乐观锁 / **冲突人工介入(状态机+abort联动)** / 上下文压缩持久化(6 张 mermaid 图) |
 | [上下文组成与压缩策略](./context-management.md) | 上下文 3 部分组成 / 4 层压缩策略 / 压缩后结构 / 3 张流程图 / 预设档位 / 与 Deep Agents 差异 |
 | [Capability Plugin 架构设计](./plugin-architecture.md) | **设计稿(待 review)** · 把业务能力抽离为可插拔 plugin / 接口定义 / 装配管线 / dataSlotOps 迁移示例 / 渐进步骤 |
-| [IO 易用性重构设计](./io-design.md) | **设计稿(待 review)** · JSON 直传 / 自动乐观锁 / 分层呈现(read+write) / 拦截器 / 顶层 IO 契约 / 明文绑定 / L1-L3 阶段 |
 
 ## 其他信息源(仓库内)
 - **规范真相源**(Requirements):[`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)

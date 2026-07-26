@@ -25,8 +25,8 @@
 | 约束 | 机制 | 作用 |
 |---|---|---|
 | **范围控制** | 属性注册表（`dataSlots`）—— 只能动声明的 path | AI 越界改未注册字段 → 拒绝 |
-| **合法性校验** | zod schema —— `set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
-| **增量操作** | `edit_data_slot` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部 |
+| **合法性校验** | zod schema —— `write`/`set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
+| **增量操作** | `write` 的 `patch`(或 advanced `edit_data_slot`)按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部 |
 | **可回滚** | per-path 快照(自动入栈)+ 会话 checkpoint | 改坏了一键回退到上次正常态 |
 | **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入 | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
 
@@ -68,12 +68,12 @@ createChatSdk({
     { path: 'page.title', description: '页面标题', schema: z.string() },
     { path: 'page.theme', description: '主题', schema: z.enum(['light', 'dark']) },
   ],
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] }, // 写操作弹确认
+  approval: { tools: ['write'] }, // 写操作弹确认
   checkpoint: true, // 误改一键回退
 }).mount()
 ```
 
-用户说「标题改成『夏日新品』、主题切深色」→ AI 调 `edit_data_slot` 增量改 → schema 校验 → 写前确认 → 响应式刷新。说错了?点「↩ 回退」。
+用户说「标题改成『夏日新品』、主题切深色」→ AI 调 `write` 用 `patch` 增量改 → schema 校验 → 写前确认 → 响应式刷新。说错了?点「↩ 回退」。
 
 CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `ChatSdk.createChatSdk({...})`。
 
@@ -175,7 +175,7 @@ createChatSdk({ subagents: [
 
 ### 内置工具（Agent 可调用）
 
-- **数据槽操作**（`dataSlots` 注册后）：`list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot`（jsonPath 增量 patch）/ `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
+- **数据槽操作**（默认 `toolMode:'simple'`）：`read`（合并 list/get/describe）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot`（jsonPath 增量 patch）/ `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
 - **window 查询**：`query_data_slot`（JSONPath）/ `search_data_slot`（模糊搜索）/ `eval_script`（沙箱脚本）
 - **抓取**：`fetch_document`
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -265,12 +265,19 @@ createChatSdk({
   llm: { apiKey, baseUrl, model },
   id: 'my-agent',              // 稳定 id（多 agent 隔离 + 持久化恢复）
   systemPrompt: '...',
-  dataSlots: [{ path, description, schema }],
+  dataSlots: [{ path, description, schema, bind }],  // bind:reactive/普通对象自动挂 window[path] + 注册为 dataSlot;schema 字段 .describe() 自动注入 systemPrompt「可操作属性」段
+  toolMode: 'simple',           // 工具呈现:simple(默认,主推 read/write)/ advanced(全暴露)/ minimal(只 read/write)
+  interceptors: {              // 读写拦截器(脱敏/转换/审计/拒绝 LLM 读写;input/output 在 agent IO 入口/出口)
+    read: (path, value) => path.endsWith('secret') ? '***' : value,
+    write: (path, payload) => path === 'app.locked' ? { error: 'locked' } : payload,
+    input: (msg) => msg,       // send 入口预处理
+    output: (reply) => reply,  // 返回前 postprocess
+  },
   storage: 'indexed',          // 持久化（默认关）
   streaming: true, ui: 'default',
   capabilities: { verify: true },        // 能力开关
   humanConfirm: true,           // 主动征询（默认开；AI 不确定/多方案主动问你）
-  approval: { tools: ['set_data_slot','edit_data_slot'] }, // 被动确认白名单（默认关）
+  approval: { tools: ['write'] }, // 被动确认白名单（默认关）
   checkpoint: true,
   contextPreset: 'auto',       // auto/conservative/aggressive
   summaryLlm: { ... },         // 摘要专用 LLM（不配用主 llm）
@@ -351,7 +358,7 @@ createChatSdk({
 }).mount()
 ```
 
-`npx vite` → 对话框输入「把 app.theme 改成 dark」→ AI 调 `set_data_slot` → `window.app.theme` 变为 `dark` 即验证通过。
+`npx vite` → 对话框输入「把 app.theme 改成 dark」→ AI 调 `write({ path:"app.theme", value:"dark" })` → `window.app.theme` 变为 `dark` 即验证通过。
 
 > 建议此测试目录加入 `.gitignore`（纯本地，不进仓库），避免把含真实 key 的 `.env` 提交到远程。
 

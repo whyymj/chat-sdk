@@ -95,7 +95,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // controller 挂在工具数组上(不可枚举)
     const controller = (tools as any).controller
     assert(!!controller, 'createDataSlotOps 返回的工具数组上挂有 controller')
-    assert(Array.isArray(tools) && tools.length === 13, 'controller 不可枚举不影响数组长度/遍历(仍 13 工具)')
+    assert(Array.isArray(tools) && tools.length === 15, 'controller 不可枚举不影响数组长度/遍历(仍 15 工具)')
 
     // 初始只有 dyn.base
     assert(controller.list().length === 1 && controller.has('dyn.base'), '初始 list 仅含 dyn.base')

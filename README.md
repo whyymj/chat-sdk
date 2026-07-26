@@ -25,8 +25,8 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | Constraint | Mechanism | Effect |
 |---|---|---|
 | **Scope control** | Property registry (`dataSlots`) — only declared paths are writable | AI touching undeclared fields → rejected |
-| **Validity check** | zod schema — `set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
-| **Incremental op** | `edit_data_slot` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
+| **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
+| **Incremental op** | `write` with `patch` (or advanced `edit_data_slot`) patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
 | **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 
@@ -68,12 +68,12 @@ createChatSdk({
     { path: 'page.title', description: 'Page title', schema: z.string() },
     { path: 'page.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
   ],
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] }, // confirm writes
+  approval: { tools: ['write'] }, // confirm writes
   checkpoint: true, // one-click rollback on mistake
 }).mount()
 ```
 
-User says "title → 'Summer New', theme → dark" → AI calls `edit_data_slot` (incremental) → schema validation → pre-write confirm → reactive refresh. Said wrong? Click "↩ Undo".
+User says "title → 'Summer New', theme → dark" → AI calls `write` with `patch` (incremental) → schema validation → pre-write confirm → reactive refresh. Said wrong? Click "↩ Undo".
 
 CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → `ChatSdk.createChatSdk({...})`.
 
@@ -175,7 +175,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **window ops** (after `dataSlots` registered): `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
+- **data slot ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
 - **window query**: `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -230,7 +230,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **window ops** (after `dataSlots` registered): `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
+- **data slot ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot` (jsonPath patch) / `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
 - **window query**: `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -320,12 +320,19 @@ createChatSdk({
   llm: { apiKey, baseUrl, model },
   id: 'my-agent',              // stable id (multi-agent isolation + persistence resume)
   systemPrompt: '...',
-  dataSlots: [{ path, description, schema }],
+  dataSlots: [{ path, description, schema, bind }],  // bind: reactive/plain object auto-mounted to window[path] + registered as dataSlot; schema field .describe() auto-injected into systemPrompt「可操作属性」section
+  toolMode: 'simple',           // tool presentation: simple (default, promotes read/write) / advanced (all) / minimal (read/write only)
+  interceptors: {              // read/write interceptors (desensitize/transform/audit/reject; input/output at agent IO entry/exit)
+    read: (path, value) => path.endsWith('secret') ? '***' : value,
+    write: (path, payload) => path === 'app.locked' ? { error: 'locked' } : payload,
+    input: (msg) => msg,       // preprocess at send entry
+    output: (reply) => reply,  // postprocess before return
+  },
   storage: 'indexed',          // persistence (default off)
   streaming: true, ui: 'default',
   capabilities: { verify: true },        // capability toggles
   humanConfirm: true,           // proactive inquiry (default on)
-  approval: { tools: ['set_data_slot','edit_data_slot'] }, // passive confirm whitelist (default off)
+  approval: { tools: ['write'] }, // passive confirm whitelist (default off)
   checkpoint: true,
   contextPreset: 'auto',       // auto/conservative/aggressive
   summaryLlm: { ... },         // summary-dedicated LLM (defaults to main llm)
@@ -406,7 +413,7 @@ createChatSdk({
 }).mount()
 ```
 
-`npx vite` → type "change app.theme to dark" in the dialog → AI calls `set_data_slot` → `window.app.theme` becomes `dark` → verified.
+`npx vite` → type "change app.theme to dark" in the dialog → AI calls `write({ path:'app.theme', value:'dark' })` → `window.app.theme` becomes `dark` → verified.
 
 > Add this test dir to `.gitignore` (local only, not in repo) to avoid committing `.env` with real keys to remotes.
 

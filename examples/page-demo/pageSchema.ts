@@ -2,13 +2,13 @@
  * 测试模块:JSON 驱动的响应式页面
  *
  * 设计:window.page 是一个 reactive 对象 { title, theme, components[] }。
- * Agent 通过 set_data_slot 修改 page.title / page.theme / page.components,
- * 左侧 PageRenderer 实时响应更新。
+ * 配置:reactive 对象经 dataSlots 的 bind 字段直连 SDK,pageSchema 作为 schema 声明形状
+ * (字段 .describe() 自动注入 systemPrompt「可操作属性」段 + 作为 dataSlot 写入校验 schema)。
+ * Agent 通过 write 修改 page 字段,左侧 PageRenderer 实时响应更新。
  *
  * components 是 discriminated union(by type),写入时强校验,Agent 传错类型会收到清晰错误。
  */
 import { z } from 'zod'
-import type { DataSlotSpec } from '../../src/core/tools/dataSlotOps'
 
 /** 组件 schema:按 type 区分的联合,每个类型有各自字段 */
 export const componentSchema = z.discriminatedUnion('type', [
@@ -45,9 +45,9 @@ export const componentSchema = z.discriminatedUnion('type', [
 export type PageComponent = z.infer<typeof componentSchema>
 
 export const pageSchema = z.object({
-  title: z.string(),
-  theme: z.enum(['light', 'dark']),
-  components: z.array(componentSchema),
+  title: z.string().describe('页面标题'),
+  theme: z.enum(['light', 'dark']).describe('页面主题:light 或 dark'),
+  components: z.array(componentSchema).describe('组件数组(页面内容)'),
 })
 
 export type PageData = z.infer<typeof pageSchema>
@@ -68,36 +68,12 @@ export const initialPage: PageData = {
   ],
 }
 
-/** 注册到 dataSlotOps 的可操作属性(粒度到子属性,保证响应式) */
-export const pageDataSlots: DataSlotSpec[] = [
-  { path: 'page.title', description: '页面标题(字符串)', schema: z.string() },
-  { path: 'page.theme', description: '页面主题:light 或 dark', schema: z.enum(['light', 'dark']) },
-  {
-    path: 'page.components',
-    description: '组件数组(整体替换)。每个元素结构见下方组件类型。',
-    schema: z.array(componentSchema),
-  },
-]
-
-/** page-builder skill 全文:教 Agent 如何编辑页面 */
+/** page-builder skill 全文:教 Agent 如何编辑页面(组件类型等业务知识;字段说明由 dataSlots schema .describe() 自动注入,此处不重复) */
 export const pageBuilderSkillContent = `# 页面构建 Skill(window.page)
 
-左侧页面由 \`window.page\` 这个 JSON 对象驱动,结构:
-\`\`\`json
-{ "title": "页面标题", "theme": "light", "components": [ ...组件... ] }
-\`\`\`
+左侧页面由 \`window.page\` 这个 JSON 对象驱动,结构:{ title, theme, components[] }。
 
-## 可操作属性(用 set_data_slot 修改,value 必须是合法 JSON 字符串)
-- \`page.title\`:字符串。例:set_data_slot({ path: "page.title", value: "\\"新标题\\"" })
-- \`page.theme\`:"light" | "dark"。例:value: "\\"dark\\""
-- \`page.components\`:组件数组,**整体替换**。修改单个组件也要传入完整新数组。
-
-## 修改流程
-1. 先 get_data_slot({ path: "page" }) 读取当前完整页面
-2. 在脑中/工作区构造修改后的完整 \`components\` 数组
-3. set_data_slot({ path: "page.components", value: "<完整数组的 JSON>" })
-
-## 组件类型(value 里每个组件对象的格式)
+## 组件类型(每个组件对象的格式)
 - 标题:{ "type": "heading", "text": "标题", "level": 1 }   // level 1-6 可选
 - 段落:{ "type": "paragraph", "text": "段落文本" }
 - 按钮:{ "type": "button", "label": "按钮文字", "variant": "primary" }   // variant: primary|secondary|ghost 可选
@@ -105,8 +81,7 @@ export const pageBuilderSkillContent = `# 页面构建 Skill(window.page)
 - 列表:{ "type": "list", "items": ["项A", "项B"] }
 - 卡片:{ "type": "card", "title": "标题", "text": "正文" }
 
-## 注意
-- value 永远是 **JSON 字符串**:字符串值要额外加引号(如标题 value 是 \`"\\\\\"新标题\\\\\""\`),数组/对象直接 JSON 化。
-- 改 components 时必须传**完整数组**(含未改动的组件),因为是整体替换。
-- 校验失败会返回具体错误,按提示修正 type/字段后重试。
+## 修改要点
+- 改单个组件优先用增量 patch(只发改动部分),避免整体重传 \`components\` 大数组被截断
+- 校验失败会返回具体错误,按提示修正 type/字段后重试
 `

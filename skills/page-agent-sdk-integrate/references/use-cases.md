@@ -17,7 +17,7 @@ window.page = {
 createChatSdk({
   container: '#chat',
   llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 0.3 },
-  systemPrompt: '你是页面搭建助手。用 edit_data_slot 按 jsonPath 增量改 components,不要重传整树。',
+  systemPrompt: '你是页面搭建助手。用 write 的 patch 按 jsonPath 增量改 components,不要重传整树。',
   dataSlots: [
     { path: 'page.components', description: '组件树',
       schema: z.array(z.object({
@@ -27,11 +27,11 @@ createChatSdk({
   ],
   onEvent(e) { if (e.type === 'data_slot_change') renderCanvas() },  // canvas reactive refresh
   checkpoint: true,                       // bad edit → one-click rollback
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] },  // confirm writes
+  approval: { tools: ['write'] },  // confirm writes
 }).mount()
 ```
 
-User: "顶部 Banner 改深色、主标题加粗、加一张新品卡" → AI calls `edit_data_slot` per component.
+User: "顶部 Banner 改深色、主标题加粗、加一张新品卡" → AI calls `write` with `patch` per component.
 
 ## 2. Form designer
 
@@ -66,7 +66,7 @@ User: "手机号加格式校验、地址改三级联动" → AI patches `form.fi
 
 ## 3. CMS batch operation
 
-Bulk-edit a product list; use `eval_script` or `search_data_slot` + `edit_data_slot` for batch ops.
+Bulk-edit a product list; use `eval_script` or `search_data_slot` + `write` with `patch` for batch ops.
 
 ```ts
 window.products = [
@@ -88,7 +88,7 @@ createChatSdk({
 }).mount()
 ```
 
-User: "标题加『限时』前缀、低于 100 元的标红" → AI uses `eval_script` for the prefix loop + `search_data_slot` to find `<100` then `edit_data_slot` to set `highlight`.
+User: "标题加『限时』前缀、低于 100 元的标红" → AI uses `eval_script` for the prefix loop + `search_data_slot` to find `<100` then `write` with `patch` to set `highlight`.
 
 ## 4. Ops config console
 
@@ -109,7 +109,7 @@ createChatSdk({
     { path: 'config.featureB', description: 'B开关',
       schema: z.object({ enabled: z.boolean() }) },
   ],
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] },  // human-in-the-loop
+  approval: { tools: ['write'] },  // human-in-the-loop
   checkpoint: true,
   capabilities: { verify: true },           // write-back read + schema check
 }).mount()
@@ -208,7 +208,7 @@ const sdk = createChatSdk({
   container: '#chat', llm: { ... },
   // only the static container is pre-declared; per-component paths are dynamic
   dataSlots: [{ path: 'app.components', description: '动态组件容器', schema: z.record(z.any()) }],
-  systemPrompt: '用 list_data_slots 查看当前可操作的组件 path,再按各自 schema 操作',
+  systemPrompt: '用 read() 查看当前可操作的组件 path,再按各自 schema 操作',
 }).mount()
 
 // 组件挂载(懒加载)→ 动态注册其 schema,立即对 AI 生效

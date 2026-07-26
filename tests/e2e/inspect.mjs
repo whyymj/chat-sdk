@@ -8,18 +8,44 @@ export async function run() {
   console.log('[e2e:inspect] inspect().tools 反映 dataSlotOps 开关 + 工具集完整性')
   {
     globalThis.window.app = {}
+    // advanced 模式:全暴露(含底层 get/set/edit + read/write)
     const sdkOn = createChatSdk({
       ui: false, id: 'e2e-tools-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       dataSlots: [{ path: 'app.x', description: 'x', schema: z.string() }],
+      toolMode: 'advanced',
     })
     await sdkOn.mount()
     const toolsOn = sdkOn.inspect().tools.map((t) => t.name)
-    const expectedWinTools = ['list_data_slots', 'describe_data_slot', 'get_data_slot', 'get_slot_paths', 'set_data_slot', 'edit_data_slot', 'delete_data_slot', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'query_data_slot', 'search_data_slot', 'eval_script']
+    const expectedWinTools = ['list_data_slots', 'describe_data_slot', 'get_data_slot', 'get_slot_paths', 'set_data_slot', 'edit_data_slot', 'delete_data_slot', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'query_data_slot', 'search_data_slot', 'eval_script', 'read', 'write']
     for (const name of expectedWinTools) {
-      assert(toolsOn.includes(name), `dataSlotOps 开启 → 含 ${name}`)
+      assert(toolsOn.includes(name), `dataSlotOps 开启 + advanced → 含 ${name}`)
     }
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
+
+    // simple 模式(默认):隐藏底层 get/set/edit/delete/list/describe,主推 read/write + 高级查询/快照
+    const sdkSimple = createChatSdk({
+      ui: false, id: 'e2e-tools-simple', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      dataSlots: [{ path: 'app.x', description: 'x', schema: z.string() }],
+    })
+    await sdkSimple.mount()
+    const toolsSimple = sdkSimple.inspect().tools.map((t) => t.name)
+    assert(['read', 'write', 'query_data_slot', 'search_data_slot', 'eval_script', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'get_slot_paths'].every((n) => toolsSimple.includes(n)), 'simple → 含 read/write + 高级查询/快照(9 个)')
+    assert(['list_data_slots', 'describe_data_slot', 'get_data_slot', 'set_data_slot', 'edit_data_slot', 'delete_data_slot'].every((n) => !toolsSimple.includes(n)), 'simple → 隐藏底层 get/set/edit/delete/list/describe')
+    sdkSimple.unmount()
+
+    // minimal 模式:只 read/write
+    const sdkMin = createChatSdk({
+      ui: false, id: 'e2e-tools-min', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      dataSlots: [{ path: 'app.x', description: 'x', schema: z.string() }],
+      toolMode: 'minimal',
+    })
+    await sdkMin.mount()
+    const toolsMin = sdkMin.inspect().tools.map((t) => t.name)
+    assert(toolsMin.includes('read') && toolsMin.includes('write'), 'minimal → 含 read/write')
+    assert(['list_data_slots', 'get_data_slot', 'set_data_slot', 'edit_data_slot', 'query_data_slot', 'search_data_slot', 'eval_script', 'snapshot_data_slot'].every((n) => !toolsMin.includes(n)), 'minimal → 不含底层/高级查询/快照工具(只 read/write 数据槽入口)')
+    sdkMin.unmount()
+    sdkMin.unmount()
 
     const sdkOff = createChatSdk({
       ui: false, id: 'e2e-tools-off', storage: 'memory', llm: FAKE_LLM,
@@ -27,7 +53,7 @@ export async function run() {
     })
     await sdkOff.mount()
     const toolsOff = sdkOff.inspect().tools.map((t) => t.name)
-    assert(!toolsOff.some((n) => n.endsWith('_data_slot') || n.endsWith('_data_snapshot') || n === 'eval_script'), 'dataSlotOps:false → 不含任何 data slot 工具')
+    assert(!toolsOff.some((n) => n.endsWith('_data_slot') || n.endsWith('_data_snapshot') || n === 'eval_script' || n === 'read' || n === 'write'), 'dataSlotOps:false → 不含任何 data slot 工具(含 read/write)')
     sdkOff.unmount()
   }
 

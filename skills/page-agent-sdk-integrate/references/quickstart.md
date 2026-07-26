@@ -28,7 +28,7 @@ Drop into any HTML page. The built-in dialog mounts itself. (`systemPrompt` is o
 </script>
 ```
 
-Talk to it: "change theme to dark" → AI calls `set_data_slot` → `window.app.theme === 'dark'`.
+Talk to it: "change theme to dark" → AI calls `write({ path:'app.theme', value:'dark' })` → `window.app.theme === 'dark'`.
 
 ## Stage 2 — npm + module project
 
@@ -95,7 +95,7 @@ createChatSdk({
   // ...llm, dataSlots...
   capabilities: { verify: true },             // write-back self-check before agent returns
   verify: { maxAttempts: 2 },                 // auto-correct on failure (default check = write-back read + schema)
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] },  // human-confirm before writes
+  approval: { tools: ['write'] },                // human-confirm before writes
   checkpoint: true,                           // session-level rollback on bad edits
   maxParallelTools: 1,                        // serial tool calls (safe for stateful middleware)
   contextPreset: 'conservative',              // save cost on long sessions

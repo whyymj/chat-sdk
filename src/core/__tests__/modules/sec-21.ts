@@ -150,11 +150,103 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_data_slot: 命中 owner.city')
 
     // 工具数量:10 + 3 新工具 = 13
-    assert(tools.length === 13, 'createDataSlotOps: 含 13 个工具(10 原有 + query/search/eval)')
+    assert(tools.length === 15, 'createDataSlotOps: 含 15 个工具(13 原有 + read/write 高层入口)')
 
     // eval_script 工具存在(node 无 Worker,仅校验装配 + 未注册拒绝)
     assert(!!t['eval_script'], 'eval_script 工具已装配')
     r = await invoke(t['eval_script'], { path: 'nope', script: 'data' })
     assert(/未注册/.test(r), 'eval_script: 未注册属性被拒')
+  }
+
+  // ============ read/write 高层工具(L2:合并 list/describe/get + set/edit/delete + 自动锁 + 拦截器)============
+  console.log('\n[read/write 高层工具]')
+  {
+    ;(globalThis as any).window = { page: { title: '原标题', items: ['a', 'b'] } }
+    const tools = createDataSlotOps(
+      [{ path: 'page', description: '页面数据', schema: z.object({ title: z.string(), items: z.array(z.string()) }) }],
+      { autoLock: true },
+    )
+    const t = byName(tools)
+
+    // read() 无 path → 列出所有可操作槽
+    let r = await invoke(t['read'], {})
+    assert(/page/.test(r) && /页面数据/.test(r), 'read() 无 path → 列出注册槽(path + 说明)')
+
+    // read({path}) → 返回当前值 + hash + 格式说明
+    r = await invoke(t['read'], { path: 'page' })
+    assert(/原标题/.test(r) && /hash=/.test(r), 'read({path}) → 返回当前值 + hash')
+    const m = /hash=(\w+)/.exec(r)
+    const readHash = m?.[1] || ''
+
+    // read 未注册属性 → NOT_REGISTERED
+    r = await invoke(t['read'], { path: 'nope' })
+    assert(/NOT_REGISTERED|不可读取/.test(r), 'read 未注册属性 → 错误')
+
+    // write 整体 set(value 直传 JSON 对象)
+    r = await invoke(t['write'], { path: 'page', value: { title: '新标题', items: ['x'] } })
+    assert(/已 write\(set\)/.test(r) && /新标题/.test(r), 'write 整体 set(直传 object)→ 写入成功')
+    assert((globalThis as any).window.page.title === '新标题', 'write set → 实际写入 window')
+
+    // write 增量 patch(merge)
+    r = await invoke(t['write'], { path: 'page', value: { title: '合并标题' }, patch: { op: 'merge' } })
+    assert(/已 write\(edit\)/.test(r) && (globalThis as any).window.page.title === '合并标题', 'write patch merge → 增量合并')
+
+    // write 增量 patch(append)
+    r = await invoke(t['write'], { path: 'page', value: 'c', patch: { op: 'append', jsonPath: 'items' } })
+    assert((globalThis as any).window.page.items.length === 2, 'write patch append → 数组追加')
+
+    // write 非法值 → schema 校验失败不写入
+    r = await invoke(t['write'], { path: 'page', value: { title: 123, items: [] } })
+    assert(/校验失败|invalid/.test(r), 'write 非法值(title 非字符串)→ schema 校验失败')
+
+    // write 未注册 → NOT_REGISTERED
+    r = await invoke(t['write'], { path: 'nope', value: {} })
+    assert(/NOT_REGISTERED|未在注册表中/.test(r), 'write 未注册属性 → 错误')
+
+    // write del:true → 删除
+    ;(globalThis as any).window.page2 = { x: 1 }
+    const tools2 = createDataSlotOps([{ path: 'page2', description: 'p2', schema: z.any() }], {})
+    const t2 = byName(tools2)
+    r = await invoke(t2['write'], { path: 'page2', del: true })
+    assert(/已删除/.test(r), 'write del:true → 删除属性')
+
+    // 自动乐观锁:read 后外部改值,write 触发 VERSION_CONFLICT
+    ;(globalThis as any).window.page3 = { v: 1 }
+    const tools3 = createDataSlotOps([{ path: 'page3', description: 'p3', schema: z.object({ v: z.number() }) }], { autoLock: true })
+    const t3 = byName(tools3)
+    await invoke(t3['read'], { path: 'page3' })  // 记录 hash
+    ;(globalThis as any).window.page3.v = 999    // 外部改值(hash 变)
+    r = await invoke(t3['write'], { path: 'page3', value: { v: 2 } })
+    assert(/VERSION_CONFLICT/.test(r), 'write autoLock:read 后外部改值 → 自动乐观锁触发冲突')
+
+    // 拦截器:read 拦截脱敏
+    ;(globalThis as any).window.page4 = { secret: '密码123', title: '公开' }
+    const tools4 = createDataSlotOps(
+      [{ path: 'page4', description: 'p4', schema: z.any() }],
+      { interceptors: { read: (_p, v) => ({ ...(v as any), secret: '***' }) } },
+    )
+    const t4 = byName(tools4)
+    r = await invoke(t4['read'], { path: 'page4' })
+    assert(/\*\*\*/.test(r) && !/密码123/.test(r), 'read 拦截器 → 脱敏(原始值不泄露给 LLM)')
+
+    // 拦截器:write 拦截拒绝
+    const tools5 = createDataSlotOps(
+      [{ path: 'page5', description: 'p5', schema: z.any() }],
+      { interceptors: { write: () => ({ error: '禁止写入' }) } },
+    )
+    const t5 = byName(tools5)
+    ;(globalThis as any).window.page5 = {}
+    r = await invoke(t5['write'], { path: 'page5', value: { x: 1 } })
+    assert(/WRITE_INTERCEPT|禁止写入/.test(r), 'write 拦截器拒绝 → 返回拦截错误')
+
+    // 拦截器:write 拦截转换
+    const tools6 = createDataSlotOps(
+      [{ path: 'page6', description: 'p6', schema: z.object({ name: z.string() }) }],
+      { interceptors: { write: (_p, payload) => ({ name: (payload as any).name?.toUpperCase() }) } },
+    )
+    const t6 = byName(tools6)
+    ;(globalThis as any).window.page6 = { name: 'old' }
+    r = await invoke(t6['write'], { path: 'page6', value: { name: 'abc' } })
+    assert((globalThis as any).window.page6.name === 'ABC', 'write 拦截器转换 → 值经拦截器改写后落地')
   }
 }

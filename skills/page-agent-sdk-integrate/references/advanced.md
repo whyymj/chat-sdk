@@ -19,7 +19,7 @@ const sdk = createChatSdk({
 // 组件懒加载时动态注册其 schema(结构各异)
 function onComponentMount(comp: { id: string; type: string; schema: z.ZodType }) {
   sdk.addDataSlot({ path: `app.components.${comp.id}`, description: `${comp.type} 组件`, schema: comp.schema })
-  // 立即生效:AI 现在能 set/edit_data_slot 这个 path,按其 schema 校验
+  // 立即生效:AI 现在能 write 这个 path,按其 schema 校验
 }
 
 // 组件卸载时移除(快照栈一并清理)
@@ -177,7 +177,7 @@ createChatSdk({
   container: '#chat', llm: { ... },
   systemPrompt: '多源对比时用 spawn_agents 并行委派。',
   subagent: {
-    allowedTools: ['fetch_document', 'get_data_slot'],  // read-only subset (no spawn → no recursion)
+    allowedTools: ['fetch_document', 'read'],  // read-only subset (no spawn → no recursion)
     maxDepth: 1,           // physical recursion cut (default 1)
     maxParallel: 3,        // max parallel subagents in spawn_agents
     temperature: 0.2,      // subagent temperature (default inherits main)
@@ -199,13 +199,13 @@ createChatSdk({
     {
       id: 'researcher',
       description: '调研专家:搜集资料、对比方案(只读)',
-      tools: ['fetch_document', 'get_data_slot'],   // read-only
+      tools: ['fetch_document', 'read'],   // read-only
       temperature: 0.2,
     },
     {
       id: 'reviewer',
       description: '审查专家:检查代码/配置的安全与性能问题',
-      tools: ['get_data_slot', 'search_data_slot'],
+      tools: ['read', 'search_data_slot'],
       systemPrompt: '你是审查专家,只报告问题不改数据。',
       temperature: 0.1,
     },
@@ -276,7 +276,7 @@ createChatSdk({
   subagents: [{ id: 'researcher', description: '...', tools: ['fetch_document'] }],  // pre-declared
   mcp: [{ transport: 'http', url: '...' }],     // external tools
   capabilities: { verify: true },               // self-check
-  approval: { tools: ['set_data_slot'] },     // human confirm writes
+  approval: { tools: ['write'] },     // human confirm writes
   checkpoint: true,                             // rollback
 }).mount()
 ```

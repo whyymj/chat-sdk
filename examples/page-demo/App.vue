@@ -2,8 +2,9 @@
 /**
  * 测试模块 demo —— 左侧 JSON 驱动的响应式页面,右侧 Agent 对话框
  *
- * window.page 用 reactive() 创建并挂到 window(在 setup 顶层,早于子组件 mount),
- * Agent 经 set_data_slot 改 page.* 属性 → 左侧 PageRenderer 响应式更新。
+ * 配置方式:reactive 对象经 dataSlots 的 `bind` 字段直连 SDK(自动挂 window + 注册 dataSlot),
+ * `schema` 用 zod 声明形状(字段 .describe() 自动注入 systemPrompt「可操作属性」段,无需手写)。
+ * Agent 经 write 改 page.* 属性 → 左侧 PageRenderer 响应式更新。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, type ChatSdk } from '../../src/core'
@@ -12,16 +13,17 @@ import type { Middleware } from '../../src/core/harness/middleware'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
-import { initialPage, pageDataSlots, pageBuilderSkillContent } from './pageSchema'
+import { initialPage, pageSchema, pageBuilderSkillContent } from './pageSchema'
 
 const cfg = useAgentConfig()
 
-// 顶层(同步):先建响应式 page 挂到 window,供 PageRenderer 绑定
-;(window as any).page = reactive({
+// 顶层(同步):先建响应式 page 挂到 window,供 PageRenderer 绑定(PageRenderer setup 在 onMounted 之前执行,需此时已就位)
+const pageObj = reactive({
   title: initialPage.title,
   theme: initialPage.theme,
   components: initialPage.components.map((c) => ({ ...c })),
 })
+;(window as any).page = pageObj
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -68,8 +70,11 @@ onMounted(() => {
     },
     streaming: true,
     systemPrompt:
-      '你是页面构建助手。左侧页面由 window.page 的 JSON 驱动。流程:get_data_slot("page") 读取当前页面 → 用 set_data_slot 修改 page.title / page.theme / page.components,左侧实时更新。组件结构详见 load_skill("page-builder")。',
-    dataSlots: pageDataSlots,
+      '你是页面构建助手。左侧页面由 window.page 驱动,用户要改左侧页面(改标题/换主题/增删改组件)时,改 page 对应字段,左侧实时更新。组件结构详见 load_skill("page-builder")。',
+    // ↓ dataSlots 统一配置:bind 字段直连 reactive 对象(自动挂 window + 注册 dataSlot),schema 的 .describe() 自动注入字段说明到 systemPrompt
+    dataSlots: [
+      { path: 'page', schema: pageSchema, bind: pageObj },
+    ],
     skills: [
       defineSkill({
         name: 'page-builder',

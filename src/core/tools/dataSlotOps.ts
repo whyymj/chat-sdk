@@ -24,10 +24,12 @@ import { toolError, zodError, jsonParseError, formatZodIssues } from './toolErro
 export interface DataSlotSpec {
   /** window 上的路径,支持点号嵌套,如 'app.theme' 或 'app.user.name' */
   path: string
-  /** 属性说明,供 Agent 理解用途与格式 */
-  description: string
-  /** 值的 zod schema(写入时校验) */
+  /** 属性说明,供 Agent 理解用途与格式;若传了 bind 且未传 description,自动生成 `${path}(bind 直连)` */
+  description?: string
+  /** 值的 zod schema(写入时校验);字段的 .describe() 自动提取注入 systemPrompt「可操作属性」段 */
   schema: ZodType
+  /** 可选:传 reactive/普通对象,自动挂 window[path] = bind(reactive 写后响应式刷新;普通对象可写但不响应) */
+  bind?: any
 }
 
 export interface DataSlotAuditEntry {
@@ -61,6 +63,14 @@ export type ConflictResolution =
   | { action: 'overwrite' }
   | { action: 'restore' }
 
+/** 数据槽读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
+export interface DataSlotInterceptors {
+  /** LLM 读时拦截:path + 原始值 → 改写后返回给 LLM(如脱敏/派生);抛错则返回 READ_INTERCEPT 错误 */
+  read?: (path: string, value: unknown) => unknown
+  /** LLM 写时拦截:path + 欲写值(value/patch) + 当前值 → 改写后的值,或 { error } 拒绝;抛错则拒绝 */
+  write?: (path: string, payload: unknown, current: unknown) => unknown | { error: string }
+}
+
 export interface DataSlotOpsOptions {
   /** 审计回调(如写入 DebugDrawer) */
   onAudit?: (entry: DataSlotAuditEntry) => void
@@ -90,6 +100,8 @@ export interface DataSlotOpsOptions {
    * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
    */
   autoLock?: boolean
+  /** 读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
+  interceptors?: DataSlotInterceptors
 }
 
 /** 快照条目(per-path 栈) */
@@ -305,6 +317,22 @@ export interface DataSlotOpsController {
   list(): DataSlotSpec[]
   /** 是否已注册某 path */
   has(path: string): boolean
+}
+
+/** 工具呈现模式:simple=主推 read/write 但保留高级能力(默认);advanced=全暴露;minimal=只 read/write */
+export type ToolMode = 'simple' | 'advanced' | 'minimal'
+
+const SIMPLE_HIDDEN = new Set([
+  'list_data_slots', 'describe_data_slot', 'get_data_slot',
+  'set_data_slot', 'edit_data_slot', 'delete_data_slot',
+])
+const MINIMAL_ALLOWED = new Set(['read', 'write'])
+
+/** 按 toolMode 筛选数据槽工具(simple 隐藏底层 get/set 等,read/write 已合并其语义;advanced 全暴露;minimal 只 read/write) */
+export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
+  if (mode === 'advanced') return tools
+  if (mode === 'minimal') return tools.filter((t) => MINIMAL_ALLOWED.has(t.name))
+  return tools.filter((t) => !SIMPLE_HIDDEN.has(t.name))
 }
 
 /** 基于属性注册表构建 数据槽操作工具集 */
@@ -979,6 +1007,160 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
     },
   )
 
+  // ============ 高层直观工具(L2):read / write ============
+  // 合并 list+describe+get / set+edit+delete+自动锁+自动快照,降低 LLM 认知负担
+  const readSlot = tool(
+    async ({ path }) => {
+      if (!path) {
+        // 无 path:概览所有注册槽(合并 list + describe)
+        if (!registry.size) return '当前没有已注册的可操作数据槽。'
+        const lines = [...registry.values()].map((p) => `- ${p.path}: ${p.description}`)
+        return `可操作的数据槽(共 ${registry.size} 项):\n${lines.join('\n')}\n\n用 read({ path:"<path>" }) 读具体槽的当前值与格式。`
+      }
+      if (!canRead(path)) {
+        return toolError({
+          code: 'NOT_REGISTERED', path,
+          message: `属性 "${path}" 不可读取(未注册,且非已注册路径的后代)`,
+          hint: '用 read() 不传 path 列出可用槽',
+        })
+      }
+      const spec = registry.get(path)
+      const val = getByPath(window, path)
+      // 拦截器:集成方可脱敏/派生(只改 LLM 看到的值,不改实际存储)
+      let resolved = val
+      if (opts.interceptors?.read) {
+        try {
+          resolved = opts.interceptors.read(path, val)
+        } catch (e) {
+          return toolError({ code: 'READ_INTERCEPT', path, message: `read 拦截器抛错: ${(e as Error).message}` })
+        }
+      }
+      const h = hashValue(val)   // hash 基于原始值(防拦截后 hash 变化致 autoLock 误判)
+      lastReadHash.set(path, h)
+      const schemaHint = spec ? `\n格式: ${spec.description}(写入需通过其 schema 校验)` : ''
+      if (resolved === undefined) return `${path} = (undefined)${schemaHint}`
+      return `${path} = ${safeStringify(resolved)} (hash=${h})${schemaHint}`
+    },
+    {
+      name: 'read',
+      description:
+        '读取数据槽(高层入口,合并 list/describe/get)。不传 path → 列出所有可操作数据槽(path + 说明);传 path → 返回该槽当前值 + hash + 格式说明。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。集成方可能经 read 拦截器对返回值脱敏/派生。字段白名单读模式下仅可读注册 path 自身/后代。',
+      schema: z.object({ path: z.string().optional().describe('要读的数据槽路径;不传则列出所有可操作槽') }),
+    },
+  )
+
+  const writeSlot = tool(
+    async ({ path, value, patch, del }) => {
+      const spec = registry.get(path)
+      if (!spec) {
+        return toolError({
+          code: 'NOT_REGISTERED', path,
+          message: `属性 "${path}" 未在注册表中声明,不可写`,
+          hint: '用 read() 列出可用槽;集成方需先在 dataSlots 声明该 path',
+        })
+      }
+      // 解析意图:del=true → 删除;patch 有 → edit 增量;否则 → set 整体
+      const current = getByPath(window, path)
+      let payload: unknown = value
+      let intent: 'set' | 'edit' | 'delete' = 'set'
+      if (del) intent = 'delete'
+      else if (patch) intent = 'edit'
+
+      // 拦截器:集成方可转换/审计/拒绝
+      if (opts.interceptors?.write) {
+        try {
+          const intercepted = opts.interceptors.write(path, patch ?? value, current)
+          if (intercepted && typeof intercepted === 'object' && 'error' in (intercepted as any)) {
+            return toolError({ code: 'WRITE_INTERCEPT', path, message: `write 拦截器拒绝: ${(intercepted as any).error}` })
+          }
+          if (intent === 'edit') (patch as any) = intercepted
+          else payload = intercepted
+        } catch (e) {
+          return toolError({ code: 'WRITE_INTERCEPT', path, message: `write 拦截器抛错: ${(e as Error).message}` })
+        }
+      }
+
+      // 自动乐观锁:用 LLM 最后 read 到的 hash
+      const effHash = autoLock ? lastReadHash.get(path) : undefined
+
+      if (intent === 'delete') {
+        const conflict = await handleConflict(path, 'delete', effHash)
+        if (conflict !== null) return conflict
+        pushSnapshot(path, 'delete')
+        const ok = deleteByPath(window, path)
+        audit({ op: 'delete', path, timestamp: Date.now() })
+        lastReadHash.delete(path)  // 删除后清掉读缓存,避免下次 write 误判冲突
+        return ok ? `已删除 ${path}${pathsHint()}` : `${path} 不存在(无需删除)${pathsHint()}`
+      }
+
+      // value normalize(string|object):object 直传;string 尝试 JSON.parse,失败则当裸字符串(如 patch append 'c')
+      let parsed: unknown
+      if (typeof payload === 'string') {
+        try { parsed = JSON.parse(payload) } catch { parsed = payload }
+      } else {
+        parsed = payload
+      }
+
+      if (intent === 'edit') {
+        const jp = patch?.jsonPath || ''
+        if (isUnsafePath(jp)) {
+          return toolError({ code: 'PATH_UNSAFE', path, message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text' })
+        }
+        if (current == null || typeof current !== 'object') {
+          return toolError({ code: 'NOT_OBJECT', path, message: `edit 仅适用于对象/数组属性,"${path}" 当前是 ${current === undefined ? 'undefined' : typeof current}`, hint: '叶子属性用 write(path, value) 整体设置' })
+        }
+        const conflict = await handleConflict(path, 'edit', effHash)
+        if (conflict !== null) return conflict
+        const op = patch!.op
+        if (op !== 'remove' && (parsed === undefined || parsed === '')) {
+          return toolError({ code: 'MISSING_VALUE', path, message: `${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 del:true` })
+        }
+        const clone = deepClone(current)
+        const patchErr = applyPatchToClone(clone, op, jp, parsed)
+        if (patchErr) return toolError({ code: 'PATCH_FAILED', path, message: patchErr, hint: '检查 op 与目标类型:merge 需对象,append 需数组' })
+        const res = spec.schema.safeParse(clone)
+        if (!res.success) return zodError(path, res.error.issues)
+        pushSnapshot(path, 'edit')
+        applyPatchToLive(path, op, jp, parsed)
+        audit({ op: 'edit', path, detail: `${op}${jp ? '@' + jp : ''}`, value: parsed, timestamp: Date.now() })
+        const newLive = getByPath(window, path)
+        lastReadHash.set(path, hashValue(newLive))  // 写后更新读缓存,避免连续 write 误判冲突
+        return `已 write(edit) ${path}(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(newLive, 600)} (新 hash=${hashValue(newLive)})${pathsHint()}`
+      }
+
+      // set 整体
+      const conflict = await handleConflict(path, 'set', effHash)
+      if (conflict !== null) return conflict
+      const res = spec.schema.safeParse(parsed)
+      if (!res.success) return zodError(path, res.error.issues)
+      pushSnapshot(path, 'set')
+      const live = getByPath(window, path)
+      if (live !== null && typeof live === 'object' && res.data !== null && typeof res.data === 'object') {
+        restoreInPlace(live as Record<string, unknown> | unknown[], res.data)
+      } else {
+        setByPath(window, path, res.data)
+      }
+      audit({ op: 'set', path, value: res.data, timestamp: Date.now() })
+      const newLive = getByPath(window, path)
+      lastReadHash.set(path, hashValue(newLive))  // 写后更新读缓存,避免连续 write 误判冲突
+      return `已 write(set) ${path} = ${safeStringify(res.data, 600)} (新 hash=${hashValue(newLive)})${pathsHint()}`
+    },
+    {
+      name: 'write',
+      description:
+        '写入数据槽(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。三种意图:① 整体替换 write({path, value}) value 为 JSON 对象(推荐)或字符串;② 增量 patch write({path, value, patch:{op,jsonPath}}) op=set/remove/merge/append,jsonPath 相对槽根(如 components.0.text);③ 删除 write({path, del:true})。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data_snapshot 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝。',
+      schema: z.object({
+        path: z.string().describe('已注册的数据槽路径'),
+        value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set/patch 的 set/merge/append 必填'),
+        patch: z.object({
+          op: z.enum(['set', 'remove', 'merge', 'append']),
+          jsonPath: z.string().optional().describe('相对槽根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填则作用于根'),
+        }).optional().describe('增量编辑;传 patch 则走 edit 语义,否则整体 set'),
+        del: z.boolean().optional().describe('true 则删除该槽(等价 delete_data_slot)'),
+      }),
+    },
+  )
+
   const tools: StructuredToolInterface[] = [
     listDataSlots,
     describeDataSlot,
@@ -993,6 +1175,8 @@ export function createDataSlotOps(props: DataSlotSpec[], opts: DataSlotOpsOption
     queryDataSlot,
     searchDataSlot,
     evalScript,
+    readSlot,
+    writeSlot,
   ]
   // 挂控制器到工具数组(不可枚举:不影响 selectBuiltinTools 遍历/长度;createChatSdk 经 .controller 取用)
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })

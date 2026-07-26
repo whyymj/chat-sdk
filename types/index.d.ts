@@ -152,9 +152,12 @@ export type ChatModelLike = {
 export interface DataSlotSpec {
   /** window 上的路径,支持点号嵌套 */
   path: string;
-  description: string;
-  /** 值的 zod schema(写入时校验) */
+  /** 属性说明,供 Agent 理解用途;若传了 bind 且未传 description,自动生成 `${path}(bind 直连)` */
+  description?: string;
+  /** 值的 zod schema(写入时校验);字段的 .describe() 自动提取注入 systemPrompt「可操作属性」段 */
   schema: any;
+  /** 可选:传 reactive/普通对象,自动挂 window[path] = bind(reactive 写后响应式刷新;普通对象可写但不响应) */
+  bind?: any;
 }
 /** createDataSlotOps 选项(审计回调 / 只读探测 / 快照上限 / 字段白名单读 / 乐观锁) */
 export interface DataSlotOpsOptions {
@@ -176,7 +179,20 @@ export interface DataSlotOpsOptions {
    * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
    */
   autoLock?: boolean;
+  /** 读写拦截器:read/write 透传给数据槽工具(脱敏/转换/审计/拒绝 LLM 读写) */
+  interceptors?: DataSlotInterceptors;
 }
+
+/** 数据槽读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
+export interface DataSlotInterceptors {
+  /** LLM 读时拦截:path + 原始值 → 改写后返回给 LLM(如脱敏/派生);抛错则返回 READ_INTERCEPT 错误 */
+  read?: (path: string, value: any) => any;
+  /** LLM 写时拦截:path + 欲写值 + 当前值 → 改写后的值,或 { error } 拒绝;抛错则拒绝 */
+  write?: (path: string, payload: any, current: any) => any | { error: string };
+}
+
+/** 工具呈现模式:simple=主推 read/write 但保留高级能力(默认)| advanced=全暴露| minimal=只 read/write */
+export type ToolMode = 'simple' | 'advanced' | 'minimal';
 
 /** 数据槽注册表控制器(运行时动态增删;createDataSlotOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
 export interface DataSlotOpsController {
@@ -342,6 +358,17 @@ export interface ChatSdkOptions {
   maxSnapshots?: number;
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean;
+  /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
+  toolMode?: 'simple' | 'advanced' | 'minimal';
+  /** 读写拦截器:read/write 透传给数据槽工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
+  interceptors?: {
+    read?: (path: string, value: any) => any;
+    write?: (path: string, payload: any, current: any) => any | { error: string };
+    /** agent 接收输入时拦截:send/stream 的 user message 预处理(可改写/审计) */
+    input?: (input: any) => any;
+    /** agent 产出输出时拦截:返回前 postprocess(可改写最终回复) */
+    output?: (json: any) => any;
+  };
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
@@ -457,6 +484,7 @@ export declare function defineTool(opts: {
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
 export declare function createDataSlotOps(props: DataSlotSpec[], opts?: DataSlotOpsOptions): any[];
+export declare function filterByToolMode(tools: any[], mode?: 'simple' | 'advanced' | 'minimal'): any[];
 export declare function selectBuiltinTools(caps: { dataSlotOps?: boolean; fetch?: boolean } | undefined, dataSlotOps: any[], fetchDocs: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataSlotOps?: boolean; subagent?: boolean } | undefined, hasDataSlotOps: boolean): any;
 export declare const fetchDocTools: any[];
@@ -475,6 +503,8 @@ export declare const systemPromptHelpers: {
   /** 可靠写入规则:改前先读、动态先 list、字段以 describe 为准、写错看校验错误重试、优先增量 patch */
   readonly reliableWriteRules: string;
 };
+/** 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底 */
+export declare function extractSchemaHint(schema: any): string;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;

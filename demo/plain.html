@@ -51,7 +51,7 @@
         model: 'deepseek-chat',
       },
       systemPrompt:
-        '你是页面操作助手。先用 list_data_slots 查看可改属性,再用 set_data_slot 修改 window.app 上的属性。',
+        '你是页面操作助手。window.app 上注册了可改属性,按用户意图改对应字段即可。',
       dataSlots: [
         { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
         { path: 'app.count', description: '计数器(整数)', schema: z.number().int() },

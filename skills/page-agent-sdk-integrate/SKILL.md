@@ -9,7 +9,7 @@ Help the user embed `page-agent-sdk` so an AI agent safely edits their page's st
 
 ## Core concept
 
-The SDK is a **standardized JSON-operation agent**: the integrator declares writable `window` paths + zod schemas; the agent edits them via `set_data_slot` / `edit_data_slot` (jsonPath patches), validated by schema, scoped to the registry, with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text.
+The SDK is a **standardized JSON-operation agent**: the integrator declares writable `window` paths + zod schemas; the agent edits them via `read` / `write` (high-level entry, 2.2+; `write` merges set/edit/delete + auto optimistic lock + auto snapshot), validated by schema, scoped to the registry, with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text. Advanced mode (`toolMode:'advanced'`) also exposes low-level `get_data_slot`/`set_data_slot`/`edit_data_slot`/`delete_data_slot` for precise control.
 
 ## Workflow
 
@@ -47,7 +47,7 @@ createChatSdk({
 }).mount()
 ```
 
-For large JSON, prefer `edit_data_slot` (jsonPath patch: set/remove/merge/append) over `set_data_slot` (whole value) — avoids re-sending the entire blob.
+For large JSON, prefer `write` with `patch` (jsonPath patch: set/remove/merge/append) over `write` with whole `value` — avoids re-sending the entire blob.
 
 ### 3. Configure the LLM
 
@@ -83,10 +83,10 @@ Event types: `data_slot_change` / `message_update` / `tool_call` / `tool_result`
 
 | Scenario | Key setup |
 |---|---|
-| **Low-code page builder** | `dataSlots` = component tree; `edit_data_slot` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| **Low-code page builder** | `dataSlots` = component tree; `write` patch jsonPath; `onEvent` → canvas refresh; `checkpoint` + `approval` |
 | **Form designer** | `dataSlots` = field definitions with enum/required schemas; schema validation prevents malformed forms |
-| **CMS batch ops** | `eval_script` for bulk loops; `search_data_slot` to filter; `edit_data_slot` for targeted edits |
-| **Ops config console** | `approval:{tools:[set,edit]}` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
+| **CMS batch ops** | `eval_script` for bulk loops; `search_data_slot` to filter; `write` patch for targeted edits |
+| **Ops config console** | `approval:{tools:['write']}` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
 | **AI-native assistant** | `capabilities:{dataSlotOps:false,fetch:false}` + custom `tools` (your product API) |
 | **Research agent** | `capabilities:{dataSlotOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
 | **Headless / server-side** | `ui:false` + `storage:'memory'` + `capabilities:{dataSlotOps:false,fetch:false}`; drive via `sdk.send` |

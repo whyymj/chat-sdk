@@ -5,7 +5,7 @@
  * 流程:用户给创作类需求 → 主 agent 路由判断 →
  *  ① use_planner(高温 0.9 创意规划师,只读)出 2-3 套风格方案(JSON 草稿)
  *  ② (可选)use_reflector(低温 0.3 反思审查)挑刺修订
- *  ③ 主 agent 自己 edit_data_slot 落地成最终 JSON(低温度执行 + schema 校验 + 写前确认)
+ *  ③ 主 agent 自己 write 落地成最终 JSON(低温度执行 + schema 校验 + 写前确认)
  *
  * 路由提示由 usageHints 中间件按 subagents 的 temperature/description 自动注入(无需手写 prompt):
  *  - 高温(≥0.7)或描述含"规划/创意/设计/方案" → planner
@@ -31,9 +31,19 @@ const THEMES: Record<string, { name: string; bg: string; fg: string }> = {
 }
 const DENSITY_PAD: Record<AppConfig['density'], number> = { compact: 8, cozy: 16, spacious: 24 }
 
+// appConfig 的 zod schema:作为 dataSlots schema 自动注入字段说明(.describe())+ 写入校验
+const appConfigSchema = z.object({
+  theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange', 'forest-green']).describe('界面主题:清新蓝/暗夜紫/暖橙/森绿'),
+  density: z.enum(['compact', 'cozy', 'spacious']).describe('信息密度:紧凑/舒适/宽松'),
+  radius: z.number().min(0).max(40).describe('圆角像素(0-40)'),
+  accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('强调色 hex(如 #3b82f6)'),
+})
+
 const w = window as any
-if (!w.appConfig) w.appConfig = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12, accent: '#3b82f6' })
-const config = w.appConfig as AppConfig
+// 顶层建响应式 appConfig 挂 window(供模板渲染),同时作为 dataSlots bind 入参
+const appConfigObj = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12, accent: '#3b82f6' })
+w.appConfig = appConfigObj
+const config = appConfigObj
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -49,21 +59,13 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
       temperature: 0.3, // 主 agent 低温度:执行落地要稳
     },
+    // dataSlots 统一配置:bind 字段直连 reactive(自动挂 window + 注册 dataSlot),schema .describe() 自动注入字段说明到 systemPrompt
     dataSlots: [
-      {
-        path: 'appConfig',
-        description: '界面配置:theme(清新蓝/暗夜紫/暖橙/森绿)、density(compact/cozy/spacious)、radius(圆角px)、accent(强调色hex)',
-        schema: z.object({
-          theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange', 'forest-green']),
-          density: z.enum(['compact', 'cozy', 'spacious']),
-          radius: z.number().min(0).max(40),
-          accent: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-        }),
-      },
+      { path: 'appConfig', schema: appConfigSchema, bind: appConfigObj },
     ],
     systemPrompt: [
-      '你是界面设计执行助手。window.appConfig 是界面配置(theme/density/radius/accent)。',
-      '遇到创作/设计类需求,按"规划-反思-执行"流程:先委派 planner 出方案,再据需要委派 reflector 审查,最后你用 edit_data_slot 落地。',
+      '你是界面设计执行助手。',
+      '遇到创作/设计类需求,按"规划-反思-执行"流程:先委派 planner 出方案,再据需要委派 reflector 审查,最后落地。',
       '简单明确的改动(如"标题改红色")直接执行,不必编排。',
     ].join('\n'),
     // 预声明双子 agent:planner 高温创意(只读,无写工具),reflector 低温审查(只读)
@@ -85,7 +87,7 @@ onMounted(() => {
       },
     ],
     // 写操作落地前弹确认(approval 同时默认开启主动征询 humanConfirm)
-    approval: { tools: ['set_data_slot', 'edit_data_slot'] },
+    approval: { tools: ['write'] },
     debug: true,
     title: '规划-反思-执行',
     placeholder: '试试:帮我设计夏日主题风格;给页面换个有创意的感觉',
@@ -102,7 +104,7 @@ onUnmounted(() => agent?.unmount())
       <h2>🎨 规划-反思-执行</h2>
       <p class="hint">
         双子 agent 编排:<code>use_planner</code>(高温 0.9 创意规划)出方案 →
-        <code>use_reflector</code>(低温 0.3 反思审查)挑刺 → 主 agent(低温 0.3)<code>edit_data_slot</code> 落地。
+        <code>use_reflector</code>(低温 0.3 反思审查)挑刺 → 主 agent(低温 0.3)<code>write</code> 落地。
         路由提示由 <code>usageHints</code> 按 temperature/description 自动注入,零新中间件。
       </p>
 
@@ -133,7 +135,7 @@ onUnmounted(() => agent?.unmount())
 
       <p class="try">
         💡 试试:「帮我设计夏日主题风格」「给页面换个有创意的感觉」<br />
-        ▶ 主 agent 识别为创作类 → use_planner 出方案 → (可选)use_reflector 审查 → edit_data_slot 落地
+        ▶ 主 agent 识别为创作类 → use_planner 出方案 → (可选)use_reflector 审查 → write 落地
       </p>
     </aside>
     <section ref="root" class="pane pane-right"></section>

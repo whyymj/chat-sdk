@@ -47,7 +47,7 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入 app.notes(经 set_data_slot)。',
+      '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入 app.notes。',
     dataSlots,
     // ↓ 工具分离:关闭默认自动装配,改用 tools 手动组合(散工具 / 展开的预设数组)
     capabilities: { dataSlotOps: false, fetch: false },

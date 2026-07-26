@@ -32,9 +32,18 @@ const THEMES: Record<AppConfig['theme'], { name: string; bg: string; fg: string;
 }
 const DENSITY_PAD: Record<AppConfig['density'], number> = { compact: 8, cozy: 16, spacious: 24 }
 
+// appConfig 的 zod schema:作为 dataSlots schema 自动注入字段说明(.describe())+ 写入校验
+const appConfigSchema = z.object({
+  theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange']).describe('界面主题:清新蓝/暗夜紫/暖橙'),
+  density: z.enum(['compact', 'cozy', 'spacious']).describe('信息密度:紧凑/舒适/宽松'),
+  radius: z.number().min(0).max(40).describe('圆角像素(0-40)'),
+})
+
 const w = window as any
-if (!w.appConfig) w.appConfig = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12 })
-const config = w.appConfig as AppConfig
+// 顶层建响应式 appConfig 挂 window(供模板渲染),同时作为 dataSlots bind 入参
+const appConfigObj = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12 })
+w.appConfig = appConfigObj
+const config = appConfigObj
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -49,27 +58,17 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
+    // dataSlots 统一配置:bind 字段直连 reactive(自动挂 window + 注册 dataSlot),schema .describe() 自动注入字段说明到 systemPrompt
     dataSlots: [
-      {
-        path: 'appConfig',
-        description: '界面配置:theme(清新蓝/暗夜紫/暖橙)、density(compact/cozy/spacious)、radius(圆角 px)',
-        schema: z.object({
-          theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange']),
-          density: z.enum(['compact', 'cozy', 'spacious']),
-          radius: z.number().min(0).max(40),
-        }),
-      },
+      { path: 'appConfig', schema: appConfigSchema, bind: appConfigObj },
     ],
     systemPrompt: [
-      '你是界面风格设计助手。window.appConfig 是界面配置(theme/density/radius)。',
-      '当用户给开放性需求(如「帮我设计风格」「换个感觉」「给几个方案我挑」)时:',
-      '  必须先调 request_human_confirmation 征询——把候选方案作为 options 数组传进去(做成可点选按钮),',
-      '  并用 recommendation 给出你的推荐;不要只回文字罗列方案让用户自己回复。',
-      '用户选定方案后,再用 edit_data_slot 的 set 落地(如 jsonPath="theme" value="night-purple")。',
-      'density/radius 同理(jsonPath="density" / jsonPath="radius")。',
+      '你是界面风格设计助手。',
+      '当用户给开放性需求(如「帮我设计风格」「换个感觉」「给几个方案我挑」)时,必须先征询用户(把候选方案做成可点选选项 + 给出你的推荐),不要只回文字罗列方案让用户自己回复。',
+      '用户选定方案后,落地到 appConfig 对应字段。',
     ].join('\n'),
-    // approval 一行同时开启两侧:被动(set/edit 前弹允许/拒绝)+ 主动(request_human_confirmation 默认随附)
-    approval: { tools: ['set_data_slot', 'edit_data_slot'] },
+    // approval 一行同时开启两侧:被动(write 前弹允许/拒绝)+ 主动(request_human_confirmation 默认随附)
+    approval: { tools: ['write'] },
     debug: true,
     title: '人工确认 · AI 主动征询',
     placeholder: '试试:帮我设计个界面风格;换个感觉,给几个方案我挑',
@@ -86,7 +85,7 @@ onUnmounted(() => agent?.unmount())
       <h2>✋ 人工确认 · AI 主动征询</h2>
       <p class="hint">
         用户给开放性需求时,AI 不自行拍板,调 <code>request_human_confirmation</code> 把候选方案做成<strong>可点选按钮</strong>;
-        用户选完再用 <code>edit_data_slot</code> 落地(写前再弹一次被动确认)。两层 human-in-the-loop 一次看清。
+        用户选完再用 <code>write</code> 落地(写前再弹一次被动确认)。两层 human-in-the-loop 一次看清。
       </p>
 
       <!-- 实时预览:由 window.appConfig(reactive)驱动,Agent 改 → 立即刷新 -->

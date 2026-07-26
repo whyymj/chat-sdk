@@ -103,7 +103,7 @@ createChatSdk({
 }).mount()
 ```
 
-打开页面,在对话框输入「把主题改成 dark」→ Agent 调用 `set_data_slot` 直接改 `window.app.theme`。完。
+打开页面,在对话框输入「把主题改成 dark」→ Agent 调用 `write({ path:'app.theme', value:'dark' })` 直接改 `window.app.theme`。完。
 
 ## 4. 核心概念
 
@@ -135,7 +135,8 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与行为指令(可选:不传用内置默认——页面操作助手 + reliableWriteRules;传了则完全覆盖)
+  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——页面操作助手 + reliableWriteRules;传了则完全覆盖,需自行拼入 reliableWriteRules)
+  // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按 toolMode 自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
 
   /* ===== 能力注入 ===== */
@@ -193,11 +194,13 @@ Agent 自主调用这些内置工具(无需你写):
 
 | 工具 | 作用 |
 |---|---|
-| `list_data_slots` / `describe_data_slot` | 列出 / 查看可操作属性 |
-| `get_data_slot` / `get_slot_paths` | 读属性(支持后代路径精确读局部;字段白名单读模式默认禁止祖先整体读,避免大 JSON 进上下文) |
-| `set_data_slot` | 写属性(**按 schema 校验**,不合法返回错误不写入) |
-| `edit_data_slot` | 增量 patch(`components.0.text`),避免重传整个大 JSON |
-| `delete_data_slot` | 删属性 |
+| **`read`** / **`write`**(2.2+ 推荐) | 高层读写入口,合并 list/describe/get 与 set/edit/delete + 自动乐观锁 + 自动快照,LLM 认知负担最低 |
+| `list_data_slots` / `describe_data_slot` | 列出 / 查看可操作属性(simple 模式隐藏,被 `read` 合并) |
+| `get_data_slot` / `get_slot_paths` | 读属性(支持后代路径精确读局部;字段白名单读模式默认禁止祖先整体读,避免大 JSON 进上下文;simple 模式隐藏,被 `read` 合并) |
+| `set_data_slot` | 写属性(**按 schema 校验**,不合法返回错误不写入;simple 模式隐藏,被 `write` 合并) |
+| `edit_data_slot` | 增量 patch(`components.0.text`),避免重传整个大 JSON(simple 模式隐藏,被 `write` 合并) |
+| `delete_data_slot` | 删属性(simple 模式隐藏,被 `write` 合并) |
+| `query_data_slot` / `search_data_slot` / `eval_script` | 大 JSON 查询(JSONPath)/ 模糊搜索 / 沙箱脚本 |
 | `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot` | 快照 / 回退 |
 
 **要点**:
@@ -211,6 +214,103 @@ Agent 自主调用这些内置工具(无需你写):
   - 例:Agent 误改 `page.theme`,对话「回退 page.theme 最近一次修改」→ Agent 调 `restore_data_snapshot({ path: 'page.theme' })`
 - **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **零桥接**:工具直接操作宿主页面主 `window`,无 iframe/shadow 隔离。
+
+### 高层读写工具 `read`/`write`(2.2+ 推荐)
+
+为降低 LLM 认知负担(从 13 个底层工具收敛到 2 个高层入口),2.2 新增 `read`/`write`:
+
+```ts
+// read:不传 path 列出所有可操作槽;传 path 返回当前值 + hash + 格式
+// Agent: read({}) → "可操作的数据槽: - page.title: 页面标题 ..."
+// Agent: read({ path: 'page.title' }) → "page.title = \"首页\" (hash=a1b2)\n格式: 页面标题"
+
+// write:三种意图
+// ① 整体 set(value 直传 JSON 对象,无需 stringify)
+write({ path: 'page.title', value: '新标题' })
+// ② 增量 patch(op=set/remove/merge/append,jsonPath 相对槽根)
+write({ path: 'page', value: 'c', patch: { op: 'append', jsonPath: 'items' } })
+write({ path: 'page', value: { title: '合并标题' }, patch: { op: 'merge' } })
+// ③ 删除
+write({ path: 'page.oldField', del: true })
+```
+
+`write` 自动:① schema 校验(失败不写)② 存快照(可 `restore_data_snapshot` 回退)③ 乐观锁(autoLock,用 `read` 返回的 hash 比对,冲突触发 `VERSION_CONFLICT` 或人工介入)。
+
+### `toolMode` 工具呈现模式
+
+```ts
+createChatSdk({
+  // ...,
+  toolMode: 'simple',  // 默认:主推 read/write,隐藏底层 get/set/edit/delete/list/describe(6 个),保留 query/search/eval/snapshot(共 9 个数据槽工具)
+  // toolMode: 'advanced',  // 全暴露(15 个,等价旧 13 + read/write;依赖底层工具名时用)
+  // toolMode: 'minimal',   // 只 read/write(2 个,最简)
+})
+```
+
+- `simple`(默认):LLM 只见 `read`/`write` + 高级查询/快照,认知负担最低;`usageHints` 自动注入 read/write 用法
+- `advanced`:全暴露(兼容旧代码/调试/需精确控制时用)
+- `minimal`:只 `read`/`write`(纯读写场景,最省 token)
+
+### `interceptors` 读写拦截器
+
+集成方可脱敏/转换/审计/拒绝 LLM 的读写:
+
+```ts
+createChatSdk({
+  // ...,
+  interceptors: {
+    // LLM 读时拦截:脱敏(只改 LLM 看到的值,不改实际存储)
+    read: (path, value) => path.endsWith('secret') ? '***' : value,
+    // LLM 写时拦截:转换/审计/拒绝
+    write: (path, payload, current) => {
+      if (path === 'app.locked') return { error: '该字段禁止修改' }
+      return payload  // 放行(可改写后返回)
+    },
+  },
+})
+```
+
+- `read(path, value)`:返回值改写后给 LLM(脱敏/派生);抛错返回 `READ_INTERCEPT`
+- `write(path, payload, current)`:返回改写后的值放行,或 `{error}` 拒绝(返回 `WRITE_INTERCEPT`)
+- `input(input)`/`output(json)`:agent 级 IO 预处理/后处理
+  - `input`:send 入口预处理 user message(可改写/审计)
+  - `output`:agent 返回前 postprocess(可改写最终回复)
+
+### `dataSlots` 统一配置(3.0+ 推荐,声明式)
+
+`dataSlots` 是唯一的数据槽配置入口,集声明 schema + 直连对象 + 自动注入字段说明于一体:
+
+```ts
+import { reactive } from 'vue'  // 或任何响应式实现
+const PageSchema = z.object({ title: z.string().describe('页面标题'), count: z.number() })
+const page = reactive({ title: '首页', count: 0 })
+
+const sdk = createChatSdk({
+  // ...,
+  dataSlots: [
+    {
+      path: 'page',            // window 上的路径(支持点号嵌套)
+      schema: PageSchema,       // zod schema:写入校验 + 字段 .describe() 自动注入 systemPrompt「可操作属性」段
+      bind: page,              // 可选:reactive/普通对象直连,自动挂 window[path] = bind + 注册为 dataSlot
+    },
+  ],
+})
+// LLM write page → page 响应式自动更新;集成方改 page → LLM read 可见
+```
+
+- `schema` 字段的 `.describe()` 自动提取(经 `extractSchemaHint`)注入 systemPrompt「可操作属性」段,集成方不用手写 description
+- `bind` 是 `dataSlots` 的可选字段:传 reactive/普通对象 → 自动挂 `window[path] = bind`(支持点号 path) + 注册为 dataSlot;底层仍走注册表 + schema 校验 + 乐观锁
+- 不传 `bind` 时:集成方自行挂 `window[path]`(适合对象已存在 / 动态注册 / 字段白名单读)
+- 预览将注入的提示:`extractSchemaHint(schema)`(已导出)
+- **`bind` 不强制 reactive**:任何对象都行。区别在于「写后是否响应式刷新」:
+  - 传 `reactive(obj)`(Vue):Agent `write` 改属性 → 模板/watch 自动响应(推荐 UI 场景)
+  - 传普通对象:Agent `write` 能改数据,但页面不响应(适合 headless / 后端 / 集成方自己 `onEvent` 或 `watch` 后刷新)
+  - 工具 `set`/`write` 用 `restoreInPlace` 就地改子属性(不替换根引用),兼容 reactive 代理;非 reactive 对象也能正常写入
+- **通知外界对象已修改**的机制(详见 §6.9 onEvent):
+  - `onEvent` / `sdk.hook` 订阅 `data_slot_change` 事件(写后触发,含 `path`/`operation`/`value`)—— 适合 headless / 非 Vue / 普通对象 bind
+  - Vue 响应式(bind 传 reactive)—— 模板/watch 自动响应,无需手动通知
+  - `onEvent` 与响应式可并用:响应式管 UI 刷新,`onEvent` 管审计/埋点/跨系统联动
+
 - **大 JSON 只暴露声明字段**(字段白名单读模式,默认开启):当宿主有个大 JSON(如 `window.page` 含上百字段),你不必声明完整 schema,也无需让 Agent 看到全貌。做法:
   - 注册「可操作子路径」而非顶层,各自 schema;数组元素用 `.passthrough()` 只校验必要 key、其余放行:
 
@@ -225,8 +325,8 @@ Agent 自主调用这些内置工具(无需你写):
     ],
     ```
 
-  - Agent 只能 `get`/`set`/`edit` 这些声明字段;`get_data_slot('page')`(未注册祖先)被拒 → 完整 JSON 不进上下文,省 token、防泄露。
-  - 改数组元素某字段用 `edit_data_slot('page.components', { op:'set', jsonPath:'1.price', value:'180' })` 增量 patch,只发改动、不重传整个数组。
+  - Agent 只能 `read`/`write` 这些声明字段;`read({ path:'page' })`(未注册祖先)被拒 → 完整 JSON 不进上下文,省 token、防泄露。
+  - 改数组元素某字段用 `write({ path:'page.components', value:180, patch:{ op:'set', jsonPath:'1.price' } })` 增量 patch,只发改动、不重传整个数组。
   - 需整体读祖先时设 `createChatSdk({ ..., })` 内 `dataSlotOps` 选项 `whitelist:false`(回退原行为)。
 - **树形/递归 children 结构**:节点含 `children` 自引用时,用 zod `z.lazy(() => TreeNode)` 声明递归 schema,`.passthrough()` 让节点可带未声明字段:
 
@@ -244,7 +344,7 @@ Agent 自主调用这些内置工具(无需你写):
   ```
 
   - **查**:递归找任意深度的节点用 `query_data_slot` 的 `$..*[?(@.type=="card")]`(找所有 card);精确定位用 `$.components.0.children.0.children.0.text`
-  - **改**:增量改深层节点用 `edit_data_slot('page.components', { op:'set', jsonPath:'0.children.0.children.0.text', value:'"新文本"' })` —— jsonPath 逐级定位,只发改动,无需重传整棵树
+  - **改**:增量改深层节点用 `write({ path:'page.components', value:'新文本', patch:{ op:'set', jsonPath:'0.children.0.children.0.text' } })` —— jsonPath 逐级定位,只发改动,无需重传整棵树
   - **校验**:递归 schema 自动穿透到 children,append 非法节点(如缺 `id`)被拒;passthrough 保留节点的额外字段(extra/style 等)
   - **复杂遍历**(如带父路径聚合、按多条件递归筛选)用 `eval_script` 写递归 visit 函数最直观
 
@@ -253,10 +353,10 @@ Agent 自主调用这些内置工具(无需你写):
 当属性可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:Agent `get_data_slot` 返回值末尾附 `hash=xxx`,写入时回传 `expectedHash` 校验。
 
 ```ts
-// Agent 工作流(由 LLM 自动执行,集成方无需写)
-// 1. get → "page.title = old (hash=a1b2)"
-// 2. set_data_slot({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
-//    若期间外部改过 → hash 不匹配 → 触发冲突
+// Agent 工作流(由 LLM 自动执行,集成方无需写;simple 默认 + autoLock 自动)
+// 1. read({ path:'page.title' }) → "page.title = old (hash=a1b2)"
+// 2. write({ path:'page.title', value:'new' })   // 自动用上次 read 的 hash 比对
+//    若期间外部改过 → hash 不匹配 → 触发冲突(VERSION_CONFLICT),重新 read 再改
 ```
 
 **冲突时(默认开启人工介入):** 工具挂起,`sdk.pendingConflict` ref 置为冲突信息,内置 ChatDialog 弹冲突条让用户三选一:
@@ -491,10 +591,10 @@ createChatSdk({
       temperature: 0.3,
       systemPrompt: '你是设计反思审查员。对方案挑刺并给修订建议,不要重写整个方案。' },
   ],
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] }, // 落地写前确认
+  approval: { tools: ['write'] }, // 落地写前确认
 })
 // 流程:用户"设计夏日主题" → 主 agent 识别创作类 → use_planner 出方案
-//      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → edit_data_slot 落地
+//      → (可选)use_reflector 审查 → request_human_confirmation 让用户选 → write 落地
 ```
 
 > 路由由主 agent 自判(usageHints 提示词引导);若误判率高,可升级为路由中间件(`beforeModel` 跑轻量 router 判模式,`augmentPrompt` 注入模式指令)。`planner-demo`(`/examples/planner-demo/`)演示完整闭环。
@@ -518,7 +618,7 @@ createChatSdk({
 })
 ```
 
-**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`set/edit/delete_data_slot`)后,读回值确认写入生效 + 符合 schema:
+**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`write`/`set/edit/delete_data_slot`)后,读回值确认写入生效 + 符合 schema:
 - **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈
 - **delete 语义**:delete 后读回空 = 删除成功(放行);仍有值 → 「未删干净」
 - **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝)时**不误报**(读回无值是预期)
@@ -555,7 +655,7 @@ createChatSdk({
   // ... 其他配置
   // humanConfirm: true,  // 主动征询(默认开启,不传也开;false 关闭)
   approval: {
-    tools: ['set_data_slot', 'edit_data_slot', 'delete_data_slot'], // 被动:需确认的工具名
+    tools: ['write'], // 被动:需确认的工具名(simple 模式主入口;advanced 模式可列底层 set/edit/delete_data_slot)
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
     // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
@@ -642,7 +742,7 @@ createChatSdk({
 
 | 事件 | 时机 | 字段 |
 |---|---|---|
-| `data_slot_change` | Agent 调 `set`/`edit`/`delete`/`restore_window_*` 后 | `path` / `operation` / `value`(改后值) |
+| `data_slot_change` | Agent 调写工具后(`write` 高层入口,或底层 `set`/`edit`/`delete`/`restore_data_snapshot`) | `path` / `operation`(`set`/`edit`/`delete`/`restore`,`write` 按 args 推断) / `value`(改后值) |
 | `message_update` | 每轮 Agent 结束 | `count`(消息数) |
 | `tool_call` | 工具调用前(stream 模式) | `name` / `args` |
 | `tool_result` | 工具返回后(stream 模式) | `name` / `result` / `status` |
@@ -755,7 +855,7 @@ const injectCtx: Middleware = {
 const guard: Middleware = {
   name: 'guard',
   wrapToolCall: async (ctx, next) => {
-    if (ctx.name === 'set_data_slot' && ctx.args.path === 'app.critical') {
+    if (ctx.name === 'write' && ctx.args.path === 'app.critical') {
       return { content: '该字段禁止 Agent 修改', status: 'error' }  // 不调 next = 拦截
     }
     return next(ctx)
@@ -902,7 +1002,7 @@ A: 这是 SDK 内部 LangChain 消息字段约定,已处理。如果你自定义
 A: 该属性没在 `dataSlots` 里声明(范围控制),或值不符合 `schema`(校验拦截)。检查这两点。
 
 **Q: 操作大 JSON 时 Agent 报错 / 截断?**
-A: ① 用 `edit_data_slot` 增量 patch 而非 `set` 重传整体;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
+A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
 
 **Q: 怎么关闭某项内置能力?**
 A: 用 `capabilities: { dataSlotOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataSlotOps:false` → 不装 10 个 数据槽工具(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
@@ -1056,9 +1156,9 @@ await agent.send('加一个提交按钮')
 
 | # | 场景 | 关键配置 |
 |---|---|---|
-| 1 | 低代码页面搭建 | `dataSlots`=组件树;`edit_data_slot` jsonPath 增量;`onEvent`→画布刷新;`checkpoint`+`approval` |
+| 1 | 低代码页面搭建 | `dataSlots`=组件树;`write` 的 `patch` jsonPath 增量;`onEvent`→画布刷新;`checkpoint`+`approval` |
 | 2 | 表单设计器 | `dataSlots`=字段定义(枚举/必填 schema);schema 校验防错 |
-| 3 | CMS 批量运营 | `eval_script` 批量循环;`search_data_slot` 筛选;`edit_data_slot` 精确改 |
+| 3 | CMS 批量运营 | `eval_script` 批量循环;`search_data_slot` 筛选;`write` 的 `patch` 精确改 |
 | 4 | 运维配置台 | `approval` 人工确认;`capabilities.verify:true` 写后读回;`checkpoint` |
 | 5 | AI 原生助手 | `capabilities:{dataSlotOps:false,fetch:false}` + 自定义 `tools`(产品 API) |
 | 6 | 调研 agent | `capabilities:{dataSlotOps:false}`;`subagent:{allowedTools:['fetch_document']}`;`contextPreset:'conservative'` |

@@ -80,12 +80,9 @@ onMounted(() => {
     ],
     systemPrompt: [
       '你是页面组件助手。window.app.components 是动态组件容器,按组件 id 为键存对象。',
-      '每个组件有自己的 type(banner/card/stat/chart),结构各异;具体组件的 path(如 app.components.banner-1)由集成方动态注册,你可用 list_data_slots 查看当前可操作的具体组件 path。',
-      '操作指南:',
-      '1. 先 list_data_slots 查看当前已注册的可操作组件 path(动态增删,实时变化);',
-      '2. 改某组件用 edit_data_slot 的 set,jsonPath 相对 app.components.<id>,如改 banner-1 标题:jsonPath="banner-1.title";',
-      '3. 各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]};',
-      '4. 改前可用 describe_data_slot 或 get_data_slot 确认字段;非法值会被 schema 校验拒绝。',
+      '每个组件有自己的 type(banner/card/stat/chart),结构各异;具体组件的 path(如 app.components.banner-1)由集成方动态注册,动态增删、实时变化,操作前先查看当前可操作的具体组件 path。',
+      '各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]}。',
+      '改某组件时 jsonPath 相对 app.components.<id>(如改 banner-1 标题:jsonPath="banner-1.title")。',
       systemPromptHelpers.reliableWriteRules,
     ].join('\n'),
     onEvent(e) {
@@ -140,7 +137,7 @@ onUnmounted(() => agent?.unmount())
 
       <p class="try">
         💡 试试:加载几个组件 → 对话框输入「把 banner-1 标题改成『限时特惠』、背景改成 #b91c1c」<br />
-        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>edit_data_slot</code> 按 jsonPath 改,左侧实时更新
+        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>write</code> 按 patch jsonPath 改,左侧实时更新
       </p>
     </aside>
     <section ref="root" class="pane pane-right"></section>
