@@ -27,7 +27,7 @@ See `demo/plain.html` for a framework-agnostic importmap + esm.sh example.
 
 Create a plain/reactive object as the main data, then declare it with a zod schema. The agent can ONLY touch schema-declared top-level fields (ZodObject auto-whitelist); `set`/`edit` are schema-validated (invalid → structured error, no write). Field `.describe()` text is auto-injected into the system prompt so the LLM knows each field's purpose.
 
-> `systemPrompt` is optional — a built-in default is used if omitted (generic JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`: read-before-write, fields per `describe`, retry on validation error, prefer incremental `edit`). Passing your own fully overrides it; append `systemPromptHelpers.reliableWriteRules` yourself if you want the rules.
+> `systemPrompt` is optional — a built-in default is used if omitted (generic JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`: read-before-write, fields per `describe`, retry on validation error, prefer incremental `edit`). Passing your own fully overrides it. Two ways to keep the write rules with a custom prompt: (a) append `systemPromptHelpers.reliableWriteRules` yourself, or (b) set `appendReliableWriteRules: true` to auto-append them (default `false` to avoid duplication).
 
 ```ts
 import { createChatSdk, z } from 'page-agent-sdk'

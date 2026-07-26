@@ -340,6 +340,8 @@ export interface ChatSdkOptions {
   /** 共享上下文:默认 false;true 时同 id 复用同一核心(messages/agent/工作区) */
   shareContext?: boolean;
   systemPrompt?: string;
+  /** 自定义 systemPrompt 时是否自动追加 reliableWriteRules(默认 false;不传 systemPrompt 用默认 prompt 时已内置,此项无效) */
+  appendReliableWriteRules?: boolean;
   tools?: any[];
   skills?: SkillSpec[];
   memory?: string;

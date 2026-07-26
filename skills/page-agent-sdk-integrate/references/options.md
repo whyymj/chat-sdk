@@ -7,7 +7,8 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `llm` | `LLMConfig \| BaseChatModel` | — (required) | The model. `LLMConfig = { apiKey, baseUrl, model, temperature?, maxTokens? }` (OpenAI-compatible; DeepSeek default). Or pass any LangChain `BaseChatModel` (e.g. `ChatAnthropic`, install its peerDep). |
-| `systemPrompt` | `string` | built-in default (JSON-operation assistant + reliable write rules) | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). If omitted, a built-in default is used (JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`); passing your own fully overrides it (append `systemPromptHelpers.reliableWriteRules` yourself if needed). |
+| `systemPrompt` | `string` | built-in default (JSON-operation assistant + reliable write rules) | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). If omitted, a built-in default is used (JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`); passing your own fully overrides it. |
+| `appendReliableWriteRules` | `boolean` | `false` | When `true` and a custom `systemPrompt` is set, auto-append `systemPromptHelpers.reliableWriteRules` to it (avoids forgetting the write rules). No effect when `systemPrompt` is omitted (default prompt already includes them). |
 | `id` | `string` | random + warn | Stable agent id for multi-agent isolation & persistence. **Must pass a stable value** if you use `storage` or run multiple agents on one page. |
 | `title` / `placeholder` | `string` | — | Dialog title / input placeholder (cosmetic). |
 

@@ -61,5 +61,48 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] appendReliableWriteRules:true → 自定义 systemPrompt 末尾自动追加 reliableWriteRules')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-append-rwr', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      systemPrompt: '你是定制助手。',
+      appendReliableWriteRules: true,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(sp.startsWith('你是定制助手。'), '自定义 systemPrompt 保留(在前)')
+    assert(/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules:true → 末尾自动追加 reliableWriteRules')
+    assert(!/你是一个 JSON 操作助手/.test(sp), 'appendReliableWriteRules 不引入默认身份(只追加规则段,不替换默认 prompt)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] appendReliableWriteRules 默认 false → 自定义 systemPrompt 不自动追加(向后兼容)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-append-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      systemPrompt: '你是定制助手。',
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(!/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules 默认 false → 不自动追加(向后兼容,需显式开启)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] appendReliableWriteRules 对默认 prompt 无效(默认已内置,不重复追加)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-append-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      appendReliableWriteRules: true,  // 不传 systemPrompt,此项应无效(默认 prompt 已含,不重复)
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    const matches = sp.match(/可靠写入规则/g) || []
+    assert(matches.length === 1, '不传 systemPrompt 时 appendReliableWriteRules 无效(默认 prompt 只含一份 reliableWriteRules,不重复)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

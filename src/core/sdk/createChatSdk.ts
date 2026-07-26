@@ -97,6 +97,8 @@ export interface ChatSdkOptions {
   shareContext?: boolean
   /** 系统提示词(通用"JSON 操作助手",可覆盖) */
   systemPrompt?: string
+  /** 自定义 systemPrompt 时是否自动追加 reliableWriteRules(默认 false;不传 systemPrompt 用默认 prompt 时已内置,此项无效)。传 true 则在自定义 systemPrompt 末尾追加,避免集成方忘写写入规则 */
+  appendReliableWriteRules?: boolean
   /** 用户自定义工具(散工具 / 展开的预设数组 / 模块 default,皆可;与内置工具合并) */
   tools?: StructuredToolInterface[]
   /** 声明式 skill(渐进式披露) */
@@ -227,7 +229,7 @@ export interface ChatSdkOptions {
  * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
  * 定位:通用「JSON 操作助手」(规范化 JSON 操作 agent)——通过专用工具安全读写集成方声明的主数据对象(bind)。
  * 含身份 + 能力概述 + 可靠写入规则(改前先读、动态先查、字段以工具返回为准、写错看校验错误重试、优先增量 patch)。
- * 用户传了 systemPrompt 则完全覆盖此默认(不自动追加 reliableWriteRules,避免重复;需要时自行拼入 systemPromptHelpers.reliableWriteRules)。
+ * 用户传了 systemPrompt 则完全覆盖此默认;若同时传 appendReliableWriteRules:true,则在自定义 systemPrompt 末尾追加 reliableWriteRules(避免集成方忘写写入规则)。
  */
 const DEFAULT_SYSTEM_PROMPT = [
   '你是一个 JSON 操作助手。集成方声明了一个主数据对象(含 zod schema 校验),你通过专用工具安全地读写它来完成任务。',
@@ -550,7 +552,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useDataOps = caps?.dataOps !== false
 
   // 最终 systemPrompt = 用户 systemPrompt(或默认)+ 可操作数据段(从 data schema .describe() 自动注入;inspect 与 createAgent 共用,保持一致)
-  const finalSystemPrompt = (options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT) + buildDataPrompt(finalDataConfig)
+  // appendReliableWriteRules:true 时,在自定义 systemPrompt 末尾追加 reliableWriteRules(默认 prompt 已内置,不传 systemPrompt 时此项无效)
+  const basePrompt = options.systemPrompt
+    ? (options.appendReliableWriteRules ? options.systemPrompt + '\n\n' + systemPromptHelpers.reliableWriteRules : options.systemPrompt)
+    : DEFAULT_SYSTEM_PROMPT
+  const finalSystemPrompt = basePrompt + buildDataPrompt(finalDataConfig)
 
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)

@@ -74,6 +74,8 @@ createChatSdk({
 
 `reliableWriteRules` — standardized "reliable write rules": read before write (`read`), fields per `read({jsonPath})` (returns format hint), retry on schema-validation errors, prefer `write` with `patch` incremental edits. Recommended for any scenario involving data writes.
 
+Two ways to keep the rules with a custom `systemPrompt`: (a) append manually as above, or (b) set `appendReliableWriteRules: true` to auto-append (default `false`). The default prompt (when `systemPrompt` omitted) already includes them.
+
 ## Built-in data tools (auto-injected when `capabilities.dataOps`)
 
 Default `toolMode:'simple'` exposes high-level `read`/`write` + advanced query/snapshot tools (low-level `get`/`set`/`edit`/`delete`/`describe` are hidden, merged into `read`/`write`). `toolMode:'advanced'` exposes all; `toolMode:'minimal'` only `read`/`write`.
