@@ -102,6 +102,32 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
+## 设计思路：schema / systemPrompt / skill 三层配合
+
+SDK 让 AI 安全改 JSON 的核心是**三层解耦配合**——各司其职、互不耦合，改一层不用动另两层：
+
+| 层 | 载体 | 真实意图 | 加载时机 |
+|---|---|---|---|
+| **机械层（结构 + 校验）** | `data.schema`（zod） | 定义字段名/类型/形状；写时校验护栏（不合法→结构化错误，不写入）；`ZodObject` 顶层键自动白名单（隐藏未声明字段，防误删/误改） | 构造时固定；字段 `.describe()` 文本自动提取注入 systemPrompt |
+| **通用规则层（身份 + 写入方法论）** | `systemPrompt` | agent 身份；`reliableWriteRules`（改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch） | 常驻每轮 |
+| **深度业务层（含义 + 修改套路）** | `skills`（`defineSkill`） | 组件库规范、字段业务语义详解、场景化修改策略、术语表 | 按需加载（agent 见 name+description 索引，调用 `load_skill` 拉全文，省 token） |
+
+**配合机制**
+
+- **结构** → schema 定义（集成方写）；agent 看不到 zod 本身，但 `.describe()` 文本自动进 systemPrompt「可操作数据」段，agent 据此知字段名 + 用途
+- **含义** → 浅层靠 schema `.describe()`（每字段一句话，常驻）；深层靠 skills（整篇业务规范，按需）
+- **修改判断** → 通用策略靠 `systemPrompt` 的 `reliableWriteRules`（常驻）；业务特有策略靠 skills（按需）；兜底靠 schema 校验反馈（写错返回结构化错误，agent 据此重试）
+
+**设计意图**：schema 管「能改什么 / 改得对不对」（机械安全），systemPrompt + skills 管「怎么改 / 为什么这么改」（语义引导）。三者解耦——schema 变了校验自动跟，skills 变了不用改 prompt，prompt 变了不用动 schema。
+
+**举例（低代码页面搭建）**
+
+- schema：`z.object({ components: z.array(...) }).describe('组件树')` → agent 知道有 `components` 字段、是组件数组
+- systemPrompt：内置「JSON 操作助手」+ `reliableWriteRules`（默认 `appendReliableWriteRules:true` 自动追加，用 `---` 分隔线区分用户内容与 SDK 追加的规则）→ agent 知道改前先 `read`、优先 `write` patch 增量
+- skill：`page-builder` skill 详述各组件 props 字段含义 + 修改套路（如「改 Banner 背景用 `write({patch:{op:'set', jsonPath:'components.0.props.bg'}})`」）→ agent 按需加载，精确操作
+
+> `appendReliableWriteRules` 默认 `true`：传自定义 `systemPrompt` 时自动用 `---` 分隔线追加 `reliableWriteRules`（避免忘写写入方法论）；设 `false` 关闭；不传 `systemPrompt` 用默认 prompt 时已内置。
+
 ## Agent 接入速查（给 AI agent 读）
 
 > 本节是给 AI agent 的密集接入参考：导出清单 / 选项表 / 扩展点 / 内置工具 / 文件结构。深挖见 `doc/` 与 `CLAUDE.md`。

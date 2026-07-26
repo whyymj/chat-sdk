@@ -102,6 +102,32 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
 
+## Design: the schema / systemPrompt / skill three-layer split
+
+The core of letting AI safely edit JSON is a **three-layer decoupled split** — each layer has its own job, changing one never forces changes to the others:
+
+| Layer | Carrier | Real intent | Loaded when |
+|---|---|---|---|
+| **Mechanical (structure + validation)** | `data.schema` (zod) | Defines field names/types/shapes; write-time validation guardrail (invalid → structured error, no write); `ZodObject` top-level keys auto-whitelist (hides undeclared fields, prevents accidental delete/edit) | Fixed at construction; field `.describe()` text auto-extracted into systemPrompt |
+| **Generic rules (identity + write methodology)** | `systemPrompt` | Agent identity; `reliableWriteRules` (read before write, fields per `describe`, retry on validation error, prefer incremental patch) | Every round (persistent) |
+| **Deep business (semantics + edit recipes)** | `skills` (`defineSkill`) | Component-library specs, detailed field business semantics, scenario-specific edit strategies, glossaries | On-demand (agent sees name+description index, calls `load_skill` to pull full text — saves tokens) |
+
+**How they cooperate**
+
+- **Structure** → schema defines it (integrator writes); the agent never sees the zod itself, but `.describe()` text auto-enters the systemPrompt "operable data" section so the agent knows field names + purpose
+- **Semantics** → shallow via schema `.describe()` (one line per field, persistent); deep via skills (full business spec, on-demand)
+- **Edit judgment** → generic strategy via `systemPrompt` `reliableWriteRules` (persistent); business-specific strategy via skills (on-demand); fallback via schema validation feedback (write errors return structured errors the agent retries from)
+
+**Design intent**: schema governs "what can be changed / whether a change is valid" (mechanical safety); systemPrompt + skills govern "how to change / why to change it this way" (semantic guidance). Three layers decoupled — change schema and validation follows automatically; change skills without touching the prompt; change the prompt without touching the schema.
+
+**Example (low-code page builder)**
+
+- schema: `z.object({ components: z.array(...) }).describe('component tree')` → agent knows there's a `components` field, an array of components
+- systemPrompt: built-in "JSON operation assistant" + `reliableWriteRules` (default `appendReliableWriteRules:true` auto-appends with a `---` separator distinguishing user content from SDK-appended rules) → agent knows to `read` before write, prefer `write` patch incremental
+- skill: `page-builder` skill details each component's props field meanings + edit recipes (e.g. "to change Banner bg use `write({patch:{op:'set', jsonPath:'components.0.props.bg'}})`") → agent loads on demand, edits precisely
+
+> `appendReliableWriteRules` defaults to `true`: when a custom `systemPrompt` is set, auto-appends `reliableWriteRules` with a `---` separator (avoids forgetting the write methodology); set `false` to disable; no effect when `systemPrompt` is omitted (default prompt already includes them).
+
 ## Agent Integration Cheat Sheet (for AI agents)
 
 > Dense integration reference for AI agents: exports / options / extension points / built-in tools / file structure. Deep dive in `doc/` and `CLAUDE.md`.
