@@ -131,7 +131,14 @@ function readByPath(root: unknown, path: string): unknown {
 export interface WriteBackCheckOptions {
   /** path → zod schema(由 createChatSdk 从 data 构造注入,键 '' 为主数据整体 schema);省略则只校验「读回非空」不校验 schema。支持 getter 函数:运行时每次 check 调用取最新(适配 sdk.setData 动态替换) */
   schemas?: Record<string, ZodType> | (() => Record<string, ZodType>)
-  /** 读 window 的根对象(默认 globalThis.window;page-agent-sdk 零桥接 = 宿主 window) */
+  /**
+   * 读回的根对象。优先于 `window`。
+   * - 单对象 data 模式:传 bind 对象(或 getter `() => liveData()?.bind`,适配 sdk.setData 运行时替换)
+   * - 旧 windowProps 模式:省略则用 `window`(默认 globalThis.window;零桥接 = 宿主 window)
+   * 支持 getter:每次 check 调用取最新
+   */
+  root?: unknown | (() => unknown)
+  /** 读 window 的根对象(旧 windowProps 模式;data 模式应传 root)。默认 globalThis.window */
   window?: unknown
 }
 
@@ -147,7 +154,11 @@ export interface WriteBackCheckOptions {
  * @example createChatSdk({ capabilities:{verify:true}, verify:{ maxAttempts:1 } })  // check 省略 → 默认用本函数
  */
 export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCheck {
-  const root = opts.window ?? (globalThis as any).window
+  // root 优先于 window;支持 getter(适配 sdk.setData 运行时替换 bind)
+  const rootRef: () => unknown =
+    typeof opts.root === 'function' ? (opts.root as () => unknown)
+    : opts.root !== undefined ? () => opts.root
+    : () => opts.window ?? (globalThis as any).window
   // schemas 支持静态对象或 getter(单对象场景:键 '' → 整体 schema;每次 check 取最新)
   const schemasRef: () => Record<string, ZodType> =
     typeof opts.schemas === 'function' ? (opts.schemas as () => Record<string, ZodType>) : () => (opts.schemas ?? {}) as Record<string, ZodType>
@@ -157,6 +168,7 @@ export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCh
     const toolResults = collectToolResults(messages)
     const schemas = schemasRef()
     const rootSchema = schemas['']  // 单对象整体 schema(键 '')
+    const root = rootRef()  // 每次 check 取最新 root(适配 sdk.setData 动态替换 bind)
     const issues: string[] = []
     for (const { path, op, callId } of writes) {
       // 写被 dataOps 合法拒绝 → 读回无值是预期,跳过(避免误报"未生效"误导 agent 去修一个本就该失败的写)

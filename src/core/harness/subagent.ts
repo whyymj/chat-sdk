@@ -39,7 +39,7 @@ export interface SubagentOptions {
   llm: SubagentLlmConfig | BaseChatModel
   /** 主 agent 全部工具(子 agent 按白名单筛选只读子集) */
   allTools: StructuredToolInterface[]
-  /** 子 agent 额外可用的工具名(默认仅只读 window + fetch) */
+  /** 子 agent 额外可用的工具名(默认仅只读主数据 + fetch) */
   allowedTools?: string[]
   /** 子 agent 默认身份(spawn 运行时的 role 优先;都缺省用兜底) */
   systemPrompt?: string
@@ -119,7 +119,7 @@ async function runSubagent(
     systemPrompt:
       task.role?.trim() ||
       opts.systemPrompt ||
-      '你是一个专注的子任务执行者。你只有只读工具(读 window / 抓文档),用它们完成给定任务,给出简洁结论,不要展开多余解释。',
+      '你是一个专注的子任务执行者。你只有只读工具(读主数据 / 抓文档),用它们完成给定任务,给出简洁结论,不要展开多余解释。',
     tools: childTools,
     // 子 agent 专属 skills(独立,不继承主)+ 递归 subagent 中间件(防递归)
     middleware: [
@@ -174,7 +174,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       schema: z.object({
         prompt: z.string().describe('子任务描述(子 agent 的唯一输入)'),
         role: z.string().optional().describe('子 agent 身份(如"你是代码审查专家")'),
-        tools: z.array(z.string()).optional().describe('子 agent 可用工具名白名单(默认只读 window + fetch)'),
+        tools: z.array(z.string()).optional().describe('子 agent 可用工具名白名单(默认只读主数据 + fetch)'),
         model: z.string().optional().describe('覆盖模型(默认同主)'),
       }),
     },

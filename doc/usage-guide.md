@@ -140,7 +140,7 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——页面操作助手 + reliableWriteRules;传了则完全覆盖,需自行拼入 reliableWriteRules)
+  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖,需自行拼入 reliableWriteRules)
   // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按 toolMode 自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
 
@@ -469,7 +469,7 @@ storage: { backend: 'local', maxBytes: 2*1024*1024 }  // 配置对象
 storage: false                              // 显式关闭
 ```
 
-**持久化什么**:对话历史 / vfs 工作区 / todos / memory。(window 快照栈不持久化 —— 刷新后宿主值已变。)
+**持久化什么**:对话历史 / vfs 工作区 / todos / memory。(**主数据 `bind` 不持久化** —— `bind` 是集成方的业务对象(可能含函数/DOM/循环引用,SDK 不擅自深拷贝);集成方若需跨刷新/会话恢复 `bind`,自行存储后用 `sdk.setData({ bind: restoredBind })` 注入。dataOps 的 per-path 快照栈亦不持久化,刷新后清空。)
 
 **多 agent 隔离**:靠 `id` 区分。同页多个 Agent 传不同 `id`,数据互不串扰。
 
@@ -534,7 +534,7 @@ createChatSdk({
   // ...
   tools: [myResearchTool],
   subagent: {
-    allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读 window + fetch)
+    allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读主数据 + fetch)
     maxDepth: 1,    // 递归深度(默认 1:主可 spawn,子不可再 spawn)
     maxParallel: 4, // spawn_agents 并发上限(默认 4)
     // enabled: false  // 关闭子 agent
@@ -575,7 +575,7 @@ createChatSdk({
   subagents: [
     { id: 'planner', description: '创意设计规划师,擅长页面主题/风格方案设计(只出方案,不落地)',
       temperature: 0.9,                            // 高温度 → 创造力
-      systemPrompt: '你是创意设计规划师。只读 window 数据,给出 2-3 套方案(JSON 草稿),不要调写工具。' },
+      systemPrompt: '你是创意设计规划师。只读主数据,给出 2-3 套方案(JSON 草稿),不要调写工具。' },
     { id: 'reflector', description: '设计反思审查员,挑方案的不一致/不可行/体验问题',
       temperature: 0.3,
       systemPrompt: '你是设计反思审查员。对方案挑刺并给修订建议,不要重写整个方案。' },
@@ -607,10 +607,10 @@ createChatSdk({
 })
 ```
 
-**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了 window(`write`/`set/edit/delete_data`)后,读回值确认写入生效 + 符合 schema:
+**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了主数据(`write`/`set/edit/delete_data`)后,读回值确认写入生效 + 符合 schema。读回根对象自动取 `data.bind`(经 getter,适配 `sdk.setData` 运行时替换 bind;旧 windowProps 模式回退 `window`):
 - **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈
 - **delete 语义**:delete 后读回空 = 删除成功(放行);仍有值 → 「未删干净」
-- **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝)时**不误报**(读回无值是预期)
+- **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝 / 白名单 `PATH_DENIED`)时**不误报**(读回无值是预期)
 - dataOps 写入同步,check 读回无需 `await`
 
 **自定义 check**:写领域相关的验证(业务规则、不变量)。好 check 返回**具体可操作**的 feedback:
@@ -624,13 +624,13 @@ verify: {
 }
 ```
 
-**何时用**:Agent 改页面(数据槽写)后想确保写入生效 / 符合预期。**何时不用**:纯问答(无写操作,check 自动放行)、对延迟敏感(自纠多跑 LLM 轮次)。
+**何时用**:Agent 改主数据后想确保写入生效 / 符合预期。**何时不用**:纯问答(无写操作,check 自动放行)、对延迟敏感(自纠多跑 LLM 轮次)。
 
 **查看状态**:`agent.inspect().verify` → `{ enabled, maxAttempts }`。
 
-> **对抗验证**(`verify.adversarial: true`):check 通过后 spawn 一个**配只读工具**的"找茬"子 agent(refute 姿态,可实证读回 window 检查而非臆测,突破自审偏差)再审一遍。默认关(每次烧一个多轮子 agent token)。
+> **对抗验证**(`verify.adversarial: true`):check 通过后 spawn 一个**配只读工具**的"找茬"子 agent(refute 姿态,可实证读回主数据检查而非臆测,突破自审偏差)再审一遍。默认关(每次烧一个多轮子 agent token)。
 >
-> **window 场景策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)。
+> **策略**:开 verify 即用 `createWriteBackCheck`(写后读回 + schema 校验,低成本**必备**);adversarial 作可选增强(语义复杂场景才开)。
 
 ### 6.11 Approval 人工确认(工具调用前 human-in-the-loop)
 
@@ -686,7 +686,7 @@ const sdk = createChatSdk({
 })
 sdk.mount()
 
-// 一键回退(对话历史 + 注册 数据槽 + vfs + todos 整体还原)
+// 一键回退(对话历史 + 主数据 + vfs + todos 整体还原)
 sdk.restoreLastCheckpoint()
 sdk.listCheckpoints()  // 查看可用回退点
 ```
@@ -934,8 +934,8 @@ const reply = await sdk.send('3 加 5 等于多少?')
 console.log(reply) // AI 调 add 工具 → "3 + 5 = 8"
 ```
 
-**服务端可用能力**:自定义工具 / `fetch_document`(Node 18+)/ 子 agent / verify 自检 / vfs 工作区 / context 压缩 / memory / onEvent 事件回调
-**服务端不可用**:dataOps(需 `window`)/ ChatDialog UI(需 DOM)/ IndexedDB·localStorage·sessionStorage 持久化(用 `memory` 替代)
+**服务端可用能力**:自定义工具 / `fetch_document`(Node 18+)/ 子 agent / verify 自检 / vfs 工作区 / context 压缩 / memory / onEvent 事件回调 / dataOps 主体(`read`/`write`/`get`/`edit`/`delete`/`query`/`search`,传任意 `data.bind` 对象即可,不依赖 `window`)
+**服务端不可用**:ChatDialog UI(需 DOM)/ `eval_script`(依赖 Web Worker)/ IndexedDB·localStorage·sessionStorage 持久化(用 `memory` 替代)
 
 > 注:`eval_script` 依赖 Web Worker,属 dataOps,关掉即不装。MCP 远程工具(http/sse/websocket)在 Node 也可用(动态 import `@modelcontextprotocol/sdk`)。
 
@@ -994,7 +994,7 @@ A: 值不符合 `schema`(校验拦截)。检查 schema 定义与传入值。
 A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `maxTokens`;③ 降低 `temperature`(0.3)。
 
 **Q: 怎么关闭某项内置能力?**
-A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 10 个 数据槽工具(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 dataOps 工具集(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。

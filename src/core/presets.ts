@@ -42,21 +42,21 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
  *
  * 用法:
  *   import { systemPromptHelpers } from 'page-agent-sdk'
- *   createChatSdk({ systemPrompt: `你是页面助手。\n${systemPromptHelpers.reliableWriteRules}`, ... })
+ *   createChatSdk({ systemPrompt: `你是 JSON 操作助手。\n${systemPromptHelpers.reliableWriteRules}`, ... })
  */
 export const systemPromptHelpers = {
   /**
-   * 可靠写入规则 —— 教 LLM「改前先读真实值、动态场景先 list、字段以 describe 为准、写错看校验错误重试」。
+   * 可靠写入规则 —— 教 LLM「改前先读真实值、动态场景先查、字段以 describe 为准、写错看校验错误重试」。
    * 避免集成方忘了写这些元规则,导致 LLM 基于记忆瞎改、靠 schema 兜底纠错烧轮次。
-   * 建议所有涉及 数据槽写操作的场景都把这段拼进 systemPrompt。
+   * 建议所有涉及 主数据写操作的场景都把这段拼进 systemPrompt。
    */
   reliableWriteRules: [
     '【可靠写入规则】',
-    '1. 改任何属性前,先用 read({ path }) 读其当前真实值,基于真实值改,不要凭记忆;',
-    '2. 若不确定可操作哪些属性,先 read() 不传 path 查看当前注册项(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);',
-    '3. 不确定某属性字段结构时,read({ path }) 返回含格式说明,字段以返回为准;',
+    '1. 改任何字段前,先用 read({ jsonPath }) 读其当前真实值,基于真实值改,不要凭记忆;',
+    '2. 若不确定可操作哪些字段,先 read() 不传 jsonPath 查看主数据说明 + schema 声明字段(集成方可经 sdk.setData 运行时替换 schema,以工具返回为准,勿凭旧记忆);',
+    '3. 不确定某字段结构时,read({ jsonPath }) 返回含格式说明,字段以返回为准;',
     '4. 写入若被 schema 校验拒绝(返回结构化错误含字段名与期望类型),按错误修正后重试,不要放弃;',
-    '5. 优先用 write 的 patch 增量改(只发改动,如 write({ path, value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断。',
+    '5. 优先用 write 的 patch 增量改(只发改动,如 write({ value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断。',
   ].join('\n'),
 } as const
 

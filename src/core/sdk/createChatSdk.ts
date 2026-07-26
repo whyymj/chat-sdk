@@ -95,7 +95,7 @@ export interface ChatSdkOptions {
   session?: SessionOptions
   /** 共享上下文:默认 false(每实例独立);true 时同 id 复用同一 AgentCore(同页多对话框 = 同一 agent) */
   shareContext?: boolean
-  /** 系统提示词(通用"页面操作助手",可覆盖) */
+  /** 系统提示词(通用"JSON 操作助手",可覆盖) */
   systemPrompt?: string
   /** 用户自定义工具(散工具 / 展开的预设数组 / 模块 default,皆可;与内置工具合并) */
   tools?: StructuredToolInterface[]
@@ -225,13 +225,13 @@ export interface ChatSdkOptions {
 
 /**
  * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
- * 定位:通用「页面操作助手」(规范化 JSON 操作 agent)——通过注册的 数据槽安全读写宿主页面数据。
+ * 定位:通用「JSON 操作助手」(规范化 JSON 操作 agent)——通过专用工具安全读写集成方声明的主数据对象(bind)。
  * 含身份 + 能力概述 + 可靠写入规则(改前先读、动态先查、字段以工具返回为准、写错看校验错误重试、优先增量 patch)。
  * 用户传了 systemPrompt 则完全覆盖此默认(不自动追加 reliableWriteRules,避免重复;需要时自行拼入 systemPromptHelpers.reliableWriteRules)。
  */
 const DEFAULT_SYSTEM_PROMPT = [
-  '你是一个页面操作助手。宿主页面在 window 对象上注册了可操作的属性,你通过专用工具安全地读写这些属性来操作页面。',
-  '所有写操作都经范围控制(仅注册表内)与 schema 校验(不合法会返回结构化错误而非写入),并自动留快照可回退。',
+  '你是一个 JSON 操作助手。集成方声明了一个主数据对象(含 zod schema 校验),你通过专用工具安全地读写它来完成任务。',
+  '所有写操作都经范围控制(仅 schema 声明字段内)与 schema 校验(不合法会返回结构化错误而非写入),并自动留快照可回退。',
   '大对象/数组优先用增量 patch(只发改动)而非整体重传,避免输出被截断。',
   systemPromptHelpers.reliableWriteRules,
 ].join('\n\n')
@@ -258,7 +258,7 @@ export interface ChatSdk {
   switchSession(sessionId?: string): Promise<string>
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
-  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 数据槽注册项 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
+  /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
   listCheckpoints(): { id: number; label?: string; timestamp: number; messageCount: number }[]
@@ -533,6 +533,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useCheckpoint = checkpointOpts !== undefined && checkpointOpts !== false
   const checkpointMgr: CheckpointManager | null = useCheckpoint
     ? createCheckpointManager({
+        getData: () => liveData()?.bind,  // 单对象 data 模式:快照/回滚主数据 bind(getter 适配 sdk.setData 运行时替换)
         slotPaths: finalDataConfig ? [''] : [],
         vfsStore,
         todosMw,
@@ -592,10 +593,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             if (!list.length) return '无可用 checkpoint,无法回退。'
             const ok = checkpointMgr.restore()
             return ok
-              ? `已回退到最近一次正常状态(checkpoint #${list[list.length - 1].id})。对话历史、数据槽注册项、vfs、todos 已整体还原。请基于回退后的状态重新判断并继续。`
+              ? `已回退到最近一次正常状态(checkpoint #${list[list.length - 1].id})。对话历史、主数据、vfs、todos 已整体还原。请基于回退后的状态重新判断并继续。`
               : '回退失败:无可用 checkpoint。'
           },
-          { name: 'restore_last_checkpoint', description: '回退到最近一次正常状态(整体还原对话历史 + 数据槽注册项 + vfs + todos)。当本轮操作出错、页面被改坏、或走偏时调用,回到本轮起点重新来过。不传参数即回退最近一次。', schema: z.object({}).optional() },
+          { name: 'restore_last_checkpoint', description: '回退到最近一次正常状态(整体还原对话历史 + 主数据 + vfs + todos)。当本轮操作出错、页面被改坏、或走偏时调用,回到本轮起点重新来过。不传参数即回退最近一次。', schema: z.object({}).optional() },
         ),
         tool(
           async () => {
@@ -663,6 +664,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createVerifyMiddleware({
         check: options.verify!.check ?? createWriteBackCheck({
           schemas: () => (liveData() ? { '': liveData()!.schema } : {}) as Record<string, any>,  // 动态取最新(适配 sdk.setData)
+          root: () => liveData()?.bind,  // 单对象 data 模式:读回 root = bind(不挂 window);getter 适配 sdk.setData 运行时替换
         }),
         adversarial: options.verify?.adversarial ? { llm: options.llm, tools: readonlyTools } : undefined,
       })
@@ -1126,7 +1128,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     stream: core.stream,
     inspect: core.getInfo,
     messages: core.messages,
-    /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 数据槽注册项 + vfs + todos);无可用 checkpoint 返回 false */
+    /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,
     /** 列出可用 checkpoint(回退点) */
     listCheckpoints: () => core.checkpoint?.list() ?? [],

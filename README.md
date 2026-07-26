@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-364%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-434%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -24,7 +24,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 | Constraint | Mechanism | Effect |
 |---|---|---|
-| **Scope control** | Property registry (`data`) — only declared paths are writable; schema shape auto-whitelist (top-level keys limit visible + writable; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
+| **Scope control** | Declared schema fields (`data`) — only declared top-level keys are writable; schema shape auto-whitelist (top-level keys limit visible + writable; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
 | **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
 | **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
@@ -133,15 +133,15 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `ui` | `boolean \| 'default'` · default `true` | `false` = headless (build UI with `agent.messages`) |
 | | `llm` | `LLMConfig \| BaseChatModel` · **required** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`; OpenAI-compatible (default DeepSeek) |
 | | `id` | `string` | Stable id (multi-agent isolation + persistence resume; random+warn if omitted) |
-| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (page assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it |
-| **Page data** | `data` | `{path,description,schema}[]` | Register data slots readable/writable by tools + zod schema |
+| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (JSON operation assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it |
+| **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | Default all on (`verify` default off); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · default off | Passive confirm whitelist (pre-write allow/deny) |
 | | `checkpoint` | `boolean \| {maxCheckpoints?,auto?}` · default off | Session-level rollback (`auto` default `true`) |
-| | `verify` | `{check?,maxAttempts?,adversarial?}` | Needs `capabilities.verify:true`; `check` omitted → `createWriteBackCheck` |
+| | `verify` | `{check?,maxAttempts?,adversarial?}` | Needs `capabilities.verify:true`; `check` omitted → `createWriteBackCheck` (read-back root auto-bound to `data.bind`, adapts to `sdk.setData` runtime swap) |
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · default `auto` | Compression preset |
@@ -181,7 +181,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **data slot ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `describe_data` / `get_data` / `get_data` / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `snapshot_data` / `list_data_snapshots` / `restore_data`
+- **data ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `list_data_snapshots` / `get_data` / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `snapshot_data` / `restore_data`
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -201,7 +201,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # dataOps (registry + incremental edit + snapshot) / dataSlotQuery / fetchDoc
+├── tools/                      # dataOps (schema validation + incremental edit + snapshot + whitelist) / dataSlotQuery / fetchDoc
 ├── backends/                   # vfs (memory) / storage (IndexedDB + multi-backend + quota eviction)
 ├── mcp/client.ts              # remote MCP tool integration
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -236,7 +236,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **data slot ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `describe_data` / `get_data` / `get_data` / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `snapshot_data` / `list_data_snapshots` / `restore_data`
+- **data ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `list_data_snapshots` / `get_data` / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `snapshot_data` / `restore_data`
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -256,7 +256,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # dataOps (registry + incremental edit + snapshot) / dataSlotQuery / fetchDoc
+├── tools/                      # dataOps (schema validation + incremental edit + snapshot + whitelist) / dataSlotQuery / fetchDoc
 ├── backends/                   # vfs (memory) / storage (IndexedDB + multi-backend + quota eviction)
 ├── mcp/client.ts              # remote MCP tool integration
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -300,12 +300,12 @@ flowchart TD
     CORE --> AGENT[createAgent<br/>ReAct loop + middleware stack]
     AGENT --> MW[Middleware stack<br/>usageHints→todos→skills→vfs→summarization<br/>→memory→permissions→checkpoint→approval<br/>→humanConfirm→verify→subagent→user]
     AGENT --> TOOLS[Tools<br/>dataOps / fetchDoc / vfs / MCP / user]
-    TOOLS -->|zero-bridge| WIN[Host page window<br/>read/write registered props directly]
+    TOOLS -->|direct read/write| DATA[Main data bind<br/>reactive/plain object<br/>schema validation + whitelist]
     AGENT --> LLM[LLM<br/>OpenAI-compatible / any ChatModel]
     SDK --> UI[ChatDialog UI<br/>Vue bundled in / or headless]
 ```
 
-- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless — and runs in **Node.js** as a backend Agent (custom tools / subagents / verify; disable `dataOps`+`fetch`, use `storage:'memory'`)
+- **Framework-agnostic**: Vue bundled in the lib (not a peer); host can be React/vanilla. Also supports `ui:false` headless — and runs in **Node.js** as a backend Agent (custom tools / subagents / verify; disable `fetch`+`eval_script` (dataOps body works in Node with any `bind`), use `storage:'memory'`)
 - **Provider-agnostic**: `llm` accepts any LangChain `BaseChatModel`, or `LLMConfig` (builds `ChatOpenAI` internally, OpenAI-compatible, default DeepSeek)
 - **In-house harness**: no LangGraph/langchain full bundle; avoids browser bundling blockers
 
@@ -381,8 +381,8 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 ## Self-tests
 
 ```bash
-npm test            # 364 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 120 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
+npm test            # 434 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 125 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
 ```
 
 ## Local npm package test

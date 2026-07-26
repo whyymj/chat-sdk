@@ -125,4 +125,35 @@ export async function run(ctx: TestCtx): Promise<void> {
     delete (globalThis as any).CP
     delete (globalThis as any).window
   }
+
+  // 单对象 data 模式:getData 快照/回滚 bind(不挂 window)
+  {
+    console.log('\n[checkpoint getData(单对象 data 模式)]')
+    const bind: any = { title: '原标题', theme: 'light', list: [1, 2, 3] }
+    const messages: any[] = [{ role: 'user', content: '你好', timestamp: Date.now() }]
+    const vfsStore = { files: {} } as any
+    const todosMw = { reset: (_t: any[]) => {} }
+    const mgr = createCheckpointManager({
+      getData: () => bind,
+      vfsStore,
+      todosMw: todosMw as any,
+      getTodos: () => [],
+      messages: messages as any,
+      maxCheckpoints: 3,
+    })
+    const id = mgr.save('auto')
+    assert(mgr.list().length === 1 && mgr.list()[0].label === 'auto', 'getData 模式 save 存档')
+    // 改坏 bind
+    bind.title = '被改坏'
+    bind.theme = 'dark'
+    bind.list.push(99)
+    bind.extra = '不该保留'
+    delete bind.title
+    const ok = mgr.restore()
+    assert(ok, 'getData 模式 restore 成功')
+    assert(bind.title === '原标题', 'getData 模式 restore 还原 bind.title(就地还原保留 reactive 引用)')
+    assert(bind.theme === 'light', 'getData 模式 restore 还原 bind.theme')
+    assert(bind.list.length === 3 && !bind.list.includes(99), 'getData 模式 restore 还原 bind.list(就地清空+重填)')
+    assert(!('extra' in bind), 'getData 模式 restore 删除快照后新增的 key(restoreInPlace 语义)')
+  }
 }

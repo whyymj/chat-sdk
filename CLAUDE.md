@@ -14,7 +14,7 @@
 
 ## Agent 身份
 
-通用「页面操作助手」(规范化 JSON 操作 agent)。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
+通用「JSON 操作助手」(规范化 JSON 操作 agent)。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
 **默认 systemPrompt**:用户不传时,`createChatSdk` 内置 `DEFAULT_SYSTEM_PROMPT`(身份 + 能力概述 + `systemPromptHelpers.reliableWriteRules`);用户传了则完全覆盖(不自动追加 reliableWriteRules,需自行拼入)。`createAgent` 层另有兜底 `'你是一个智能助手。'`(直接用 createAgent 且不传时)。
 **职责分工(重要)**:内置工具用法(read/write/get/set/patch/autoLock/snapshot/query/search/eval 等)由 `usageHints` 中间件按 `toolMode` 自动注入到运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、可改字段含义、业务流程、技能引用),不要重复声明工具语法 —— 升级工具时 examples 不用改、避免与 usageHints 不同步。
 
@@ -32,8 +32,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,418 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,138 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,434 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,125 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 ```
 
 ## 环境配置
@@ -76,8 +76,8 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 
 ### 数据槽操作
 - 集成方声明 `data: { schema, bind, description? }`(单主对象;bind 直连 reactive/普通对象,工具直接读写 bind,不挂 window);工具:`describe/get/set/edit/delete_data` + `snapshot/list/restore_data` + `query/search_data` + `eval_script` + 高层 `read/write`
-- **运行时动态注册**(懒加载组件场景):`sdk.setData(spec)` / `(path)` / `getData()`;`createDataOps` 返回的工具数组上挂不可枚举 `controller`(操作同一 registry 闭包,工具运行时即时生效,无需重 bind);`inspect()`/`verify`(createWriteBackCheck schemas 改 getter 实时取)反映动态增删。动态注册属性不自动进 checkpoint 快照(slotPaths 构造时固定)
-- `set/edit/delete` 仅限注册表内;`set/edit` 按 schema 校验,不合法返回结构化错误(不写入)
+- **运行时替换 data**(懒加载/动态 schema 场景):`sdk.setData({ schema, bind, description? })` 替换整个主数据配置,`sdk.getData()` 读取当前;`createDataOps` 返回的工具数组上挂不可枚举 `controller`(操作同一闭包,工具运行时即时生效,无需重 bind);`inspect()`/`verify`(`createWriteBackCheck` 的 `schemas` + `root` 均改 getter 实时取最新 bind/schema)反映替换。替换后旧快照清空、乐观锁 hash 重置
+- `set/edit/delete` 仅限 schema 声明字段(白名单内);`set/edit` 按 schema 校验,不合法返回结构化错误(不写入)
 - `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append),避免 LLM 重传整个大 JSON;就地写回改子属性不替换根引用 → 兼容 Vue reactive
 - 快照回退:`set/edit/delete` 前自动存快照(per-path 栈);`restore_data` 一键回退
 - **乐观锁(`expectedHash`)+ 冲突人工介入**:`get_data` 返回值附 `hash=xxx`;`set/edit/delete` 传 `expectedHash` 启用乐观锁——若属性在 agent get 之后被外部代码/其他 agent/用户手动改过(hash 不匹配)则触发冲突。集成方传 `createChatSdk({ ... })` 时默认开启人工介入:工具挂起,`sdk.pendingConflict`(响应式 ref)置为冲突信息,内置 ChatDialog 渲染冲突条让用户三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')` 收口,工具继续。headless 集成方可 watch `pendingConflict` 自建 UI。不传 `expectedHash` → 向后兼容直接写(不校验)。`DataOpsOptions.onConflict` 可独立用于 `createDataOps`(不接 ChatDialog 时自行处理)
@@ -123,7 +123,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 
 ### Verify 自检中间件
 - `capabilities:{verify:true}` 开启(默认关,烧 token);agent 返回前跑 `check`,不通过则 feedback 回灌自纠(限 `maxAttempts`)
-- 内置 `createWriteBackCheck()`:扫描写操作读回 + schema 校验;自定义 `verify:{ check: async ({messages,state}) => ({ok, feedback?}) }`
+- 内置 `createWriteBackCheck()`:扫描写操作读回 + schema 校验;读回根对象优先用 `root` 选项(单对象 data 模型传 `bind`/getter,适配 `sdk.setData` 运行时替换),省略则回退 `window`(旧 windowProps 模式向后兼容);自定义 `verify:{ check: async ({messages,state}) => ({ok, feedback?}) }`
 - adversarial 对抗验证(可选):check 通过后 spawn 只读子 agent 找茬
 
 ### Approval 人工确认
@@ -131,7 +131,8 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - 默认关闭,传 `approval` 即启用;headless 集成方监听 `approval_request` 事件自建确认框
 
 ### Checkpoint 会话级回滚
-- `checkpoint: true`:每轮自动存档(对话 + 数据槽 + vfs + todos),异常/改坏时一键回退到上次正常态
+- `checkpoint: true`:每轮自动存档(对话 + 主数据 bind + vfs + todos),异常/改坏时一键回退到上次正常态
+- 单对象 data 模式:`CheckpointDeps.getData` 读 bind 快照,restore 时读当前 bind 就地还原(保留 reactive 引用);getter 适配 `sdk.setData` 运行时替换 bind。叶子 bind(原始类型)无法就地还原,集成方应用对象包裹
 - 区别于 dataOps per-path 精细快照:checkpoint 整体回滚;API `restoreLastCheckpoint()` / LLM 工具 `restore_last_checkpoint` / UI 回退按钮
 
 ## 关键约定与坑
@@ -155,14 +156,14 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),418 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),434 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(24 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),138 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),125 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -212,7 +213,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(418 全过) → `npm run test:e2e`(138 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(434 全过) → `npm run test:e2e`(125 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -304,7 +305,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 418 全过 → `npm run test:e2e` 138 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 434 全过 → `npm run test:e2e` 125 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

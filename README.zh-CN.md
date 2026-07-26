@@ -133,15 +133,15 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `ui` | `boolean \| 'default'` · 默认 `true` | `false` = headless（用 `agent.messages` 自建 UI） |
 | | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
-| | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入）。可选——不传用内置默认（页面操作助手 + `reliableWriteRules`）；传了则完全覆盖 |
-| **页面数据** | `data` | `{path,description,schema}[]` | 注册可被工具读写的 数据槽 + zod schema 校验 |
+| | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入）。可选——不传用内置默认（JSON 操作助手 + `reliableWriteRules`）；传了则完全覆盖 |
+| **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
 | **能力开关** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
 | | `checkpoint` | `boolean \| {maxCheckpoints?,auto?}` · 默认关 | 会话级回滚（`auto` 默认 `true` 每轮存档） |
-| | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck` |
+| | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck`（读回根对象自动取 `data.bind`，适配 `sdk.setData` 运行时替换） |
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · 默认 `auto` | 压缩预设档位 |
@@ -201,7 +201,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # dataOps(注册表+增量编辑+快照)/ dataSlotQuery / fetchDoc
+├── tools/                      # dataOps(单主对象+schema 白名单+增量编辑+快照)/ dataSlotQuery / fetchDoc
 ├── backends/                   # vfs(内存) / storage(IndexedDB+多后端+配额淘汰)
 ├── mcp/client.ts              # MCP 远程工具接入
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -245,12 +245,12 @@ flowchart TD
     CORE --> AGENT[createAgent<br/>ReAct 循环 + 中间件栈]
     AGENT --> MW[中间件栈<br/>usageHints→todos→skills→vfs→summarization<br/>→memory→permissions→checkpoint→approval<br/>→humanConfirm→verify→subagent→用户]
     AGENT --> TOOLS[工具集<br/>dataOps / fetchDoc / vfs / MCP / 用户]
-    TOOLS -->|零桥接| WIN[宿主页面 window<br/>直接读写注册属性]
+    TOOLS -->|直接读写 bind| DATA[主数据 bind<br/>reactive/普通对象<br/>schema 校验 + 白名单]
     AGENT --> LLM[LLM<br/>OpenAI 协议 / 任意 ChatModel]
     SDK --> UI[ChatDialog UI<br/>Vue 打包进库 / 或 headless]
 ```
 
-- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `dataOps`+`fetch`，用 `storage:'memory'`）
+- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `fetch`+`eval_script`，dataOps 主体传 `bind` 即可跑，用 `storage:'memory'`）
 - **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
 - **自研 harness**：不引 LangGraph/langchain 整包，规避浏览器打包阻塞
 
@@ -326,8 +326,8 @@ createChatSdk({
 ## 自测
 
 ```bash
-npm test            # 364 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 120 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 434 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 125 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

@@ -178,28 +178,28 @@ createChatSdk({
 
 ## 6. Capabilities
 
-### 6.1 data slot ops (let the Agent edit your JSON)
+### 6.1 data ops (single main object — let the Agent edit your JSON)
 
 Declare `data`; the Agent reads/writes via tools, validated by schema:
 
 - **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load
-- `describe_data` / `describe_data` / `get_data` / `get_data` (hidden in `simple` mode, merged into `read`)
+- `describe_data` / `list_data_snapshots` / `get_data` (hidden in `simple` mode, merged into `read`)
 - `set_data` / `edit_data` (jsonPath incremental patch) / `delete_data` (hidden in `simple` mode, merged into `write`)
 - `snapshot_data` / `list_data_snapshots` / `restore_data`
 - `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 
 Key points:
-- `set`/`edit`/`delete` are restricted to registered props (scope control); `set`/`edit` validate against schema — invalid → structured error (no write)
+- `set`/`edit`/`delete` are restricted to schema-declared fields (whitelist for ZodObject); `set`/`edit` validate against schema — invalid → structured error (no write)
 - `edit_data` patches by `jsonPath` (set/remove/merge/append) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
 - Snapshots auto-stored before `set`/`edit`/`delete`; `restore_data` rolls back
-- **Zero-bridge**: tool body's `window` = host page's main window (direct)
+- **No `window` dependency**: `data.bind` is any reactive/plain object tools read/write directly; only `eval_script` needs Web Worker (browser)
 
 #### High-level `read`/`write` (2.2+, recommended)
 
 ```ts
-// read: no path → list all operable slots; with path → current value + hash + schema hint
-// Agent: read({}) → "Operable data slots: - page.title: page title ..."
-// Agent: read({ path: 'page.title' }) → 'page.title = "Home" (hash=a1b2)\nformat: page title'
+// read: no jsonPath → list main data + description; with jsonPath → current value + hash
+// Agent: read({}) → "Main data: ... (hash=a1b2)"
+// Agent: read({ jsonPath: 'title' }) → 'title = "Home" (hash=a1b2)'
 
 // write: three intents
 // ① full set (value is a JSON object, no stringify needed)
@@ -470,7 +470,7 @@ The SDK core is **framework-agnostic JS** and runs in Node.js (headless mode) as
 
 **Server config essentials**:
 - `ui: false` — headless, no ChatDialog (server has no DOM)
-- `capabilities: { dataOps: false, fetch: false }` — disable browser-dependent tools (dataOps needs `window`; `fetch_document` needs `fetch` — Node 18+ has global fetch, can keep)
+- `capabilities: { fetch: false }` — disable browser-dependent tools; dataOps body (`read`/`write`/`get`/`edit`/`delete`/`query`/`search`) works in Node (pass any `data.bind` object, no `window` needed); only `eval_script` needs Web Worker (disable via `capabilities:{dataOps:false}` if unused)
 - `storage: 'memory'` — memory backend (server has no IndexedDB/localStorage); omit for non-persistent
 - Inject business tools via `tools` (`defineTool`); drive via `send`/`stream`
 
@@ -498,10 +498,10 @@ const reply = await sdk.send('What is 3 plus 5?')
 console.log(reply) // AI calls add → "3 + 5 = 8"
 ```
 
-**Server-available**: custom tools / `fetch_document` (Node 18+) / subagents / verify / vfs / context compression / memory / onEvent
-**Server-unavailable**: dataOps (needs `window`) / ChatDialog UI (needs DOM) / IndexedDB·localStorage·sessionStorage (use `memory`)
+**Server-available**: custom tools / `fetch_document` (Node 18+) / subagents / verify / vfs / context compression / memory / onEvent / dataOps body (`read`/`write`/`get`/`edit`/`delete`/`query`/`search` — pass any `data.bind` object, no `window` needed)
+**Server-unavailable**: ChatDialog UI (needs DOM) / `eval_script` (needs Web Worker) / IndexedDB·localStorage·sessionStorage (use `memory`)
 
-> `eval_script` relies on Web Worker (part of dataOps, disabled). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
+> `eval_script` relies on Web Worker (part of dataOps, disable via `capabilities:{dataOps:false}`). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
 
 ## 8. Framework-agnostic / CDN
 

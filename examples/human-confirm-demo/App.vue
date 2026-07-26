@@ -19,7 +19,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, z, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
-// 宿主页面可被 Agent 操作的配置(普通对象,非 reactive → 靠 tick 重渲染预览)
+// 可被 Agent 操作的主数据配置(普通对象,非 reactive → 靠 tick 重渲染预览)
 interface AppConfig {
   theme: 'fresh-blue' | 'night-purple' | 'warm-orange'
   density: 'compact' | 'cozy' | 'spacious'

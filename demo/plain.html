@@ -52,7 +52,7 @@
         model: 'deepseek-chat',
       },
       systemPrompt:
-        '你是页面操作助手。主数据(挂 window.app)上注册了可改字段(theme/count),按用户意图改对应字段即可。',
+        '你是 JSON 操作助手。集成方声明了主数据对象(theme/count 字段),按用户意图用工具读写对应字段即可。',
       data: {
         schema: z.object({
           theme: z.enum(['light', 'dark']).describe('主题'),

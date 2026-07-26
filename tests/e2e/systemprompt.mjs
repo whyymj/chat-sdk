@@ -15,7 +15,7 @@ export async function run() {
     const info = sdk.inspect()
     assert(typeof info.systemPrompt === 'string' && info.systemPrompt.length > 0, 'inspect().systemPrompt 为非空字符串')
     assert(/reliableWriteRules|改前先|增量 patch|可靠写入/.test(info.systemPrompt), '默认 systemPrompt 含 reliableWriteRules 关键词')
-    assert(/页面操作助手/.test(info.systemPrompt), '默认 systemPrompt 含「页面操作助手」身份')
+    assert(/JSON 操作助手/.test(info.systemPrompt), '默认 systemPrompt 含「JSON 操作助手」身份')
     sdk.unmount()
   }
 
@@ -57,7 +57,7 @@ export async function run() {
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
     assert(sp.startsWith('你是商品页编辑助手。'), '自定义 systemPrompt 保留(拼在前)')
-    assert(/可靠写入规则|改任何属性前|增量改|write 的 patch/.test(sp), '拼接后含 reliableWriteRules(用户自行拼入)')
+    assert(/可靠写入规则|改任何字段前|增量改|write 的 patch/.test(sp), '拼接后含 reliableWriteRules(用户自行拼入)')
     sdk.unmount()
   }
 

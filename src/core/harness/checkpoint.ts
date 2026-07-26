@@ -41,8 +41,16 @@ export interface CheckpointManager {
 }
 
 export interface CheckpointDeps {
-  /** 注册的 数据槽 path 列表(整体快照这些根) */
-  slotPaths: string[]
+  /**
+   * 主数据读回调(单对象 data 模型):save 时读 bind 快照,restore 时写回 bind。
+   * 优先于 `slotPaths`(旧 windowProps 模式:从 window 按 path 读,零桥接)。
+   * 用 getter 形式 `() => liveData()?.bind` 适配 sdk.setData 运行时替换 bind。
+   */
+  getData?: () => unknown
+  /** 主数据写回回调(单对象 data 模型):restore 时把快照写回当前 bind(就地还原保留 reactive 引用) */
+  restoreData?: (snap: unknown) => void
+  /** 注册的 数据槽 path 列表(旧 windowProps 模式:从 window 按 path 整体快照);data 模式用 getData 即可,此项可省略或传 [] */
+  slotPaths?: string[]
   /** vfs 工作区(回滚时清空重填) */
   vfsStore: VfsStore
   /** todos 中间件(回滚时 reset) */
@@ -128,7 +136,13 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
     save(label) {
       const messages = trimTrailingEmptyAssistant(deps.messages)
       const windowVals: Record<string, unknown> = {}
-      for (const p of deps.slotPaths) windowVals[p] = clone(getByPath(window, p))
+      if (deps.getData) {
+        // 单对象 data 模式:快照主数据 bind(键 '' 表示整体)
+        windowVals[''] = clone(deps.getData())
+      } else {
+        // 旧 windowProps 模式:从 window 按 path 读(零桥接)
+        for (const p of deps.slotPaths ?? []) windowVals[p] = clone(getByPath(window, p))
+      }
       const cp: Checkpoint = {
         id: nextId++,
         label,
@@ -157,8 +171,17 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
       if (!cp) return false
       // 1. 对话历史:splice 替换内容(保留同一响应式数组引用,UI 自动更新)
       deps.messages.splice(0, deps.messages.length, ...clone(cp.messages))
-      // 2. 数据槽注册项:就地还原(保留 reactive 容器引用)
-      for (const [p, v] of Object.entries(cp.windowVals)) restorePath(p, clone(v))
+      // 2. 主数据:单对象 data 模式优先用 getData() 拿当前 bind + restoreInPlace 就地还原(保留 reactive 引用);否则回退 window path(旧模式)
+      if (deps.getData) {
+        const snap = cp.windowVals['']
+        if (snap !== undefined) {
+          const live = deps.getData()
+          if (live != null && typeof live === 'object') restoreInPlace(live as Record<string, unknown> | unknown[], clone(snap))
+          // 叶子 bind(原始类型)无法就地还原:集成方应用对象包裹(同 verify/dataOps LEAF_BIND 约定)
+        }
+      } else {
+        for (const [p, v] of Object.entries(cp.windowVals)) restorePath(p, clone(v))
+      }
       // 3. vfs:清空重填
       const files = deps.vfsStore.files
       for (const k of Object.keys(files)) delete files[k]

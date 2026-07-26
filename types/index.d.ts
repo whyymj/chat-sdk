@@ -231,7 +231,13 @@ export interface VerifyMiddlewareOptions {
 export interface WriteBackCheckOptions {
   /** name → zod schema(由 createChatSdk 从 data 构造注入,键 '' 代表主数据);省略则只校验「读回非空」 */
   schemas?: Record<string, any>;
-  /** 读 window 的根对象(默认 globalThis.window) */
+  /**
+   * 读回的根对象。优先于 `window`。
+   * - 单对象 data 模式:传 bind 对象(或 getter `() => liveData()?.bind`,适配 sdk.setData 运行时替换)
+   * - 旧 windowProps 模式:省略则用 `window`(默认 globalThis.window)
+   */
+  root?: unknown | (() => unknown);
+  /** 读 window 的根对象(旧 windowProps 模式;data 模式应传 root)。默认 globalThis.window */
   window?: unknown;
 }
 

@@ -123,5 +123,28 @@ export async function run(ctx: TestCtx): Promise<void> {
     })
     const fb9 = r.feedback
     assert(r.ok === false && !!fb9 && /读回为空/.test(fb9), 'edit 在更早轮、最近是 get → 仍验证该 edit')
+
+    // 10. root 选项优先于 window:单对象 data 模式 bind 不挂 window,经 root 读回
+    let bind2: any = { theme: 'dark', count: 0 }
+    check = createWriteBackCheck({ root: bind2, schemas })
+    r = await check({ messages: [mkAi([{ name: 'edit_data', args: { jsonPath: 'theme', op: 'set' } }])], state: createState() })
+    assert(r.ok === true, 'root 选项优先于 window:edit 后读回符合 schema → ok')
+
+    // 11. root getter:适配 sdk.setData 运行时替换 bind(每次 check 取最新)
+    let liveBind: any = { theme: 'dark', count: 0 }
+    check = createWriteBackCheck({ root: () => liveBind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'edit_data', args: { jsonPath: 'theme', op: 'set' } }])], state: createState() })
+    assert(r.ok === true, 'root getter:edit 后读回符合 schema → ok')
+    // 替换 bind 后,旧 bind 的写不在新 bind 上 → 读回为空 → feedback(验证 getter 取的是最新 bind)
+    liveBind = { theme: undefined, count: 0 }
+    r = await check({ messages: [mkAi([{ name: 'edit_data', args: { jsonPath: 'theme', op: 'set' } }])], state: createState() })
+    const fb11 = r.feedback
+    assert(r.ok === false && !!fb11 && /读回为空/.test(fb11), 'root getter 替换 bind 后:旧写在新 bind 上读回为空 → feedback')
+
+    // 12. root 省略 → 回退 window(旧 windowProps 模式向后兼容)
+    const w: any = { theme: 'dark', count: 0 }
+    check = createWriteBackCheck({ window: w, schemas })
+    r = await check({ messages: [mkAi([{ name: 'edit_data', args: { jsonPath: 'theme', op: 'set' } }])], state: createState() })
+    assert(r.ok === true, 'root 省略 → 回退 window(向后兼容)')
   }
 }

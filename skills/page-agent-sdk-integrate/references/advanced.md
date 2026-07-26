@@ -1,77 +1,73 @@
-# Advanced examples — custom tools, skills, subagents, MCP, dynamic dataSlots
+# Advanced examples — custom tools, skills, subagents, MCP, dynamic schema
 
 Detailed, copy-paste examples for the extensibility surfaces. Read the section matching the user's need.
 
-## 0. Dynamic dataSlots (lazy-loaded components) — `sdk.addDataSlot` / `removeDataSlot`
+## 0. Dynamic schema (lazy-loaded / runtime swap) — `sdk.setData` / `getData`
 
-When components are lazy-loaded with **different schemas each**, don't declare all `dataSlots` upfront. Register them at runtime as components mount/unmount. The agent's data slot tools pick up new registrations immediately (no agent rebuild).
+When the page schema changes dynamically (lazy-loaded components with different structures), swap the whole main data config at runtime — tools pick up the new bind/schema immediately, no agent rebuild.
 
 ```ts
 const sdk = createChatSdk({
   container: '#chat', llm: { ... },
-  systemPrompt: '你是页面助手,按组件类型操作数据槽.app.components.<id>。',
-  dataSlots: [
-    // statically-declared ones (always present)
-    { path: 'app.config', description: '全局配置', schema: z.record(z.any()) },
-  ],
+  systemPrompt: '你是 JSON 操作助手,按当前 schema 操作主数据。',
+  data: { schema: initialSchema, bind: initialObj, description: '初始数据' },
 }).mount()
 
-// 组件懒加载时动态注册其 schema(结构各异)
-function onComponentMount(comp: { id: string; type: string; schema: z.ZodType }) {
-  sdk.addDataSlot({ path: `app.components.${comp.id}`, description: `${comp.type} 组件`, schema: comp.schema })
-  // 立即生效:AI 现在能 write 这个 path,按其 schema 校验
+// later: swap to a different schema + bind (lazy-loaded / dynamic)
+function onSchemaChange(newConfig: { schema: z.ZodType; bind: any; description?: string }) {
+  sdk.setData({
+    schema: newConfig.schema,    // new zod schema (validation + field hints auto-injected)
+    bind: newConfig.bind,        // new reactive/plain object
+    description: newConfig.description,
+  })
+  // 立即生效:AI 现在能 write newConfig.bind,按其 schema 校验
 }
 
-// 组件卸载时移除(快照栈一并清理)
-function onComponentUnmount(id: string) {
-  sdk.removeDataSlot(`app.components.${id}`)
-}
-
-// 查看当前所有注册项(反映动态增删)
-const current: DataSlotSpec[] = sdk.listDataSlots()
+// 查看当前配置(反映运行时 swap)
+const current: DataConfig | undefined = sdk.getData()
 ```
 
 Notes:
-- `addDataSlot` 覆盖同名 path 时保留旧快照栈;按新 schema 校验。
-- 动态注册的属性**不自动纳入 checkpoint 快照**(checkpoint 的 slotPaths 在构造时固定);如需回滚动态组件,自行管理或重建。
-- `inspect().dataSlots` 与 `verify`(默认 `createWriteBackCheck`)均反映动态注册的最新 schemas(verify 每次 check 实时取 `listDataSlots()`)。
-- `capabilities.dataSlotOps:false` 时 `addDataSlot`/`removeDataSlot` 为 no-op(并 warn)。
+- `setData` replaces the whole config; old snapshots cleared & optimistic-lock hash reset.
+- `inspect().data` 与 `verify`(默认 `createWriteBackCheck`)均反映 `setData` 后的最新 schema/bind(verify 每次 check 实时取 `getData()`)。
+- `capabilities.dataOps:false` 时 `setData`/`getData` 仍可调用(仅替换配置,工具不暴露);工具调用为 no-op。
+- `summarization` 压缩时自动注入当前 `getData()` 的 description 进摘要 system 消息,LLM 不会基于过时记忆操作旧 schema。
 
-**完整可运行示例**:`examples/dynamic-demo/`(dev 启动后访问 `/examples/dynamic-demo/`)—— 演示加载/卸载结构各异的组件(banner/card/stat/chart),挂载即 `addDataSlot` 注册其 schema,AI 立即可按各自 schema 操作,卸载即 `removeDataSlot`;右侧实时显示 `sdk.listDataSlots()` 反映动态增删。
+**完整可运行示例**:`examples/dynamic-demo/`(dev 启动后访问 `/examples/dynamic-demo/`)—— 演示运行时 `setData` 切换不同 schema 的组件数据,AI 立即可按新 schema 操作。
 
 ### 动态场景下「压缩后不丢信息」的保障(内置,无需额外配置)
 
-动态组件随时增删,长会话压缩后 LLM 可能基于过时记忆操作已卸载的组件、或不知道新组件已注册。SDK 内置两道保障:
+schema 随时 swap,长会话压缩后 LLM 可能基于过时记忆操作旧 schema。SDK 内置两道保障:
 
-- **A. 压缩时注入注册表快照**:`summarization` 中间件压缩 older 轮次时,自动把当前 `listDataSlots()` 的 `path + description` 作为一段附进摘要 system 消息(不进压缩)。LLM 即便忘了历史 `describe`,每轮仍看得到「当前有哪些可操作 path」,不会再去操作已卸载的组件。`dataSlotOps` 关闭时返回空,无影响。
-- **C. preserveLastToolResults**:`contextOptions.preserveLastToolResults`(默认 `['describe_data_slot','list_data_slots']`)指定这些工具的步骤 `result` 在跨轮摘要时额外保留摘要片段进 summaryMsg。即便 older 轮被摘要,关键字段说明仍在摘要里,LLM 不必反复 `describe`。设为 `[]` 关闭。
+- **A. 压缩时注入数据描述**:`summarization` 中间件压缩 older 轮次时,自动把当前 `getData()` 的 `description` 作为一段附进摘要 system 消息(不进压缩)。LLM 即便忘了历史 `describe`,每轮仍看得到「当前主数据是什么」,不会操作过时 schema。`dataOps` 关闭时返回空,无影响。
+- **C. preserveLastToolResults**:`contextOptions.preserveLastToolResults`(默认 `['describe_data','read']`)指定这些工具的步骤 `result` 在跨轮摘要时额外保留摘要片段进 summaryMsg。即便 older 轮被摘要,关键字段说明仍在摘要里,LLM 不必反复 `describe`。设为 `[]` 关闭。
 
 ```ts
 // 默认即开启 A + C;如需关闭或自定义:
 createChatSdk({
   contextOptions: {
     preserveLastToolResults: [],  // 关闭 C(不保留工具结果摘要)
-    // getRegisteredSlots 由 SDK 内部注入(来自 sdk.listDataSlots),无需手动传
+    // getRegisteredData 由 SDK 内部注入(来自 sdk.getData),无需手动传
   },
   // ...
 })
 ```
 
-- **B. 写操作返回附当前可操作 path 列表**:`set`/`edit`/`delete` 成功返回末尾自动附 `(当前可操作 path: a, b, c)`,LLM 写完即知全貌,多组件批量场景减少 `list` 调用。超过 8 项或过长时只报数量,避免提示过长。
+- **B. 写操作返回附当前可操作字段列表**:`set`/`edit`/`delete` 成功返回末尾自动附 `(当前可操作字段: a, b, c)`,LLM 写完即知全貌,减少 `describe` 调用。超过 8 项或过长时只报数量,避免提示过长。
 - **D. `systemPromptHelpers.reliableWriteRules`**:导出的标准化「可靠写入规则」片段,建议拼进 `systemPrompt`:
 
 ```ts
 import { systemPromptHelpers } from 'page-agent-sdk'
 createChatSdk({
-  systemPrompt: `你是页面助手。\n${systemPromptHelpers.reliableWriteRules}`,
+  systemPrompt: `你是 JSON 操作助手。\n${systemPromptHelpers.reliableWriteRules}`,
   // ...
 })
 ```
-内容:改前先 `get` 读真实值、动态场景先 `list`、字段以 `describe` 为准、写错看校验错误重试、优先 `edit` 增量 patch。避免集成方忘了写这些元规则导致 LLM 凭记忆瞎改。
+内容:改前先 `read` 读真实值、字段以 `describe` 为准、写错看校验错误重试、优先 `edit` 增量 patch。避免集成方忘了写这些元规则导致 LLM 凭记忆瞎改。
 
 ## 1. Custom tools (`defineTool`)
 
-Custom tools extend the agent beyond built-in `dataSlotOps`/`fetch`. Use them to expose your product's API to the AI.
+Custom tools extend the agent beyond built-in `dataOps`/`fetch`. Use them to expose your product's API to the AI.
 
 ### Minimal
 
@@ -99,31 +95,31 @@ const updatePrice = defineTool({
   schema: z.object({ sku: z.string(), price: z.number().positive() }),
   handler: async ({ sku, price }) => {
     const ok = await api.setPrice(sku, price)
-    if (!ok) return toolError({ path: sku, code: 'NOT_FOUND', message: `SKU ${sku} 不存在` })
+    if (!ok) return toolError({ code: 'NOT_FOUND', message: `SKU ${sku} 不存在` })
     return `已更新 ${sku} 价格为 ${price}`
   },
 })
 ```
 
-### Coexisting with dataSlotOps
+### Coexisting with dataOps
 
-Mix custom tools with built-in data slot tools:
+Mix custom tools with built-in data tools:
 
 ```ts
 createChatSdk({
   container: '#chat', llm: { ... },
-  dataSlots: [{ path: 'app.config', description: '配置', schema: z.record(z.any()) }],
-  tools: [lookupOrder, updatePrice],   // custom + built-in dataSlotOps together
+  data: { schema: z.object({ config: z.record(z.any()) }), bind: { config: {} } },
+  tools: [lookupOrder, updatePrice],   // custom + built-in dataOps together
 }).mount()
 ```
 
-### Pure custom-tool agent (no dataSlotOps)
+### Pure custom-tool agent (no dataOps)
 
 ```ts
 createChatSdk({
   container: '#chat', llm: { ... },
   tools: [lookupOrder, updatePrice],
-  capabilities: { dataSlotOps: false, fetch: false },   // drop built-ins
+  capabilities: { dataOps: false, fetch: false },   // drop built-ins
 }).mount()
 ```
 
@@ -205,7 +201,7 @@ createChatSdk({
     {
       id: 'reviewer',
       description: '审查专家:检查代码/配置的安全与性能问题',
-      tools: ['read', 'search_data_slot'],
+      tools: ['read', 'search_data'],
       systemPrompt: '你是审查专家,只报告问题不改数据。',
       temperature: 0.1,
     },
@@ -270,7 +266,7 @@ createChatSdk({
   container: '#chat',
   llm: { apiKey, baseUrl, model },
   systemPrompt: '...',
-  dataSlots: [{ path: 'app.data', description: '...', schema: z.record(z.any()) }],
+  data: { schema: z.object({ data: z.record(z.any()) }), bind: { data: {} } },
   tools: [lookupOrder, updatePrice],          // custom tools
   skills: [apiDesignSkill, brandSkill],         // progressive skills
   subagents: [{ id: 'researcher', description: '...', tools: ['fetch_document'] }],  // pre-declared

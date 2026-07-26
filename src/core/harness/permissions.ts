@@ -1,10 +1,10 @@
 /**
  * Permissions 中间件 —— 声明式 scope 白名单(first-match-wins,默认 allow)
  *
- * 对齐 Deep Agents 的 permissions/enforce.ts。本期默认不启用(全 window 无审批),
+ * 对齐 Deep Agents 的 permissions/enforce.ts。本期默认不启用(主数据全开放无审批),
  * 保留 createChatSdk({ permissions }) 收紧口子。
  *
- * 仅对 window/vfs 工具生效:按工具的 path 参数作为 scope,匹配 glob 规则。
+ * 仅对主数据/vfs 工具生效:按工具的 `jsonPath` 参数作为 scope(整体操作未传 jsonPath 时不校验,由 schema 白名单兜底),匹配 glob 规则。
  */
 import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
 
@@ -12,7 +12,7 @@ export type PermissionOp = 'read' | 'write'
 
 export interface PermissionRule {
   operations: PermissionOp[]
-  /** glob 模式,匹配工具的 path 参数 */
+  /** glob 模式,匹配工具的 jsonPath 参数(单对象 data 模型) */
   scopes: string[]
   mode: 'allow' | 'deny'
 }

@@ -23,7 +23,7 @@ flowchart TD
     State["<b>状态 / 数据</b><br/>HarnessState · 主数据 · vfs store · 快照栈 · pendingConflict"]
     UI["<b>UI</b><br/>ChatDialog(对话框+冲突条+确认条) · DebugDrawer"]
     Entry --> Core --> MW --> Tools --> State
-    Tools -. "直接读写(零桥接,无 iframe)" .-> WP
+    Tools -. "直接读写 bind(reactive/普通对象,不挂 window)" .-> WP
     UI -. "响应式绑定 + pendingConflict" .-> State
   end
 ```
@@ -220,11 +220,11 @@ flowchart LR
 | 维度 | 设计 |
 |---|---|
 | **Agent 核心** | 自研 ReAct + 中间件契约(对齐 Deep Agents,零 LangGraph 依赖)+ 格式自纠 + verify 自纠 |
-| **数据操作** | schema 校验 + 增量编辑 + 增量编辑(jsonPath)+ 按路径读 + 快照回退 + **乐观锁(expectedHash)+ 冲突人工介入** + 大结果外存 vfs |
+| **数据操作** | 单主对象 `data:{schema,bind}`;schema 校验 + 增量编辑(jsonPath)+ 按路径读 + 快照回退 + **乐观锁(expectedHash)+ 冲突人工介入** + **schema 形状自动白名单**(ZodObject 顶层声明字段隐藏未声明项)+ 高层 `read`(fields/depth 裁剪)+ `write`(批量 patches 原子)+ 大结果外存 vfs |
 | **能力扩展** | 中间件(todos/skills/vfs/summarization/memory/permissions/verify/subagent/usageHints)+ 工具(`defineTool`)+ 技能(`defineSkill` 渐进披露) |
 | **记忆** | 纯内存会话级;summarization 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回);`maxMemoryRounds` 防长会话 OOM |
 | **持久化** | 多后端(IndexedDB/WebStorage/Memory)+ 多 agent 隔离 + 全局配额 LRU 淘汰 + 降级内存 |
-| **响应式** | `bind = reactive() 或普通对象(集成方按需挂 window)`;set 子属性不替换引用 → 页面实时更新 |
+| **响应式** | `bind = reactive() 或普通对象`(工具直接读写 bind,不挂 window;普通对象经 `onEvent('data_change')` 或 `:key` 重渲染);set 子属性不替换引用 → 页面实时更新 |
 | **鲁棒性** | 模型调用重试(网络/429/5xx)+ 停止生成(abort 保留 partial)+ 出错重试 + 冲突挂起自动收口 |
 | **交付** | 框架无关 SDK(vue 打包进)+ 命令式 `mount` + headless(`ui:false`)+ 纯 HTML 集成(`demo/plain.html`) |
 

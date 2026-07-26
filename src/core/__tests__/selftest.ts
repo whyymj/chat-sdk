@@ -33,7 +33,7 @@ import { run as run_sec_26 } from './modules/sec-26'
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
 
-// mock 宿主页面 window(dataOps 工具函数体的 window 解析到此)
+// mock 全局 window(供 verify/checkpoint 旧 windowProps 模式测试 fallback 读;单对象 data 模型的 dataOps 不依赖 window,bind 由 createDataOps({bind}) 传入)
 ;(globalThis as any).window = { app: { theme: 'light', count: 0 } }
 
 let passed = 0
