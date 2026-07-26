@@ -275,12 +275,12 @@ export function dataSlotPlugin(): CapabilityPlugin {
 
     hooks: {
       registeredSlots: () => controller.list().map((p) => ({ path: p.path, description: p.description })),
-      preserveToolResults: ['describe_data_slot', 'list_data_slots'],
+      preserveToolResults: ['read'],
       writeBackSchemas: () => Object.fromEntries(controller.list().map((p) => [p.path, p.schema])),
       checkpointPaths: () => (ctx.options.dataSlots ?? []).map((w) => w.path),
-      readonlyTools: ['get_data_slot', 'get_slot_paths', 'list_data_slots', 'describe_data_slot'],
+      readonlyTools: ['read', 'get_slot_paths', 'search_data_slot'],
       usageHint: (ctx) => ctx.capabilities.dataSlotOps && ctx.options.dataSlots?.length
-        ? '修改 JSON 前先 get_data_slot 拿 hash,写入传 expectedHash 防覆盖;误改可用 restore_data_snapshot 回退。'
+        ? '修改前先 read 拿当前值(含 hash);write 自动乐观锁防覆盖(无需手传 expectedHash);误改可用 restore_data_snapshot 回退。'
         : undefined,
     },
   }

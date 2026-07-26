@@ -16,7 +16,7 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
    */
   pageBuilder: {
     systemPrompt:
-      '你是页面构建助手。流程:get_data_slot 读取当前页面结构 → set_data_slot / edit_data_slot 修改属性 → 页面实时更新。多步任务先用 write_todos 拆解,逐步推进。',
+      '你是页面构建助手。按用户意图读写 window 上注册的页面属性,改完页面实时更新。',
   },
 
   /**
@@ -52,11 +52,32 @@ export const systemPromptHelpers = {
    */
   reliableWriteRules: [
     '【可靠写入规则】',
-    '1. 改任何属性前,先用 get_data_slot 读其当前真实值,基于真实值改,不要凭记忆;',
-    '2. 若不确定可操作哪些属性,先 list_data_slots 查看当前注册项(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);',
-    '3. 不确定某属性字段结构时,先 describe_data_slot 看其说明,字段以 describe 返回为准;',
+    '1. 改任何属性前,先用 read({ path }) 读其当前真实值,基于真实值改,不要凭记忆;',
+    '2. 若不确定可操作哪些属性,先 read() 不传 path 查看当前注册项(动态组件场景下注册表会增删,以工具返回为准,勿凭旧记忆);',
+    '3. 不确定某属性字段结构时,read({ path }) 返回含格式说明,字段以返回为准;',
     '4. 写入若被 schema 校验拒绝(返回结构化错误含字段名与期望类型),按错误修正后重试,不要放弃;',
-    '5. 优先用 edit_data_slot 增量 patch(只发改动),避免 set 整体重传大 JSON 被截断。',
+    '5. 优先用 write 的 patch 增量改(只发改动,如 write({ path, value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断。',
   ].join('\n'),
 } as const
+
+/**
+ * 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底。
+ * 导出供集成方预览 io 契约将注入的提示,亦供单测。
+ */
+export function extractSchemaHint(schema: any): string {
+  if (!schema) return ''
+  try {
+    const shape = schema.shape ?? (schema._def?.shape ? (typeof schema._def.shape === 'function' ? schema._def.shape() : schema._def.shape) : null)
+    if (shape && typeof shape === 'object') {
+      const fields = Object.entries(shape).map(([k, v]: [string, any]) => {
+        const desc = v?.description || ''
+        const typeName = v?._def?.typeName || ''
+        return `- ${k}${desc ? `: ${desc}` : typeName ? ` (${typeName})` : ''}`
+      })
+      return fields.join('\n')
+    }
+  } catch { /* ignore */ }
+  return schema?.description || '(用 read 查看实际形状)'
+}
+
 

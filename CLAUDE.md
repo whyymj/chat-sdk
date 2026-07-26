@@ -16,6 +16,7 @@
 
 通用「页面操作助手」(规范化 JSON 操作 agent)。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
 **默认 systemPrompt**:用户不传时,`createChatSdk` 内置 `DEFAULT_SYSTEM_PROMPT`(身份 + 能力概述 + `systemPromptHelpers.reliableWriteRules`);用户传了则完全覆盖(不自动追加 reliableWriteRules,需自行拼入)。`createAgent` 层另有兜底 `'你是一个智能助手。'`(直接用 createAgent 且不传时)。
+**职责分工(重要)**:内置工具用法(read/write/get/set/patch/autoLock/snapshot/query/search/eval 等)由 `usageHints` 中间件按 `toolMode` 自动注入到运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、可改字段含义、业务流程、技能引用),不要重复声明工具语法 —— 升级工具时 examples 不用改、避免与 usageHints 不同步。
 
 ## 技术栈
 
@@ -31,8 +32,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,384 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,125 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / 错误场景)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,418 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,138 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / dataSlots bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 ```
 
 ## 环境配置
@@ -80,6 +81,10 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - `edit_data_slot` 按 `jsonPath` 发 patch(set/remove/merge/append),避免 LLM 重传整个大 JSON;就地写回改子属性不替换根引用 → 兼容 Vue reactive
 - 快照回退:`set/edit/delete` 前自动存快照(per-path 栈);`restore_data_snapshot` 一键回退
 - **乐观锁(`expectedHash`)+ 冲突人工介入**:`get_data_slot` 返回值附 `hash=xxx`;`set/edit/delete` 传 `expectedHash` 启用乐观锁——若属性在 agent get 之后被外部代码/其他 agent/用户手动改过(hash 不匹配)则触发冲突。集成方传 `createChatSdk({ ... })` 时默认开启人工介入:工具挂起,`sdk.pendingConflict`(响应式 ref)置为冲突信息,内置 ChatDialog 渲染冲突条让用户三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')` 收口,工具继续。headless 集成方可 watch `pendingConflict` 自建 UI。不传 `expectedHash` → 向后兼容直接写(不校验)。`DataSlotOpsOptions.onConflict` 可独立用于 `createDataSlotOps`(不接 ChatDialog 时自行处理)
+- **高层读写工具 `read`/`write`(2.2+)**:合并 list/describe/get 与 set/edit/delete + 自动乐观锁(`autoLock` 默认 true,用 LLM 最后 read 的 hash)+ 自动快照。`read({path?})` 列出/读取;`write({path, value?, patch?, del?})` 三意图(整体 set 直传 object / 增量 patch / 删除)。降低 LLM 认知负担(13 → 2 入口)。`createDataSlotOps` 返回工具数 13 → 15
+- **`toolMode` 工具呈现模式**(`simple` 默认 / `advanced` / `minimal`):simple 主推 read/write 隐藏底层 6 个(共 9 数据槽工具),advanced 全暴露(15),minimal 只 read/write(2)。`filterByToolMode(tools, mode)` 纯函数筛选(已导出);`usageHints` 按 toolMode 注入提示
+- **`interceptors` 读写拦截器**:`read(path, value)` 脱敏/派生(只改 LLM 看到的值),`write(path, payload, current)` 转换/审计/拒绝(返回 `{error}`)。透传给 `createDataSlotOps`。`input(input)`/`output(json)` 在 agent IO 入口/出口预处理/后处理(send 入口改写 user message / 返回前改写 reply)
+- **`dataSlots` 统一配置**(3.0+):`dataSlots: [{ path, description?, schema, bind? }]`。`schema` 字段的 `.describe()` 经 `extractSchemaHint`(已导出)提取注入 systemPrompt「可操作属性」段;`bind` 是可选字段,传 reactive/普通对象自动挂 `window[path] = bind`(支持点号 path) + 注册为 dataSlot。底层走注册表 + schema 校验 + 乐观锁,不绕过安全边界。LLM write → 响应式自动更新;集成方改对象 → LLM read 可见。不传 `bind` 时集成方自行挂 `window[path]`(适合对象已存在 / 动态注册 / 字段白名单读)
 - 大结果外存:工具结果 > 6000 字符转存 vfs,只留预览 + `vfs_read`/`vfs_grep` 引用
 - **零桥接**:工具函数体 `window` = 宿主页面主 window(直接改);审计:set/edit/delete/restore 记日志
 - 详细工具语义/JSONPath 子集/sandbox 禁用列表/错误码见 `src/core/tools/dataSlotOps.ts` 与 `dataSlotQuery.ts`
@@ -142,20 +147,20 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间件或工具注入**,勿硬编码进 `createAgent`。
 
 ### 数据槽工具零桥接
-工具函数体 `window` = 宿主页面主 window。改 window 必经 `set_data_slot`(范围 + 校验)。
+工具函数体 `window` = 宿主页面主 window。改 window 必经 `write`(simple 默认;advanced 模式底层 `set/edit/delete_data_slot`),范围 + schema 校验 + 自动快照 + 自动乐观锁。
 
 ### 测试流程
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),384 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),418 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(24 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataSlotOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),120 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),138 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataSlotOps 关闭 no-op)
@@ -172,12 +177,12 @@ npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),120 项断言
 npm run dev         # 启动(端口 3000;被占自动换)
 ```
 逐个 demo 验证(`/examples/<demo>/`):
-- `page-demo` 自举低代码(reactive 绑定 + dataSlots + edit jsonPath)
-- `nested-demo` 嵌套树(递归 schema + 人工确认 + checkpoint)
-- `dynamic-demo` 动态注册(懒加载组件 + addDataSlot/removeDataSlot + onEvent)
+- `page-demo` 自举低代码(3.0:reactive 经 `dataSlots` `bind` 字段直连 + schema `.describe()` 自动注入 + write patch 增量)
+- `nested-demo` 嵌套树(递归 schema + 人工确认 + checkpoint;nested key `Editor.PageInfo` 用 `dataSlots` 细粒度注册,不传 bind)
+- `dynamic-demo` 动态注册(懒加载组件 + addDataSlot/removeDataSlot + onEvent;动态场景不用静态 bind)
 - `subagent-demo` 子 agent 并行编排
 - `mcp-demo` MCP 远程工具(需 `npm run mcp:mock`)
-- `human-confirm-demo` / `planner-demo` / `toolsets-demo`
+- `human-confirm-demo`(3.0:`dataSlots` bind + schema)/ `planner-demo`(3.0:`dataSlots` bind + schema + 预声明子 agent)/ `toolsets-demo`(手动 toolset,关 dataSlotOps 自动装配,不用 bind)
 - `demo/plain.html` 框架无关 CDN 集成(importmap + esm.sh)
 
 #### 4. 运行时手动验证(依赖 LLM/server)
@@ -204,7 +209,7 @@ rg -o "createChatSdk|addDataSlot|systemPromptHelpers|reliableWriteRules" /tmp/sd
 | 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(380 全过) → `npm run test:e2e`(120 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(418 全过) → `npm run test:e2e`(138 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -227,7 +232,7 @@ rg -o "createChatSdk|addDataSlot|systemPromptHelpers|reliableWriteRules" /tmp/sd
 
 **最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
 
-**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(380/120)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(413/133)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
 
 **自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
 
@@ -242,7 +247,7 @@ createChatSdk({
   contextPreset: 'auto',
   subagent: { allowedTools: [...] },
   capabilities: { verify: true }, verify: { maxAttempts: 2 },
-  approval: { tools: ['set_data_slot', 'edit_data_slot'] },
+  approval: { tools: ['write'] },
   checkpoint: true,
   middleware: [...],
 }).mount()
@@ -296,7 +301,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 380 全过 → `npm run test:e2e` 120 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 418 全过 → `npm run test:e2e` 138 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

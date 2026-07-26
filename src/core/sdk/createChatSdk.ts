@@ -39,12 +39,12 @@ import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfi
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
-import { systemPromptHelpers } from '../presets'
+import { systemPromptHelpers, extractSchemaHint } from '../presets'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
 import type { VfsFile } from '../harness/state'
-import { createDataSlotOps, type DataSlotSpec, type DataSlotOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataSlotOps'
+import { createDataSlotOps, filterByToolMode, type DataSlotSpec, type DataSlotOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataSlotOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -115,6 +115,17 @@ export interface ChatSdkOptions {
   maxSnapshots?: number
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean
+  /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
+  toolMode?: 'simple' | 'advanced' | 'minimal'
+  /** 读写拦截器:read/write 透传给数据槽工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
+  interceptors?: {
+    read?: (path: string, value: unknown) => unknown
+    write?: (path: string, payload: unknown, current: unknown) => unknown | { error: string }
+    /** agent 接收输入时拦截:send/stream 的 user message 预处理(可改写/审计) */
+    input?: (input: unknown) => unknown
+    /** agent 产出输出时拦截:返回前 postprocess(可改写最终回复) */
+    output?: (json: unknown) => unknown
+  }
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number
   debug?: boolean
@@ -224,6 +235,16 @@ const DEFAULT_SYSTEM_PROMPT = [
   '大对象/数组优先用增量 patch(只发改动)而非整体重传,避免输出被截断。',
   systemPromptHelpers.reliableWriteRules,
 ].join('\n\n')
+
+/** 拼接「可操作属性」段到 systemPrompt:从 dataSlots 的 schema 字段 .describe() 自动提取注入 */
+function buildDataSlotsPrompt(slots: DataSlotSpec[]): string {
+  if (!slots.length) return ''
+  const parts = slots.map((s) => {
+    const hint = extractSchemaHint(s.schema)
+    return `### ${s.path}\n${s.description ? s.description + '\n' : ''}${hint}`
+  })
+  return '\n\n## 可操作属性(字段以 read 工具返回的实际值为准)\n' + parts.join('\n')
+}
 
 export interface ChatSdk {
   /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless) */
@@ -408,13 +429,18 @@ function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Pr
 
 /**
  * 数据槽写工具名 → operation 映射(供 onEvent 的 data_slot_change 推断操作类型)。
- * 非 数据槽写工具返回 null。
+ * 非 数据槽写工具返回 null。write 高层入口按 args 推断(del→delete,patch→edit,否则 set)。
  */
-function matchWindowOp(name: string): 'set' | 'edit' | 'delete' | 'restore' | null {
+function matchWindowOp(name: string, args?: any): 'set' | 'edit' | 'delete' | 'restore' | null {
   if (name === 'set_data_slot') return 'set'
   if (name === 'edit_data_slot') return 'edit'
   if (name === 'delete_data_slot') return 'delete'
   if (name === 'restore_data_snapshot') return 'restore'
+  if (name === 'write') {
+    if (args?.del) return 'delete'
+    if (args?.patch) return 'edit'
+    return 'set'
+  }
   return null
 }
 
@@ -440,7 +466,7 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
     name: 'sdk-events',
     wrapToolCall: async (ctx: ToolCallContext, next) => {
       const result = await next(ctx)
-      const op = matchWindowOp(ctx.name)
+      const op = matchWindowOp(ctx.name, ctx.args)
       if (op) {
         const path = String(ctx.args?.path ?? '')
         emit({ type: 'data_slot_change', path, operation: op, value: path ? readSlotPath(path) : undefined })
@@ -515,12 +541,29 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // agent 实例引用 holder(checkpoint manager 需读 agent.getState 取 todos,但 agent 在 initDone 内才创建;闭包延后读取)
   const agentRef: { current: any } = { current: null }
 
+  // dataSlots:处理 bind 字段(reactive/普通对象直连,自动挂 window + 补全 description)
+  // bind 是 dataSlots 的可选字段:传 reactive 对象 → 自动挂 window[path]=bind(reactive 写后响应式刷新;普通对象可写但不响应)
+  const finalDataSlots: DataSlotSpec[] = (options.dataSlots ?? []).map((spec) => {
+    if (spec.bind !== undefined) {
+      const w = (globalThis as any).window || ((globalThis as any).window = {})
+      const keys = spec.path.split('.')
+      let cur: any = w
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') cur[keys[i]] = {}
+        cur = cur[keys[i]]
+      }
+      cur[keys[keys.length - 1]] = spec.bind
+      return { ...spec, description: spec.description ?? `${spec.path}(bind 直连)` }
+    }
+    return { ...spec, description: spec.description ?? spec.path }
+  })
+
   // 会话级 checkpoint(默认关;传 options.checkpoint 开启):每轮自动存 + 一键回滚到上次正常时
   const checkpointOpts = options.checkpoint
   const useCheckpoint = checkpointOpts !== undefined && checkpointOpts !== false
   const checkpointMgr: CheckpointManager | null = useCheckpoint
     ? createCheckpointManager({
-        slotPaths: (options.dataSlots ?? []).map((w) => w.path),
+        slotPaths: finalDataSlots.map((w) => w.path),
         vfsStore,
         todosMw,
         getTodos: () => agentRef.current?.getState?.()?.todos ?? [],
@@ -535,25 +578,31 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const caps = options.capabilities
   const useDataSlotOps = caps?.dataSlotOps !== false
 
+  // 最终 systemPrompt = 用户 systemPrompt(或默认)+ 可操作属性段(从 dataSlots schema .describe() 自动注入;inspect 与 createAgent 共用,保持一致)
+  const finalSystemPrompt = (options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT) + buildDataSlotsPrompt(finalDataSlots)
+
   // 工具:数据槽操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataSlotOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
   const dataSlotOps = useDataSlotOps
-    ? createDataSlotOps(options.dataSlots || [], {
+    ? createDataSlotOps(finalDataSlots, {
         onAudit: options.debug ? (e) => console.log('[page-agent-sdk][window audit]', e) : undefined,
         maxSnapshots: options.maxSnapshots,
         onConflict: setPendingConflict,
         autoLock: options.autoLock,
+        interceptors: options.interceptors,
       })
     : []
+  // toolMode 筛选:simple(默认)主推 read/write 但保留高级能力;advanced 全暴露;minimal 只 read/write
+  const dataSlotOpsFiltered = useDataSlotOps ? filterByToolMode(dataSlotOps, options.toolMode) : []
   // 数据槽注册表控制器(运行时动态增删;dataSlotOps 关闭时为 null)
   const dataSlotOpsController = useDataSlotOps
     ? (dataSlotOps as StructuredToolInterface[] & { controller?: DataSlotOpsController }).controller ?? null
     : null
   /** 当前注册的 dataSlots(反映动态增删;供 inspect/verify 等读最新状态) */
-  const liveDataSlots = (): DataSlotSpec[] => dataSlotOpsController?.list() ?? (options.dataSlots ?? [])
+  const liveDataSlots = (): DataSlotSpec[] => dataSlotOpsController?.list() ?? finalDataSlots
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  const builtinTools = selectBuiltinTools(caps, dataSlotOps, fetchDocTools)
+  const builtinTools = selectBuiltinTools(caps, dataSlotOpsFiltered, fetchDocTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   const userTools: StructuredToolInterface[] = [
     ...(options.tools || []),
@@ -658,6 +707,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       subagents: options.subagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
     },
     useDataSlotOps && !!(options.dataSlots?.length),
+    options.toolMode,
   )
   // SDK 事件回调:把常用时机外发给集成方(数据槽变化 / 消息更新 / 流式事件 / 错误)
   const userOnEvent = options.onEvent
@@ -756,9 +806,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     async send(message: string): Promise<string> {
       await core.initDone
-      messages.push({ role: 'user', content: message, timestamp: Date.now() })
+      // input 拦截器:send 入口预处理 user message(可改写/审计)
+      let msg = message
+      if (options.interceptors?.input) {
+        try { const r = options.interceptors.input(message); if (typeof r === 'string') msg = r } catch { /* 拦截器抛错忽略,用原 message */ }
+      }
+      messages.push({ role: 'user', content: msg, timestamp: Date.now() })
       try {
-        const reply = await core.agent!.invoke(messages)
+        let reply = await core.agent!.invoke(messages)
+        // output 拦截器:返回前 postprocess(可改写最终回复)
+        if (options.interceptors?.output) {
+          try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
+        }
         messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
         core.afterRound()
         if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
@@ -835,7 +894,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       return {
         id: agentId,
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
-        systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        systemPrompt: finalSystemPrompt,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
         dataSlots: liveDataSlots().map((w) => ({ path: w.path, description: w.description, schema: w.schema })),
@@ -953,7 +1012,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             temperature: options.llm.temperature,
             maxTokens: options.llm.maxTokens,
           }),
-      systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+      systemPrompt: finalSystemPrompt,
       tools: allTools,
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,

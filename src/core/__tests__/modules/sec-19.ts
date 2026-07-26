@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { createDataSlotOps } from '../../tools/dataSlotOps'
+import { createDataSlotOps, filterByToolMode } from '../../tools/dataSlotOps'
+import { extractSchemaHint } from '../../presets'
 import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
@@ -63,7 +64,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // defineDataSlotToolset 工厂(依赖 dataSlots,故为工厂)
     const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
     const wt = defineDataSlotToolset(props)
-    assert(wt.length === 13 && wt[0].name === 'list_data_slots', 'defineDataSlotToolset 工厂产出 13 个 数据槽工具(10 原有 + query/search/eval)')
+    assert(wt.length === 15 && wt[0].name === 'list_data_slots', 'defineDataSlotToolset 工厂产出 15 个 数据槽工具(13 原有 + read/write 高层入口)')
 
     // selectBuiltinTools:默认全装(dataSlotOps + fetch)
     const winOps = createDataSlotOps(props)
@@ -90,9 +91,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
     const segFull = mwFull.augmentPrompt?.(createState()) || ''
     assert(/write_todos/.test(segFull) && /restore_data_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
-    // dataSlotOps 开 → 含 list/describe(查当前可操作属性)与 get(读真实值再改)提示
-    assert(/list_data_slots/.test(segFull) && /describe_data_slot/.test(segFull), 'dataSlotOps 开 → 注入 list/describe 用法(动态注册场景关键)')
-    assert(/get_data_slot/.test(segFull), 'dataSlotOps 开 → 注入 get 读真实值再改用法')
+    // dataSlotOps 开 + simple(默认)→ 主推 read/write(高层入口,合并 list/describe/get 与 set/edit/delete)
+    assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataSlotOps 开 + simple → 注入 read/write 高层用法')
+    // advanced 模式 → 保留底层 get/list/describe 提示
+    const mwAdv = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'advanced')
+    const segAdv = mwAdv.augmentPrompt?.(createState()) || ''
+    assert(/list_data_slots/.test(segAdv) && /describe_data_slot/.test(segAdv), 'dataSlotOps 开 + advanced → 注入 list/describe 用法(动态注册场景关键)')
+    assert(/get_data_slot/.test(segAdv), 'dataSlotOps 开 + advanced → 注入 get 读真实值再改用法')
 
     // planning 关 → 无 write_todos 提示
     const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
@@ -109,6 +114,47 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
     assert(mwFull.name === 'usageHints', '中间件 name=usageHints')
+  }
+
+  // ============ filterByToolMode(工具呈现模式筛选)============
+  console.log('\n[filterByToolMode]')
+  {
+    const all = createDataSlotOps([], {})  // 15 个工具
+    const names = (ts: any[]) => ts.map((t) => t.name)
+    // advanced → 全暴露(15)
+    const adv = filterByToolMode(all, 'advanced')
+    assert(adv.length === 15 && adv.length === all.length, 'advanced → 全暴露(15 工具)')
+    // simple → 隐藏底层 get/set/edit/delete/list/describe(6),保留 read/write + query/search/eval/snapshot(9)
+    const simple = filterByToolMode(all, 'simple')
+    const simpleNames = names(simple)
+    assert(simple.length === 9, 'simple → 9 工具(隐藏 6 底层,保留 read/write + query/search/eval/snapshot)')
+    assert(['read', 'write', 'query_data_slot', 'search_data_slot', 'eval_script', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'get_slot_paths'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + 高级查询/快照工具')
+    assert(['list_data_slots', 'describe_data_slot', 'get_data_slot', 'set_data_slot', 'edit_data_slot', 'delete_data_slot'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 get/set/edit/delete/list/describe')
+    // minimal → 只 read/write
+    const minimal = filterByToolMode(all, 'minimal')
+    assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')
+    // 默认(不传 mode)= simple
+    const def = filterByToolMode(all)
+    assert(def.length === 9, '默认 toolMode = simple')
+  }
+
+  // ============ extractSchemaHint(io 契约注入 systemPrompt 用)============
+  console.log('\n[extractSchemaHint]')
+  {
+    // zod object:提取字段名 + description
+    const schema = z.object({ title: z.string().describe('页面标题'), count: z.number() })
+    const hint = extractSchemaHint(schema)
+    assert(/- title: 页面标题/.test(hint) && /- count/.test(hint), 'extractSchemaHint: object → 提取字段名 + description')
+    // 无 description 的字段:只显示字段名(或 typeName)
+    const schema2 = z.object({ name: z.string() })
+    assert(/- name/.test(extractSchemaHint(schema2)), 'extractSchemaHint: 无 description → 仍含字段名')
+    // 非 object schema:用 description 兜底
+    const scalar = z.string().describe('一个字符串')
+    assert(/一个字符串/.test(extractSchemaHint(scalar)), 'extractSchemaHint: 非 object → 用 description 兜底')
+    // 无 description 的非 object:兜底提示
+    assert(/read/.test(extractSchemaHint(z.string())), 'extractSchemaHint: 无 description 非 object → 兜底提示用 read')
+    // 空/undefined
+    assert(extractSchemaHint(undefined) === '', 'extractSchemaHint: undefined → 空串')
   }
 
   // ============ skills 文档源(doc:http 远程 / vfs 本地)============

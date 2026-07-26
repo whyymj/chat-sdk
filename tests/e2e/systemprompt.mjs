@@ -27,7 +27,7 @@ export async function run() {
       dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
     })
     await sdk.mount()
-    assert(sdk.inspect().systemPrompt === '你是定制助手。', '自定义 systemPrompt 完全覆盖默认')
+    assert(sdk.inspect().systemPrompt.startsWith('你是定制助手。') && /可操作属性/.test(sdk.inspect().systemPrompt), '自定义 systemPrompt 完全覆盖默认(dataSlots schema 仍自动追加「可操作属性」段)')
     sdk.unmount()
   }
 
@@ -57,7 +57,7 @@ export async function run() {
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
     assert(sp.startsWith('你是商品页编辑助手。'), '自定义 systemPrompt 保留(拼在前)')
-    assert(/reliableWriteRules|改前先|增量 patch/.test(sp), '拼接后含 reliableWriteRules(用户自行拼入)')
+    assert(/可靠写入规则|改任何属性前|增量改|write 的 patch/.test(sp), '拼接后含 reliableWriteRules(用户自行拼入)')
     sdk.unmount()
   }
 

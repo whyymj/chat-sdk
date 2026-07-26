@@ -94,7 +94,7 @@ createChatSdk({
 }).mount()
 ```
 
-Open the page, type "change theme to dark" in the dialog → Agent calls `set_data_slot` to change `window.app.theme` directly. Done.
+Open the page, type "change theme to dark" in the dialog → Agent calls `write({ path:'app.theme', value:'dark' })` to change `window.app.theme` directly. Done.
 
 ## 4. Core concepts
 
@@ -117,7 +117,8 @@ createChatSdk({
   ui: true,                        // false = headless (build UI with agent.messages + send/stream)
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
-  systemPrompt: '...',             // Agent identity (optional: built-in default — page assistant + reliableWriteRules — used if omitted; passing your own fully overrides it)
+  systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — page assistant + reliableWriteRules — used if omitted; passing your own fully overrides it, you must re-append reliableWriteRules)
+  // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per toolMode — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data
   dataSlots: [{ path, description, schema }],  // register data slots + zod schema
@@ -130,7 +131,7 @@ createChatSdk({
 
   // human-in-the-loop
   humanConfirm: true,               // proactive inquiry (default on; AI asks when uncertain/multi-plan)
-  approval: { tools: ['set_data_slot','edit_data_slot'] },  // passive confirm whitelist (default off)
+  approval: { tools: ['write'] },  // passive confirm whitelist (default off)
   checkpoint: true,                 // session-level rollback (default off)
 
   // self-verify (needs capabilities.verify:true)
@@ -172,12 +173,13 @@ createChatSdk({
 
 ## 6. Capabilities
 
-### 6.1 window ops (let the Agent edit your page)
+### 6.1 data slot ops (let the Agent edit your JSON)
 
 Declare `dataSlots`; the Agent reads/writes via tools, validated by schema:
 
-- `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths`
-- `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot`
+- **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load
+- `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` (hidden in `simple` mode, merged into `read`)
+- `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` (hidden in `simple` mode, merged into `write`)
 - `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
 - `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
 
@@ -187,6 +189,100 @@ Key points:
 - Snapshots auto-stored before `set`/`edit`/`delete`; `restore_data_snapshot` rolls back
 - **Zero-bridge**: tool body's `window` = host page's main window (direct)
 
+#### High-level `read`/`write` (2.2+, recommended)
+
+```ts
+// read: no path → list all operable slots; with path → current value + hash + schema hint
+// Agent: read({}) → "Operable data slots: - page.title: page title ..."
+// Agent: read({ path: 'page.title' }) → 'page.title = "Home" (hash=a1b2)\nformat: page title'
+
+// write: three intents
+// ① full set (value is a JSON object, no stringify needed)
+write({ path: 'page.title', value: 'New title' })
+// ② incremental patch (op=set/remove/merge/append, jsonPath relative to slot root)
+write({ path: 'page', value: 'c', patch: { op: 'append', jsonPath: 'items' } })
+write({ path: 'page', value: { title: 'Merged title' }, patch: { op: 'merge' } })
+// ③ delete
+write({ path: 'page.oldField', del: true })
+```
+
+`write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data_snapshot`) ③ optimistic lock (autoLock, compares hash from `read`; conflict → `VERSION_CONFLICT` or human escalation).
+
+#### `toolMode` — tool presentation
+
+```ts
+createChatSdk({
+  // ...,
+  toolMode: 'simple',  // default: promote read/write, hide low-level get/set/edit/delete/list/describe (6), keep query/search/eval/snapshot (9 data-slot tools total)
+  // toolMode: 'advanced',  // expose all (15 = old 13 + read/write; use when depending on low-level tool names)
+  // toolMode: 'minimal',   // only read/write (2, simplest)
+})
+```
+
+- `simple` (default): LLM sees only `read`/`write` + advanced query/snapshot — lowest cognitive load; `usageHints` auto-injects read/write guidance
+- `advanced`: expose all (backward compat / debugging / precise control)
+- `minimal`: only `read`/`write` (pure read/write scenarios, most token-efficient)
+
+#### `interceptors` — read/write interceptors
+
+Integrators can desensitize/transform/audit/reject the LLM's reads/writes:
+
+```ts
+createChatSdk({
+  // ...,
+  interceptors: {
+    // intercept on read: desensitize (only changes what LLM sees, not actual storage)
+    read: (path, value) => path.endsWith('secret') ? '***' : value,
+    // intercept on write: transform/audit/reject
+    write: (path, payload, current) => {
+      if (path === 'app.locked') return { error: 'this field is locked' }
+      return payload  // allow (can rewrite before returning)
+    },
+  },
+})
+```
+
+- `read(path, value)`: return value is rewritten for LLM (desensitize/derive); throw → `READ_INTERCEPT`
+- `write(path, payload, current)`: return rewritten value to allow, or `{error}` to reject (`WRITE_INTERCEPT`)
+- `input(input)`/`output(json)`: agent-level IO pre/post-processing
+  - `input`: preprocess user message at send entry (rewrite/audit)
+  - `output`: postprocess before agent returns (rewrite final reply)
+
+#### `dataSlots` unified config (3.0+, recommended, declarative)
+
+`dataSlots` is the single entry for data-slot config — combining schema declaration + object direct-bind + auto field-hint injection:
+
+```ts
+import { reactive } from 'vue'  // or any reactivity impl
+const PageSchema = z.object({ title: z.string().describe('page title'), count: z.number() })
+const page = reactive({ title: 'Home', count: 0 })
+
+const sdk = createChatSdk({
+  // ...,
+  dataSlots: [
+    {
+      path: 'page',            // path on window (dot-nested supported)
+      schema: PageSchema,       // zod schema: write validation + field .describe() auto-injected into systemPrompt「可操作属性」section
+      bind: page,               // optional: reactive/plain object auto-mounted to window[path] + registered as dataSlot
+    },
+  ],
+})
+// LLM write page → page reactively updates; integrator changes page → LLM read sees it
+```
+
+- `schema` field `.describe()` is auto-extracted (via `extractSchemaHint`) into the systemPrompt「可操作属性」section — no manual description needed
+- `bind` is an optional `dataSlots` field: pass a reactive/plain object → auto-mount `window[path] = bind` (dot-nested path supported) + register as dataSlot; underlying still goes through registry + schema validation + optimistic lock
+- Omit `bind` when the integrator mounts `window[path]` themselves (object already exists / dynamic registration / field-whitelist read)
+- Preview the hint to be injected: `extractSchemaHint(schema)` (exported)
+- **`bind` does NOT require reactive**: any object works. The difference is "reactive refresh after write":
+  - Pass `reactive(obj)` (Vue): Agent `write` mutates props → template/watch auto-reactive (recommended for UI)
+  - Pass a plain object: Agent `write` can mutate data, but the page won't react (suitable for headless / backend / integrator-managed refresh via `onEvent` or `watch`)
+  - Tools `set`/`write` use `restoreInPlace` to mutate props in-place (no root-ref replacement), compatible with reactive proxies; plain objects also write fine
+- **Notifying the outside world of changes** (see §onEvent for details):
+  - `onEvent` / `sdk.hook` subscribe to `data_slot_change` event (fires after write, with `path`/`operation`/`value`) — for headless / non-Vue / plain-object bind
+  - Vue reactivity (bind with reactive) — template/watch auto-react, no manual notify needed
+  - `onEvent` and reactivity can coexist: reactivity for UI refresh, `onEvent` for audit/analytics/cross-system sync
+
 #### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
 
 When a prop may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: `get_data_slot` returns a value with `hash=xxx` appended; pass `expectedHash` on write to verify.
@@ -194,7 +290,7 @@ When a prop may be modified concurrently by **external code / other agents / man
 ```ts
 // Agent workflow (run by the LLM automatically; integrator writes nothing)
 // 1. get → "page.title = old (hash=a1b2)"
-// 2. set_data_slot({ path:'page.title', value:'"new"', expectedHash:'a1b2' })
+// 2. write({ path:'page.title', value:'new' })  // auto-locks with last read hash
 //    if externally modified since → hash mismatch → conflict
 ```
 
@@ -285,7 +381,7 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 
 | Event | When | Fields |
 |---|---|---|
-| `data_slot_change` | After Agent calls `set`/`edit`/`delete`/`restore_window_*` | `path` / `operation` / `value` (post-change value) |
+| `data_slot_change` | After Agent calls a write tool (high-level `write`, or low-level `set`/`edit`/`delete`/`restore_data_snapshot`) | `path` / `operation` (`set`/`edit`/`delete`/`restore`; `write` infers from args) / `value` (post-change value) |
 | `message_update` | After each Agent round | `count` (message count) |
 | `tool_call` | Before tool call (stream mode) | `name` / `args` |
 | `tool_result` | After tool returns (stream mode) | `name` / `result` / `status` |
@@ -446,7 +542,7 @@ A: Give each `createChatSdk` a distinct `id`; they isolate by id. Same `id` + `s
 A: `id` must be a stable value (not omitted — random id can't resume). `storage` must be enabled (default off).
 
 **Q: Large JSON blows context?**
-A: Tool results > 6000 chars auto-offload to vfs (only preview + `vfs_read`/`vfs_grep` refs stay). `edit_data_slot` patches by jsonPath to avoid re-sending whole JSON.
+A: Tool results > 6000 chars auto-offload to vfs (only preview + `vfs_read`/`vfs_grep` refs stay). `write` with `patch` to avoid re-sending whole JSON.
 
 **Q: `verify` not taking effect?**
 A: `verify` needs `capabilities.verify:true` (default off). `inspect().verify` shows load status.
@@ -459,9 +555,9 @@ Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill a
 
 | # | Scenario | Key setup |
 |---|---|---|
-| 1 | Low-code page builder | `dataSlots` = component tree; `edit_data_slot` jsonPath patches; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| 1 | Low-code page builder | `dataSlots` = component tree; `write` with `patch` jsonPath; `onEvent` → canvas refresh; `checkpoint` + `approval` |
 | 2 | Form designer | `dataSlots` = field defs (enum/required schemas); schema validation prevents malformed forms |
-| 3 | CMS batch ops | `eval_script` bulk loops; `search_data_slot` filter; `edit_data_slot` targeted edits |
+| 3 | CMS batch ops | `eval_script` bulk loops; `search_data_slot` filter; `write` with `patch` targeted edits |
 | 4 | Ops config console | `approval` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
 | 5 | AI-native assistant | `capabilities:{dataSlotOps:false,fetch:false}` + custom `tools` (product API) |
 | 6 | Research agent | `capabilities:{dataSlotOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |

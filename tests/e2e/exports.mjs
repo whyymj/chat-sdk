@@ -66,10 +66,13 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-source', storage: 'memory', llm: FAKE_LLM,
       capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
+      toolMode: 'advanced',  // advanced 暴露底层 set_data_slot;simple/minimal 下 read/write 仍 builtin
     })
     await sdk.mount()
     const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data_slot')
     assert(setTool?.source === 'builtin', 'set_data_slot source=builtin')
+    const readTool = sdk.inspect().tools.find((t) => t.name === 'read')
+    assert(readTool?.source === 'builtin', 'read(高层入口)source=builtin')
     const fetchTool = sdk.inspect().tools.find((t) => t.name === 'fetch_document')
     assert(fetchTool?.source === 'builtin', 'fetch_document source=builtin')
     sdk.unmount()
