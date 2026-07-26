@@ -96,6 +96,8 @@ onMounted(() => {
       '3. 改样式/文案/增删子区块用 write 的 patch 指向目标 jsonPath;',
       '4. 每次操作后用路径描述改了哪个区块(如「顶部 Banner/主标题 的 color」)。',
     ].join('\n'),
+    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    appendReliableWriteRules: true,
     // 人工确认:写操作(write)前弹确认框,用户「允许/拒绝」后才执行(防 AI 误改页面)
     approval: { tools: ['write'] },
     // 会话级 checkpoint:每轮自动存档,流程异常/改坏页面时可一键回退到上次正常态(↩ 回退按钮 + LLM 的 restore_last_checkpoint 工具)

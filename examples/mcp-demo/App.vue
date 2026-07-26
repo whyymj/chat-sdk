@@ -30,6 +30,8 @@ onMounted(() => {
     mcp: [{ transport: 'http', url: 'http://localhost:3001/mcp', name: 'mock' }],
     systemPrompt:
       '你可以调用 MCP server(mock)提供的工具:get_weather(查天气)/ search(搜索)/ calc(计算)。用户问相关问题时主动调用对应工具,基于结果回答。',
+    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    appendReliableWriteRules: true,
     debug: true,
     title: 'MCP 集成示例',
     placeholder: '试试:北京天气 / 搜索 AI / 算 12*8',

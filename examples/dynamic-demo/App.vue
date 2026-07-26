@@ -12,7 +12,7 @@
  * 运行:npm run dev → 访问 /examples/dynamic-demo/
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { createChatSdk, z, systemPromptHelpers, type ChatSdk } from '../../src/core'
+import { createChatSdk, z, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 import { compTypeDescriptions, compTypeLabels, createComp, type AnyComp, type CompType } from './componentSchemas'
 
@@ -86,8 +86,9 @@ onMounted(() => {
       '每个组件有自己的 type(banner/card/stat/chart),结构各异;组件由集成方代码动态增删,实时变化,操作前先 read 查看当前存在的组件 id。',
       '各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]}。',
       '改某组件时 jsonPath 相对主数据根(如改 banner-1 标题:jsonPath="components.banner-1.title")。',
-      systemPromptHelpers.reliableWriteRules,
     ].join('\n'),
+    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    appendReliableWriteRules: true,
     onEvent(e) {
       if ((e as any).type === 'data_change') {
         refreshRegistered()
