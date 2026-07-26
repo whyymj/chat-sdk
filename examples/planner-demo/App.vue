@@ -69,7 +69,7 @@ onMounted(() => {
       '遇到创作/设计类需求,按"规划-反思-执行"流程:先委派 planner 出方案,再据需要委派 reflector 审查,最后落地。',
       '简单明确的改动(如"标题改红色")直接执行,不必编排。',
     ].join('\n'),
-    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     // 预声明双子 agent:planner 高温创意(只读,无写工具),reflector 低温审查(只读)
     subagents: [

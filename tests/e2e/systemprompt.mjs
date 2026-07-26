@@ -61,32 +61,34 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:systemprompt] appendReliableWriteRules:true → 自定义 systemPrompt 末尾自动追加 reliableWriteRules')
+  console.log('[e2e:systemprompt] appendReliableWriteRules 默认 true → 自定义 systemPrompt 末尾用 --- 分隔线自动追加 reliableWriteRules')
   {
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-append-rwr', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      ui: false, id: 'e2e-append-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: '你是定制助手。',
-      appendReliableWriteRules: true,
+      // 不传 appendReliableWriteRules,默认 true → 自动追加
       data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
     assert(sp.startsWith('你是定制助手。'), '自定义 systemPrompt 保留(在前)')
-    assert(/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules:true → 末尾自动追加 reliableWriteRules')
-    assert(!/你是一个 JSON 操作助手/.test(sp), 'appendReliableWriteRules 不引入默认身份(只追加规则段,不替换默认 prompt)')
+    assert(/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules 默认 true → 末尾自动追加 reliableWriteRules')
+    assert(/\n---\n/.test(sp), "追加用 '---' 分隔线明确区分用户 systemPrompt 与 SDK 追加的写入规则")
+    assert(!/你是一个 JSON 操作助手/.test(sp), '追加不引入默认身份(只追加规则段,不替换默认 prompt)')
     sdk.unmount()
   }
 
-  console.log('[e2e:systemprompt] appendReliableWriteRules 默认 false → 自定义 systemPrompt 不自动追加(向后兼容)')
+  console.log('[e2e:systemprompt] appendReliableWriteRules:false → 显式关闭,自定义 systemPrompt 不追加(向后兼容)')
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-append-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: '你是定制助手。',
+      appendReliableWriteRules: false,
       data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
-    assert(!/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules 默认 false → 不自动追加(向后兼容,需显式开启)')
+    assert(!/可靠写入规则|改任何字段前/.test(sp), 'appendReliableWriteRules:false → 显式关闭不追加(用户已自行写规则时用)')
     sdk.unmount()
   }
 

@@ -140,7 +140,7 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。需保留写入规则:appendReliableWriteRules:true 自动追加,或自行拼入 systemPromptHelpers.reliableWriteRules)
+  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭)
   // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按 toolMode 自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
 

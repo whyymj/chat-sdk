@@ -122,7 +122,7 @@ createChatSdk({
   ui: true,                        // false = headless (build UI with agent.messages + send/stream)
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
-  systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. To keep write rules: set appendReliableWriteRules:true to auto-append, or manually append systemPromptHelpers.reliableWriteRules)
+  systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. appendReliableWriteRules defaults to true: auto-appends reliableWriteRules with a '---' separator; set false to disable)
   // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per toolMode — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data

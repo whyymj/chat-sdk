@@ -47,7 +47,7 @@ onMounted(() => {
     },
     systemPrompt:
       '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入主数据(调研笔记数组)。',
-    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     data,
     // ↓ 工具分离:关闭默认自动装配,改用 tools 手动组合(散工具 / 展开的预设数组)

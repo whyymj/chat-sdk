@@ -68,7 +68,7 @@ onMounted(() => {
       '当用户给开放性需求(如「帮我设计风格」「换个感觉」「给几个方案我挑」)时,必须先征询用户(把候选方案做成可点选选项 + 给出你的推荐),不要只回文字罗列方案让用户自己回复。',
       '用户选定方案后,落地到 appConfig 对应字段。',
     ].join('\n'),
-    // 自定义 systemPrompt → 自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);不传 systemPrompt 用默认时已内置,此项可省
+    // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     // approval 一行同时开启两侧:被动(write 前弹允许/拒绝)+ 主动(request_human_confirmation 默认随附)
     approval: { tools: ['write'] },
