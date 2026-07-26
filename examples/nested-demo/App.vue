@@ -7,35 +7,37 @@
  *  ② 查:query_data_slot 用 $..*[?(@.type=="text")] 递归找任意深度的区块
  *  ③ 改:write 的 patch 用 jsonPath(如 sections.0.children.0.style.color)深层定位,只发改动
  *  ④ 增/删:append 给 section 加 children、remove 删区块;校验自动穿透到 children + style
- *  ⑤ 响应式:左侧树由 window.Editor.PageInfo(reactive)驱动,Agent 改子属性 → 树实时更新
+ *  ⑤ 刷新:bind 用普通对象(非 reactive),Agent 改后由 onEvent('data_change') 触发 tick,:key 强制树重渲染
  *
  * 运行:npm run dev → 访问 /nested.html
  */
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 import TreeRenderer from './TreeRenderer.vue'
 import { PageInfoSchema, initialPageInfo, type PageInfo } from './treeData'
 
-// 把页面信息挂到宿主 window.Editor.PageInfo(reactive),Agent 工具函数体的 window 即此 window
-// 注:nested key(Editor.PageInfo)不适配 L3 的 bind(bind 挂顶层 window[key],会覆盖 Editor 父对象),
-//     故用 dataSlots 细粒度注册 nested path —— 演示「集成方页面已有 nested 结构」的常见场景
+// 顶层建普通对象 pageInfo(非 reactive),自己挂到 window.Editor.PageInfo;SDK 工具直接读写此对象
+// Vue 模板不自动响应 → 靠 tick(onEvent + 人工编辑 @input)触发 :key 重渲染
+const pageInfo: PageInfo = structuredClone(initialPageInfo)
 const w = window as any
 if (!w.Editor) w.Editor = {}
-if (!w.Editor.PageInfo) w.Editor.PageInfo = reactive<PageInfo>(structuredClone(initialPageInfo))
-const pageInfo = w.Editor.PageInfo as PageInfo
+w.Editor.PageInfo = pageInfo
+
+// tick:data_change 或人工编辑时 ++,:key="tick" 强制 TreeRenderer 重建读最新 pageInfo
+const tick = ref(0)
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
 
-// ✋ 人工介入:选中区块后直接手动编辑(与 Agent 共享同一 reactive window.Editor.PageInfo)
+// ✋ 人工介入:选中区块后直接手动编辑(与 Agent 共享同一 window.Editor.PageInfo 普通对象)
 import type { Block, Style } from './treeData'
 const selectedId = ref<string | undefined>(undefined)
 const selected = ref<Block | null>(null)
-// 选中区块的 style 对象(onSelect 时保证非空);v-model 直接改它 → 触发 reactive 更新
+// 选中区块的 style 对象(onSelect 时保证非空);v-model 改它后需 tick++ 触发树重渲染(普通对象无响应式)
 const selStyle = ref<Style>({})
 
-// 按 id 在 sections 树里递归找区块(返回 reactive 引用,直接改其属性即触发响应式更新)
+// 按 id 在 sections 树里递归找区块(返回普通对象引用,直接改其属性,靠 tick 触发重渲染)
 function findBlockById(blocks: Block[], id: string): Block | null {
   for (const b of blocks) {
     if (b.id === id) return b
@@ -50,13 +52,13 @@ function findBlockById(blocks: Block[], id: string): Block | null {
 function onSelect(block: Block) {
   selectedId.value = block.id
   const found = findBlockById(pageInfo.sections, block.id)
-  // 确保 style 对象存在(否则 v-model 改 style.color 会报错);reactive 下新建对象会自动转代理
+  // 确保 style 对象存在(否则 v-model 改 style.color 会报错)
   if (found && !found.style) found.style = {}
   selected.value = found
   selStyle.value = found?.style ?? {}
 }
 
-// 还原该区块到初始值(人工撤销自己的改动)
+// 还原该区块到初始值(人工撤销自己的改动);改后 tick++ 触发树重渲染
 function resetSelected() {
   if (!selected.value) return
   const init = findBlockById(initialPageInfo.sections, selected.value.id)
@@ -64,6 +66,7 @@ function resetSelected() {
     selected.value.text = init.text
     selStyle.value = init.style ? { ...init.style } : {}
     selected.value.style = init.style ? { ...init.style } : undefined
+    tick.value++
   }
 }
 
@@ -77,14 +80,12 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    // 递归 schema:注册 window.Editor.PageInfo 根;children 自引用任意深度;style 显式声明,passthrough 放行自定义属性
-    dataSlots: [
-      {
-        path: 'Editor.PageInfo',
-        description: '页面信息(含 title/theme/sections;section 与区块可任意嵌套 children,节点带 style 样式对象)',
-        schema: PageInfoSchema,
-      },
-    ],
+    // data 单主对象:bind 直连普通对象(集成方自己挂 window.Editor.PageInfo);递归 schema,children 自引用任意深度
+    data: {
+      schema: PageInfoSchema,
+      bind: pageInfo,
+      description: '页面信息(含 title/theme/sections;section 与区块可任意嵌套 children,节点带 style 样式对象)',
+    },
     systemPrompt: [
       '你是页面编辑助手。window.Editor.PageInfo 是页面信息,含 title/theme/sections。',
       'sections 是任意深度的区块树:节点有 id/name/type(section|text|button|image|card)/text/style/children。',
@@ -102,6 +103,10 @@ onMounted(() => {
     debug: true,
     title: '嵌套页面编辑',
     placeholder: '试试:主标题改成红色;给商品列表加一张「新品」卡;删掉商品卡 2',
+    // 非 reactive bind:监听 data_change 触发 tick,:key 强制树重渲染读最新 pageInfo
+    onEvent(e) {
+      if (e.type === 'data_change') tick.value++
+    },
   })
   agent.mount()
 })
@@ -117,38 +122,38 @@ onUnmounted(() => agent?.unmount())
         <code>window.Editor.PageInfo</code> 是任意深度的页面区块树,用 <code>z.lazy</code> 递归 schema 声明,
         节点带 <code>style</code> 样式对象(显式 schema + <code>passthrough</code> 放行自定义属性)。
         Agent 经 <code>write</code> 的 <strong>patch jsonPath 逐级定位</strong>深层节点增删改 ——
-        左侧树由 <code>reactive</code> 驱动,改动<strong>实时更新</strong>。
+        bind 为普通对象,改动经 <code>onEvent('data_change')</code> 触发 <strong>:key 重渲染</strong>。
       </p>
       <div class="tree-wrap" :data-theme="pageInfo.theme || 'light'">
         <h3 class="page-title">{{ pageInfo.title }}</h3>
-        <TreeRenderer :nodes="pageInfo.sections" :selected-id="selectedId" @select="onSelect" />
+        <TreeRenderer :key="tick" :nodes="pageInfo.sections" :selected-id="selectedId" @select="onSelect" />
       </div>
 
       <!-- ✋ 人工介入:点击树节点选中后,直接手动编辑该区块(与 Agent 共享同一 window.Editor.PageInfo) -->
       <div v-if="selected" class="manual-panel">
         <div class="manual-title">✋ 人工编辑 — {{ selected.name }} <span class="manual-id">#{{ selected.id }}</span></div>
-        <p class="manual-hint">直接改下面字段,改动落到 <code>window.Editor.PageInfo</code>(reactive),树实时更新;Agent 后续操作也能读到这些手动改动(数据同源)。</p>
+        <p class="manual-hint">直接改下面字段,改动落到 <code>window.Editor.PageInfo</code>(普通对象);@input 触发 tick 重渲染树;Agent 后续操作也能读到这些手动改动(数据同源)。</p>
         <label class="field">
           <span>文案 text</span>
-          <input v-model="selected.text" placeholder="(无文案)" />
+          <input v-model="selected.text" placeholder="(无文案)" @input="tick++" />
         </label>
         <label class="field">
           <span>颜色 color</span>
-          <input v-model="selStyle.color" type="color" />
-          <input v-model="selStyle.color" class="color-text" placeholder="#ff0000" />
+          <input v-model="selStyle.color" type="color" @input="tick++" />
+          <input v-model="selStyle.color" class="color-text" placeholder="#ff0000" @input="tick++" />
         </label>
         <label class="field">
           <span>背景 background</span>
-          <input v-model="selStyle.background" type="color" />
-          <input v-model="selStyle.background" class="color-text" placeholder="#1f4d3a" />
+          <input v-model="selStyle.background" type="color" @input="tick++" />
+          <input v-model="selStyle.background" class="color-text" placeholder="#1f4d3a" @input="tick++" />
         </label>
         <label class="field">
           <span>字号 fontSize</span>
-          <input v-model.number="selStyle.fontSize" type="number" min="8" max="96" />
+          <input v-model.number="selStyle.fontSize" type="number" min="8" max="96" @input="tick++" />
         </label>
         <label class="field">
           <span>字重 fontWeight</span>
-          <select v-model.number="selStyle.fontWeight">
+          <select v-model.number="selStyle.fontWeight" @change="tick++">
             <option :value="undefined">默认</option>
             <option :value="400">400 常规</option>
             <option :value="600">600 中粗</option>

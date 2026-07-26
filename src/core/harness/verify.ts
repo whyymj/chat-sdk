@@ -78,11 +78,11 @@ export function createVerifyMiddleware(opts: VerifyMiddlewareOptions): Middlewar
 
 // ===== 内置 domain check:写后读回验证(期三)=====
 
-/** 写 window 的工具名(set/edit/delete) */
-const WRITE_WINDOW_TOOLS = new Set(['set_data_slot', 'edit_data_slot', 'delete_data_slot'])
+/** 写数据的工具名(set/edit/delete + 高层 write) */
+const WRITE_DATA_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write'])
 
-/** dataSlotOps 写工具的拒绝文案(校验失败/范围拒绝/不存在等);ToolMessage content 命中则视为合法拒绝,读回无值是预期 */
-const WRITE_REJECTED_RE = /校验失败|未在注册表中声明|未注册|不存在|仅支持|必须是/
+/** dataOps 写工具的拒绝文案(校验失败/范围拒绝/不存在等);ToolMessage content 命中则视为合法拒绝,读回无值是预期 */
+const WRITE_REJECTED_RE = /校验失败|SCHEMA_INVALID|未注册|不存在|仅支持|必须是|NOT_OBJECT|PATH_UNSAFE|VERSION_CONFLICT|WRITE_INTERCEPT/
 
 /**
  * 扫描整个会话的写操作(非仅最近一轮):所有 AIMessage 中 set/edit/delete 的 tool_call。
@@ -95,15 +95,17 @@ function extractWrites(messages: BaseMessage[]): Array<{ path: string; op: strin
     const tcs = (m as any)?.tool_calls
     if (!Array.isArray(tcs)) continue
     for (const tc of tcs) {
-      if (WRITE_WINDOW_TOOLS.has(tc.name) && typeof tc?.args?.path === 'string') {
-        byPath.set(tc.args.path, { path: tc.args.path, op: tc.name, callId: tc.id })
+      if (WRITE_DATA_TOOLS.has(tc.name)) {
+        // 单对象:jsonPath 为子路径(整体写 set_data/write 不传 jsonPath → '')
+        const p = typeof tc?.args?.jsonPath === 'string' ? tc.args.jsonPath : ''
+        byPath.set(p, { path: p, op: tc.name, callId: tc.id })
       }
     }
   }
   return [...byPath.values()]
 }
 
-/** 收集所有 ToolMessage 的 callId → content(供判断写是否被 dataSlotOps 合法拒绝) */
+/** 收集所有 ToolMessage 的 callId → content(供判断写是否被 dataOps 合法拒绝) */
 function collectToolResults(messages: BaseMessage[]): Map<string, string> {
   const results = new Map<string, string>()
   for (const m of messages) {
@@ -114,8 +116,9 @@ function collectToolResults(messages: BaseMessage[]): Map<string, string> {
   return results
 }
 
-/** 轻量按点路径读取(支持数字索引,如 page.components.0.text);与 dataSlotOps 内部 getByPath 同语义 */
+/** 轻量按点路径读取(支持数字索引,如 page.components.0.text);与 dataOps 内部 getByPath 同语义 */
 function readByPath(root: unknown, path: string): unknown {
+  if (path === '') return root  // 空路径 = 整体 root
   if (root == null) return undefined
   let cur: unknown = root
   for (const seg of path.split('.')) {
@@ -126,7 +129,7 @@ function readByPath(root: unknown, path: string): unknown {
 }
 
 export interface WriteBackCheckOptions {
-  /** path → zod schema(由 createChatSdk 从 dataSlots 构造注入);省略则只校验「读回非空」不校验 schema。支持 getter 函数:运行时每次 check 调用取最新(适配 sdk.addDataSlot 动态注册) */
+  /** path → zod schema(由 createChatSdk 从 data 构造注入,键 '' 为主数据整体 schema);省略则只校验「读回非空」不校验 schema。支持 getter 函数:运行时每次 check 调用取最新(适配 sdk.setData 动态替换) */
   schemas?: Record<string, ZodType> | (() => Record<string, ZodType>)
   /** 读 window 的根对象(默认 globalThis.window;page-agent-sdk 零桥接 = 宿主 window) */
   window?: unknown
@@ -135,38 +138,39 @@ export interface WriteBackCheckOptions {
 /**
  * 写后读回验证 —— 机械验证「写入生效 + 符合 schema」,不做语义判断。
  * - 无写操作 → 放行(ok)
- * - 写被 dataSlotOps 合法拒绝(ToolMessage content 命中 WRITE_REJECTED_RE,如校验失败/范围拒绝)→ 跳过(读回无值是预期,不误报)
+ * - 写被 dataOps 合法拒绝(ToolMessage content 命中 WRITE_REJECTED_RE,如校验失败/范围拒绝)→ 跳过(读回无值是预期,不误报)
  * - set/edit 后读回为空 → 未生效
  * - set/edit 后读回不符合 schema → 校验失败
  * - delete 后读回仍有值 → 未删干净(读回空 = 删除成功,放行)
  *
- * 注:dataSlotOps 写入(setByPath)同步更新值,readByPath 读底层值即可见新值,无需 nextTick。
+ * 注:dataOps 写入(setByPath)同步更新值,readByPath 读底层值即可见新值,无需 nextTick。
  * @example createChatSdk({ capabilities:{verify:true}, verify:{ maxAttempts:1 } })  // check 省略 → 默认用本函数
  */
 export function createWriteBackCheck(opts: WriteBackCheckOptions = {}): VerifyCheck {
   const root = opts.window ?? (globalThis as any).window
-  // schemas 支持静态对象或 getter(动态注册场景:每次 check 取最新 schemas)
+  // schemas 支持静态对象或 getter(单对象场景:键 '' → 整体 schema;每次 check 取最新)
   const schemasRef: () => Record<string, ZodType> =
-    typeof opts.schemas === 'function' ? opts.schemas : () => (opts.schemas ?? {})
+    typeof opts.schemas === 'function' ? (opts.schemas as () => Record<string, ZodType>) : () => (opts.schemas ?? {}) as Record<string, ZodType>
   return async ({ messages }) => {
     const writes = extractWrites(messages)
     if (!writes.length) return { ok: true }
     const toolResults = collectToolResults(messages)
-    const schemas = schemasRef()   // 每次运行时取最新(反映 sdk.addDataSlot 动态注册)
+    const schemas = schemasRef()
+    const rootSchema = schemas['']  // 单对象整体 schema(键 '')
     const issues: string[] = []
     for (const { path, op, callId } of writes) {
-      // 写被 dataSlotOps 合法拒绝 → 读回无值是预期,跳过(避免误报"未生效"误导 agent 去修一个本就该失败的写)
+      // 写被 dataOps 合法拒绝 → 读回无值是预期,跳过(避免误报"未生效"误导 agent 去修一个本就该失败的写)
       const resultContent = callId ? toolResults.get(callId) : undefined
       if (resultContent && WRITE_REJECTED_RE.test(resultContent)) continue
       const current = readByPath(root, path)
-      if (op === 'delete_data_slot') {
+      if (op === 'delete_data') {
         if (current !== undefined) issues.push(`${path} 删除后读回仍有值,疑似未生效`)
       } else {
-        // set/edit_data_slot:读回应有值 + 符合 schema
+        // set/edit/write:读回应有值 + 整体 schema 校验整个 root(单对象:任一字段非法都会致整体校验失败)
         if (current === undefined || current === null) {
           issues.push(`写入 ${path} 后读回为空,疑似未生效`)
-        } else if (schemas[path]) {
-          const res = schemas[path].safeParse(current)
+        } else if (rootSchema) {
+          const res = rootSchema.safeParse(root)
           if (!res.success) issues.push(`${path} 读回值不符合 schema:${res.error.issues?.[0]?.message ?? '校验失败'}`)
         }
       }
@@ -229,7 +233,7 @@ async function runAdversarial(
     `用户需求:${lastUser || '(未明确)'}`,
     `助手回复:${lastReply}`,
     hasTools
-      ? '重点检查 window 修改:① 属性路径是否正确(是否误写未注册路径);② 值类型是否符合该属性 schema;③ 语义是否符合属性 description。可用只读工具(get_data_slot / list_data_slots 等)读回实际值实证。'
+      ? '重点检查主数据修改:① jsonPath 是否正确(是否误写不存在的子路径);② 值类型是否符合主数据 schema;③ 语义是否符合字段 description。可用只读工具(read / get_data / describe_data 等)读回实际值实证。'
       : '只报告具体、可验证的问题。',
     '若确实无问题,只回复"无问题"。',
   ].join('\n')

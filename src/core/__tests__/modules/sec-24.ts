@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createDataSlotOps } from '../../tools/dataSlotOps'
+import { createDataOps } from '../../tools/dataOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -84,56 +84,47 @@ export async function run(ctx: TestCtx): Promise<void> {
   }
 
 
-  // ===== dataSlotOps 动态注册(controller.add/remove/list)=====
+  // ===== dataOps controller(set/update 换 schema/bind,单主对象)=====
   {
-    const w = (globalThis as any).window
-    w.dyn = {}
-    const tools = createDataSlotOps([
-      { path: 'dyn.base', description: '初始注册', schema: z.string() },
-    ])
+    const dataObj: any = { base: 'init' }
+    const tools = createDataOps({
+      schema: z.object({ base: z.string() }),
+      bind: dataObj,
+      description: '初始',
+    })
     const t = byName(tools)
     // controller 挂在工具数组上(不可枚举)
     const controller = (tools as any).controller
-    assert(!!controller, 'createDataSlotOps 返回的工具数组上挂有 controller')
-    assert(Array.isArray(tools) && tools.length === 15, 'controller 不可枚举不影响数组长度/遍历(仍 15 工具)')
+    assert(!!controller, 'createDataOps 返回的工具数组上挂有 controller')
+    assert(Array.isArray(tools) && tools.length === 13, 'controller 不可枚举不影响数组长度/遍历(仍 13 工具)')
 
-    // 初始只有 dyn.base
-    assert(controller.list().length === 1 && controller.has('dyn.base'), '初始 list 仅含 dyn.base')
-    assert(controller.has('dyn.unknown') === false, 'has 未注册 path 返回 false')
+    // get() 返回当前 config
+    const cfg = controller.get()
+    assert(cfg.description === '初始' && cfg.bind === dataObj, 'controller.get() 返回当前 config(schema/bind/description)')
 
-    // 动态新增 dyn.late(懒加载组件场景)
-    controller.add({ path: 'dyn.late', description: '动态注册项', schema: z.number().int().min(0) })
-    assert(controller.has('dyn.late') && controller.list().length === 2, 'add 后 has 命中 + list 数量+1')
-    // 新增项立即对工具生效:set 合法值写入
-    let r = await invoke(t['set_data_slot'], { path: 'dyn.late', value: '42' })
-    assert(w.dyn.late === 42 && /已设置/.test(r), '动态注册后 set 立即生效(写成功)')
-    // B:写操作成功返回附「当前可操作 path 列表」提示
-    assert(/当前可操作 path:/.test(r) && r.includes('dyn.base') && r.includes('dyn.late'), 'B:set 返回附当前可操作 path 列表')
-    // schema 校验同样生效
-    r = await invoke(t['set_data_slot'], { path: 'dyn.late', value: '-1' })
-    assert(/SCHEMA_INVALID/.test(r) && w.dyn.late === 42, '动态注册项的 schema 校验生效(非法值不写)')
-    // 未动态注册的 path 仍被拒
-    r = await invoke(t['set_data_slot'], { path: 'dyn.never', value: '1' })
-    assert(/未在注册表中声明/.test(r), '未注册 path 仍被范围控制拒绝')
+    // set() 换整个 config(新 schema + 新 bind + 新 description),清快照
+    const newObj: any = { count: 5 }
+    controller.set({ schema: z.object({ count: z.number().int().min(0) }), bind: newObj, description: '改后' })
+    const cfg2 = controller.get()
+    assert(cfg2.description === '改后' && cfg2.bind === newObj, 'controller.set() 换 config 后 get() 反映新值')
+    // 新 schema 立即对工具生效:edit_data 合法值写入新 bind
+    let r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '42' })
+    assert(newObj.count === 42 && /已 edit/.test(r), 'set 换 config 后 edit 立即按新 schema 生效(写新 bind)')
+    // 旧 bind 不再被工具操作(工具操作新 bind)
+    assert(dataObj.base === 'init', 'set 换 bind 后旧 bind 不受工具影响')
+    // 新 schema 校验生效
+    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '-1' })
+    assert(/SCHEMA_INVALID/.test(r) && newObj.count === 42, 'set 换 schema 后按新 schema 校验(非法值不写)')
 
-    // 覆盖已注册项(改 schema)
-    controller.add({ path: 'dyn.base', description: '改后', schema: z.enum(['a', 'b']) })
-    r = await invoke(t['set_data_slot'], { path: 'dyn.base', value: '"a"' })
-    assert(w.dyn.base === 'a', '覆盖注册项后按新 schema 写入')
-    r = await invoke(t['set_data_slot'], { path: 'dyn.base', value: '"x"' })
-    assert(/SCHEMA_INVALID/.test(r), '覆盖后按新 schema 校验(旧 string schema 不再适用)')
+    // update() 只换 bind(保留 schema/description),清快照
+    const newerObj: any = { count: 10 }
+    controller.update(newerObj)
+    assert(controller.get().bind === newerObj && controller.get().description === '改后', 'controller.update() 只换 bind,保留 schema/description')
+    r = await invoke(t['get_data'], { jsonPath: 'count' })
+    assert(/10/.test(r), 'update 换 bind 后 get_data 读新 bind 值')
 
-    // 移除注册项
-    const removed = controller.remove('dyn.late')
-    assert(removed === true && !controller.has('dyn.late'), 'remove 返回 true 且 has 变 false')
-    assert(controller.list().length === 1, 'remove 后 list 数量-1(只剩 dyn.base)')
-    // 移除后 set 被拒
-    r = await invoke(t['set_data_slot'], { path: 'dyn.late', value: '1' })
-    assert(/未在注册表中声明/.test(r), 'remove 后 set 被拒(已不在注册表)')
-    // 移除不存在的 path 返回 false
-    assert(controller.remove('dyn.late') === false, 'remove 不存在 path 返回 false')
-
-    // 清理
-    delete w.dyn
+    // set 后快照被清:list_data_snapshots 无历史
+    r = await invoke(t['list_data_snapshots'], {})
+    assert(/#0|空|无/.test(r) || !/#1/.test(r), 'set/update 换 config 后清快照(list 无历史)')
   }
 }

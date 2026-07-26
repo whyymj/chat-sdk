@@ -1,19 +1,14 @@
 <script setup lang="ts">
 /**
- * 页面渲染器 —— 读取并渲染 window.page(reactive)
+ * 页面渲染器 —— 接收 page 作为 prop(普通对象,非 reactive)
  *
- * window.page 由 App.vue 在 setup 顶层以 reactive() 创建并挂载,
- * 此处取其引用;Agent 经 write 改的是该 reactive 对象的属性
- * (不替换引用),故 template 对 page.* 的依赖会响应式更新。
+ * App.vue 在 onEvent('data_change') 时 tick++,以 :key="tick" 强制本组件重建,
+ * 重建时读最新 page prop 渲染。展示「非 Vue 响应式 bind」集成模式:
+ * SDK 工具直接改普通对象,UI 刷新由集成方(此处为 :key 重渲染)负责。
  */
-import { reactive } from 'vue'
 import type { PageData } from './pageSchema'
 
-const w = window as any
-if (!w.page) {
-  w.page = reactive({ title: '', theme: 'light', components: [] })
-}
-const page = w.page as PageData
+defineProps<{ page: PageData }>()
 </script>
 
 <template>

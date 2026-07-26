@@ -1,5 +1,5 @@
 // 导出项:完整导出(39+ 函数/组件) + 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) + source=builtin
-import { setupEnv, createAssert, createChatSdk, FAKE_LLM } from './_helpers.mjs'
+import { setupEnv, createAssert, createChatSdk, FAKE_LLM, z } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
@@ -26,7 +26,7 @@ export async function run() {
       'createCheckpointManager', 'createCheckpointMiddleware',
       'createUsageHintsMiddleware', 'createVfs',
       'createSessionStore', 'createMemoryBackend', 'createWebStorageBackend', 'isQuotaError',
-      'createDataSlotOps', 'fetchDocTools', 'fetchTools', 'defineDataSlotToolset', 'selectBuiltinTools',
+      'createDataOps', 'fetchDocTools', 'fetchTools', 'defineDataToolset', 'selectBuiltinTools',
       'connectMcp', 'extractText',
       'resolveContextOptions', 'resolveModelCaps', 'estimateTokens', 'offloadThresholdChars', 'offloadPassThroughChars',
       'jpEval', 'searchJson', 'runSandboxedScript',
@@ -61,16 +61,17 @@ export async function run() {
     } catch (e) { assert(false, 'searchJson 执行失败:' + e.message) }
   }
 
-  console.log('[e2e:exports] dataSlotOps 工具 source=builtin / fetch_document source=builtin')
+  console.log('[e2e:exports] dataOps 工具 source=builtin / fetch_document source=builtin')
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-source', storage: 'memory', llm: FAKE_LLM,
       capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
-      toolMode: 'advanced',  // advanced 暴露底层 set_data_slot;simple/minimal 下 read/write 仍 builtin
+      data: { schema: z.object({ x: z.number() }), bind: { x: 1 }, description: 'd' },
+      toolMode: 'advanced',  // advanced 暴露底层 set_data;simple/minimal 下 read/write 仍 builtin
     })
     await sdk.mount()
-    const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data_slot')
-    assert(setTool?.source === 'builtin', 'set_data_slot source=builtin')
+    const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data')
+    assert(setTool?.source === 'builtin', 'set_data source=builtin')
     const readTool = sdk.inspect().tools.find((t) => t.name === 'read')
     assert(readTool?.source === 'builtin', 'read(高层入口)source=builtin')
     const fetchTool = sdk.inspect().tools.find((t) => t.name === 'fetch_document')

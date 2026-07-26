@@ -1,62 +1,58 @@
-// dataSlots:schema 类型(8 种) + 嵌套 path + 空 / 多 / 不传
+// data:schema 类型(8 种字段)+ 嵌套字段 + 空 / 不传
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
   const ctx = createAssert(); const { assert } = ctx
 
-  console.log('[e2e:data-slots] 各 schema 类型 + 嵌套 path')
+  console.log('[e2e:data] 单主对象 schema 含 8 种字段类型 + 嵌套字段')
   {
-    globalThis.window.app = { nested: { items: ['a'] }, flag: false }
+    const bind = { title: 't', count: 1, flag: false, tags: ['a'], meta: { k: 'v' }, map: { x: 1 }, level: 'a', nested: { items: ['a'] } }
     const sdk = createChatSdk({
       ui: false, id: 'e2e-schema-types', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [
-        { path: 'app.title', description: '字符串', schema: z.string() },
-        { path: 'app.count', description: '数字', schema: z.number() },
-        { path: 'app.flag', description: '布尔', schema: z.boolean() },
-        { path: 'app.tags', description: '数组', schema: z.array(z.string()) },
-        { path: 'app.meta', description: '对象', schema: z.object({ k: z.string() }) },
-        { path: 'app.map', description: 'record', schema: z.record(z.string(), z.any()) },
-        { path: 'app.level', description: '枚举', schema: z.enum(['a', 'b', 'c']) },
-        { path: 'app.nested.items', description: '嵌套 path', schema: z.array(z.string()) },
-      ],
+      data: {
+        schema: z.object({
+          title: z.string(),
+          count: z.number(),
+          flag: z.boolean(),
+          tags: z.array(z.string()),
+          meta: z.object({ k: z.string() }),
+          map: z.record(z.string(), z.any()),
+          level: z.enum(['a', 'b', 'c']),
+          nested: z.object({ items: z.array(z.string()) }),
+        }),
+        bind,
+        description: '应用配置(8 种字段类型 + 嵌套)',
+      },
     })
     await sdk.mount()
-    const paths = sdk.inspect().dataSlots.map((p) => p.path)
-    assert(paths.length === 8, '8 种 schema 类型 + 嵌套 path 全部注册成功')
-    assert(paths.includes('app.nested.items'), '嵌套 path(app.nested.items) 注册成功')
+    const info = sdk.inspect().data
+    assert(!!info && info.description === '应用配置(8 种字段类型 + 嵌套)', '单 data schema 含 8 种字段类型 + 嵌套 → inspect().data.description 反映')
+    assert(!!info?.schema, 'inspect().data.schema 存在')
     sdk.unmount()
   }
 
-  console.log('[e2e:data-slots] 空 dataSlots:mount 成功')
+  console.log('[e2e:data] 不传 data:mount 成功 + inspect().data undefined')
   {
-    const sdk = createChatSdk({ ui: false, id: 'e2e-empty-props', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, dataSlots: [] })
+    const sdk = createChatSdk({ ui: false, id: 'e2e-no-data', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
     await sdk.mount()
-    assert(sdk.inspect().dataSlots.length === 0, '空 dataSlots → inspect().dataSlots 为空')
+    assert(sdk.inspect().data === undefined, '不传 data → inspect().data 为 undefined')
     sdk.unmount()
   }
 
-  console.log('[e2e:data-slots] 多 dataSlots:inspect().dataSlots 含全部')
+  console.log('[e2e:data] 单 data(多字段):inspect().data 反映')
   {
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-multi-props', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [
-        { path: 'app.title', description: '标题', schema: z.string() },
-        { path: 'app.count', description: '计数', schema: z.number() },
-        { path: 'app.items', description: '列表', schema: z.array(z.string()) },
-      ],
+      ui: false, id: 'e2e-multi-fields', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: {
+        schema: z.object({ title: z.string(), count: z.number(), items: z.array(z.string()) }),
+        bind: { title: 't', count: 1, items: ['a'] },
+        description: '多字段配置',
+      },
     })
     await sdk.mount()
-    const paths = sdk.inspect().dataSlots.map((p) => p.path)
-    assert(paths.length === 3 && paths.includes('app.title') && paths.includes('app.count') && paths.includes('app.items'), '多 dataSlots → inspect().dataSlots 含全部 3 个')
-    sdk.unmount()
-  }
-
-  console.log('[e2e:data-slots] 不传 dataSlots:mount 成功')
-  {
-    const sdk = createChatSdk({ ui: false, id: 'e2e-no-props', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
-    await sdk.mount()
-    assert(sdk.inspect().dataSlots.length === 0, '不传 dataSlots → inspect().dataSlots 为空')
+    const info = sdk.inspect().data
+    assert(!!info && info.description === '多字段配置', '单 data 多字段 → inspect().data.description 反映')
     sdk.unmount()
   }
 

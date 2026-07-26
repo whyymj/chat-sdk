@@ -1,27 +1,29 @@
 <script setup lang="ts">
 /**
- * 动态注册组件示例 —— 演示「懒加载、结构各异的组件」如何经 sdk.addDataSlot / removeDataSlot 运行时注册。
+ * 动态组件示例 —— 演示「懒加载、结构各异的组件」如何用单主数据 + edit_data 增量管理。
  *
  * 演示能力:
- *  ① 组件懒加载:点击「加载」按钮动态新增不同类型组件(banner/card/stat/chart),结构各异,schema 各不同
- *  ② 动态注册:组件挂载时 sdk.addDataSlot({ path: `app.components.<id>`, schema }) 注册其 schema
- *  ③ 即时生效:注册后 AI 立即可 set/edit 该 path,按其 schema 校验(无需重建 agent)
- *  ④ 动态移除:组件卸载时 sdk.removeDataSlot(path),快照栈一并清理
- *  ⑤ inspect 反映:右侧「已注册属性」实时显示当前注册项(含动态增删)
- *  ⑥ 响应式:左侧组件列表由 window.app.components(reactive)驱动,AI 改子属性 → 实时更新
+ *  ① 组件懒加载:点击「加载」按钮动态新增不同类型组件(banner/card/stat/chart),结构各异
+ *  ② 单主数据:window.app.components 是动态组件容器(record),schema 宽松(z.record),组件结构各异由 systemPrompt 描述
+ *  ③ 集成方代码直接改 bind:组件挂载/卸载由集成方代码直接改 appObj.components(普通对象),agent 可读可改
+ *  ④ agent 增量改:agent 用 edit_data 改 components.<id>.<field>(jsonPath 相对主数据根)
+ *  ⑤ 刷新:bind 用普通对象(非 reactive),agent 改后由 onEvent('data_change') 触发 tick 重渲染
  *
  * 运行:npm run dev → 访问 /examples/dynamic-demo/
  */
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { createChatSdk, z, systemPromptHelpers, type ChatSdk, type DataSlotSpec } from '../../src/core'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { createChatSdk, z, systemPromptHelpers, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
-import { compSchemas, compTypeDescriptions, compTypeLabels, createComp, type AnyComp, type CompType } from './componentSchemas'
+import { compTypeDescriptions, compTypeLabels, createComp, type AnyComp, type CompType } from './componentSchemas'
 
-// 宿主 window.app.components:动态组件容器(reactive)
-const w = window as any
-if (!w.app) w.app = { components: {} as Record<string, AnyComp> }
-if (!w.app.components) w.app.components = {}
-const components = w.app.components as Record<string, AnyComp>
+// 主数据:动态组件容器(普通对象,非 reactive);集成方自己挂 window.app 供页面读取
+// Vue 模板不自动响应 → 靠 tick(onEvent + load/unload)触发重渲染
+const appObj: { components: Record<string, AnyComp> } = { components: {} }
+;(window as any).app = appObj
+const components = appObj.components
+
+// tick:data_change 或 load/unload 时 ++,触发 loadedList computed 重算
+const tick = ref(0)
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -30,39 +32,36 @@ let agent: ChatSdk | null = null
 const loadedIds = ref<string[]>([])
 const compTypes: CompType[] = ['banner', 'card', 'stat', 'chart']
 
-// 当前已注册的 dataSlots(从 sdk.listDataSlots() 实时取,反映动态增删)
-const registeredProps = ref<DataSlotSpec[]>([])
+// 当前已加载组件(从主数据 components 的 keys 实时取)
+const registeredIds = ref<string[]>([])
 function refreshRegistered() {
-  registeredProps.value = agent?.listDataSlots() ?? []
+  registeredIds.value = Object.keys(components)
 }
 
-// 加载一个组件 → 动态注册其 schema
+// 加载一个组件 → 集成方代码直接改主数据(普通对象,agent 可读可改);tick++ 触发列表重渲染
 let seq = 0
 function loadComp(type: CompType) {
   const id = `${type}-${++seq}`
   const comp = createComp(type, id)
-  components[id] = reactive(comp) as AnyComp
+  components[id] = comp
   loadedIds.value.push(id)
-  // ★ 动态注册:组件挂载时注册其 schema,立即对 AI 生效
-  //   description 写详细字段(给 LLM 看的字段说明书;LLM 看不到 schema 字段定义,只看 description)
-  agent?.addDataSlot({
-    path: `app.components.${id}`,
-    description: `${compTypeDescriptions[type]}(动态注册,id=${id})`,
-    schema: compSchemas[type],
-  })
   refreshRegistered()
+  tick.value++
 }
 
-// 卸载一个组件 → 动态移除其注册
+// 卸载一个组件 → 直接从主数据移除;tick++ 触发列表重渲染
 function unloadComp(id: string) {
   delete components[id]
   loadedIds.value = loadedIds.value.filter((x) => x !== id)
-  // ★ 动态移除:组件卸载时移除注册,快照栈一并清理
-  agent?.removeDataSlot(`app.components.${id}`)
   refreshRegistered()
+  tick.value++
 }
 
-const loadedList = computed(() => loadedIds.value.map((id) => ({ id, comp: components[id] })))
+// loadedList 依赖 tick(普通对象改属性不触发 computed,需 tick 驱动重算)
+const loadedList = computed(() => {
+  void tick.value
+  return loadedIds.value.map((id) => ({ id, comp: components[id] }))
+})
 
 onMounted(() => {
   agent = createChatSdk({
@@ -74,22 +73,29 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    // 静态常驻项:整体容器(宽松 schema,供 AI 了解结构);具体组件 path 由 addDataSlot 动态注册
-    dataSlots: [
-      { path: 'app.components', description: '动态组件容器(按 id 存,结构各异;各组件 path 由 sdk.addDataSlot 动态注册)', schema: z.record(z.string(), z.any()) },
-    ],
+    // 单主数据:动态组件容器(record),schema 宽松(组件结构各异,由 systemPrompt 描述各 type 字段)
+    data: {
+      schema: z.object({
+        components: z.record(z.string(), z.any()).describe('动态组件容器(按 id 存,结构各异)'),
+      }),
+      bind: appObj,
+      description: '动态组件容器(按组件 id 为键存对象,各组件 type 不同结构各异)',
+    },
     systemPrompt: [
-      '你是页面组件助手。window.app.components 是动态组件容器,按组件 id 为键存对象。',
-      '每个组件有自己的 type(banner/card/stat/chart),结构各异;具体组件的 path(如 app.components.banner-1)由集成方动态注册,动态增删、实时变化,操作前先查看当前可操作的具体组件 path。',
+      '你是页面组件助手。主数据(挂 window.app)的 components 是动态组件容器,按组件 id 为键存对象。',
+      '每个组件有自己的 type(banner/card/stat/chart),结构各异;组件由集成方代码动态增删,实时变化,操作前先 read 查看当前存在的组件 id。',
       '各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]}。',
-      '改某组件时 jsonPath 相对 app.components.<id>(如改 banner-1 标题:jsonPath="banner-1.title")。',
+      '改某组件时 jsonPath 相对主数据根(如改 banner-1 标题:jsonPath="components.banner-1.title")。',
       systemPromptHelpers.reliableWriteRules,
     ].join('\n'),
     onEvent(e) {
-      if (e.type === 'data_slot_change') refreshRegistered()
+      if ((e as any).type === 'data_change') {
+        refreshRegistered()
+        tick.value++
+      }
     },
     debug: true,
-    title: '动态注册组件',
+    title: '动态组件(单主数据)',
     placeholder: '先点左侧「加载」加几个组件,再让我改(如:把 banner-1 标题改成「限时特惠」)',
   })
   agent.mount()
@@ -102,10 +108,10 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
-      <h2>🧩 动态注册组件(window.app.components)</h2>
+      <h2>🧩 动态组件(window.app.components)</h2>
       <p class="hint">
         组件<strong>懒加载</strong>:点击下方按钮动态新增不同类型组件(结构各异)。<br />
-        组件挂载时调 <code>sdk.addDataSlot</code> 注册其 schema → AI <strong>立即可操作</strong>(无需重建 agent);卸载时 <code>sdk.removeDataSlot</code> 移除。
+        集成方代码直接改主数据 <code>appObj.components</code>(普通对象)→ AI 经 <code>edit_data</code> 按 jsonPath 改子属性,改动经 <code>onEvent('data_change')</code> 触发 tick 重渲染。
       </p>
 
       <div class="load-bar">
@@ -127,17 +133,17 @@ onUnmounted(() => agent?.unmount())
         </li>
       </ul>
 
-      <h3>当前已注册 dataSlots({{ registeredProps.length }})</h3>
-      <p class="hint small">来自 <code>sdk.listDataSlots()</code>,反映动态增删的实时状态:</p>
+      <h3>当前主数据 components keys({{ registeredIds.length }})</h3>
+      <p class="hint small">来自 <code>Object.keys(appObj.components)</code>,反映动态增删的实时状态:</p>
       <ul class="reg-list">
-        <li v-for="p in registeredProps" :key="p.path">
-          <code>{{ p.path }}</code> — <span class="reg-desc">{{ p.description }}</span>
+        <li v-for="id in registeredIds" :key="id">
+          <code>components.{{ id }}</code> — <span class="reg-desc">{{ compTypeDescriptions[(compTypes.find(t=>id.startsWith(t+'-'))) as CompType] }}</span>
         </li>
       </ul>
 
       <p class="try">
         💡 试试:加载几个组件 → 对话框输入「把 banner-1 标题改成『限时特惠』、背景改成 #b91c1c」<br />
-        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>write</code> 按 patch jsonPath 改,左侧实时更新
+        或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>write</code> 按 patch jsonPath 改,onEvent 触发 tick 重渲染
       </p>
     </aside>
     <section ref="root" class="pane pane-right"></section>

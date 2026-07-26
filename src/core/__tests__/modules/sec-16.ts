@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createDataSlotOps } from '../../tools/dataSlotOps'
+import { createDataOps } from '../../tools/dataOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -61,7 +61,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 1. 非 humanConfirm 工具 → 放行 next
     captured = null
     let hit = false
-    await mw.wrapToolCall!(mkCtx('get_data_slot', {}), async () => { hit = true; return { content: 'ok', status: 'done' } })
+    await mw.wrapToolCall!(mkCtx('get_data', {}), async () => { hit = true; return { content: 'ok', status: 'done' } })
     assert(hit && !captured, '非 humanConfirm 工具 → 放行不发事件')
 
     // 2. resolve(true) → 同意

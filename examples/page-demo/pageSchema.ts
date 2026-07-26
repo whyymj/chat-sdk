@@ -1,10 +1,10 @@
 /**
  * 测试模块:JSON 驱动的响应式页面
  *
- * 设计:window.page 是一个 reactive 对象 { title, theme, components[] }。
- * 配置:reactive 对象经 dataSlots 的 bind 字段直连 SDK,pageSchema 作为 schema 声明形状
- * (字段 .describe() 自动注入 systemPrompt「可操作属性」段 + 作为 dataSlot 写入校验 schema)。
- * Agent 通过 write 修改 page 字段,左侧 PageRenderer 实时响应更新。
+ * 设计:window.page 是一个普通对象 { title, theme, components[] }(非 reactive,展示 SDK 不依赖 Vue 响应式)。
+ * 配置:普通对象经 data 的 bind 字段直连 SDK,pageSchema 作为 schema 声明形状
+ * (字段 .describe() 自动注入 systemPrompt「可操作数据」段 + 作为写入校验 schema)。
+ * Agent 通过 write 修改 page 字段,集成方监听 onEvent('data_change') 触发 tick 重渲染画布。
  *
  * components 是 discriminated union(by type),写入时强校验,Agent 传错类型会收到清晰错误。
  */
@@ -68,7 +68,7 @@ export const initialPage: PageData = {
   ],
 }
 
-/** page-builder skill 全文:教 Agent 如何编辑页面(组件类型等业务知识;字段说明由 dataSlots schema .describe() 自动注入,此处不重复) */
+/** page-builder skill 全文:教 Agent 如何编辑页面(组件类型等业务知识;字段说明由 data schema .describe() 自动注入,此处不重复) */
 export const pageBuilderSkillContent = `# 页面构建 Skill(window.page)
 
 左侧页面由 \`window.page\` 这个 JSON 对象驱动,结构:{ title, theme, components[] }。

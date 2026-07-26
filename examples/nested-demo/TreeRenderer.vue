@@ -2,8 +2,8 @@
 /**
  * 递归页面渲染器 —— 自引用组件,渲染 window.Editor.PageInfo 的任意深度子树。
  *
- * window.Editor.PageInfo 由 App.vue 以 reactive() 挂载;Agent 经 write 改的是
- * 该 reactive 对象的子属性(不替换引用),故递归模板对 block.* 的依赖会响应式更新。
+ * window.Editor.PageInfo 为普通对象(非 reactive);App.vue 在 onEvent('data_change')
+ * 或人工编辑时 tick++,以 :key="tick" 强制本组件重建,重建时读最新 nodes prop 渲染。
  *
  * 自引用:组件名 TreeRenderer 在 template 内递归 <TreeRenderer :nodes="block.children" :level="level+1" />。
  */

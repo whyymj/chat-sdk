@@ -59,7 +59,7 @@ export async function run() {
       maxRetries: 5,
       maxParallelTools: 4,
       maxMemoryRounds: 30,
-      contextOptions: { preserveLastToolResults: ['describe_data_slot'] },
+      contextOptions: { preserveLastToolResults: ['describe_data'] },
       vfs: { maxBytes: 2 * 1024 * 1024 },
     })
     await sdk.mount()
@@ -82,12 +82,12 @@ export async function run() {
 
   console.log('[e2e:custom-injection] interceptors 透传 → 构造成功 + read/write 工具装配')
   {
-    globalThis.window.app = { secret: 's', title: 't' }
+    const bind = { secret: 's', title: 't' }
     const sdk = createChatSdk({
       ui: false, id: 'e2e-interceptors', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'app', description: '应用', schema: z.any() }],
+      data: { schema: z.any(), bind, description: '应用' },
       interceptors: {
-        read: (_p, v) => ({ ...v, secret: '***' }),
+        read: (v) => ({ ...v, secret: '***' }),
         write: () => ({ error: '禁止' }),
       },
     })
@@ -97,43 +97,40 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:custom-injection] dataSlots bind 字段 → 自动挂 window + 注册 dataSlot')
+  console.log('[e2e:custom-injection] data bind 字段 → 直连 bind(不挂 window)+ inspect().data')
   {
-    globalThis.window.app = {}
     const page = { title: '首页', items: [] }
     const PageSchema = z.object({ title: z.string().describe('页面标题'), count: z.number() })
     const sdk = createChatSdk({
       ui: false, id: 'e2e-bind', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'page', schema: PageSchema, bind: page }],
+      data: { schema: PageSchema, bind: page, description: '页面' },
     })
     await sdk.mount()
-    const slots = sdk.inspect().dataSlots.map((s) => s.path)
-    assert(slots.includes('page'), 'dataSlots bind → inspect().dataSlots 含 page')
-    assert(globalThis.window.page === page, 'dataSlots bind → 对象挂到 window.page(工具经此操作)')
+    const info = sdk.inspect().data
+    assert(!!info && info.description === '页面', 'data bind → inspect().data 反映')
+    assert(sdk.getData()?.bind === page, 'data bind → getData().bind === 传入对象(直连,不挂 window)')
     sdk.unmount()
   }
 
-  console.log('[e2e:custom-injection] dataSlots schema .describe() → systemPrompt 含可操作属性段')
+  console.log('[e2e:custom-injection] data schema .describe() → systemPrompt 含可操作数据段')
   {
-    globalThis.window.app = {}
     const PageSchema = z.object({ title: z.string().describe('页面标题'), count: z.number() })
     const sdk = createChatSdk({
       ui: false, id: 'e2e-io', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'page', description: '页面配置', schema: PageSchema }],
+      data: { schema: PageSchema, bind: { title: 't', count: 0 }, description: '页面配置' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
-    assert(/可操作属性/.test(sp), 'dataSlots schema → systemPrompt 含「可操作属性」段')
-    assert(/页面标题/.test(sp), 'dataSlots schema .describe() → systemPrompt 提取字段说明(页面标题)')
+    assert(/可操作数据/.test(sp), 'data schema → systemPrompt 含「可操作数据」段')
+    assert(/页面标题/.test(sp), 'data schema .describe() → systemPrompt 提取字段说明(页面标题)')
     sdk.unmount()
   }
 
   console.log('[e2e:custom-injection] interceptors.input/output 透传 → 构造成功')
   {
-    globalThis.window.app = {}
     const sdk = createChatSdk({
       ui: false, id: 'e2e-io-interceptors', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'app', description: '应用', schema: z.any() }],
+      data: { schema: z.any(), bind: { x: 1 }, description: '应用' },
       interceptors: {
         input: (x) => x,
         output: (x) => x,

@@ -15,11 +15,11 @@
  *
  * 运行:npm run dev → 访问 /human-confirm.html
  */
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, z, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
-// 宿主页面可被 Agent 操作的配置(reactive → 左侧预览实时刷新)
+// 宿主页面可被 Agent 操作的配置(普通对象,非 reactive → 靠 tick 重渲染预览)
 interface AppConfig {
   theme: 'fresh-blue' | 'night-purple' | 'warm-orange'
   density: 'compact' | 'cozy' | 'spacious'
@@ -32,7 +32,7 @@ const THEMES: Record<AppConfig['theme'], { name: string; bg: string; fg: string;
 }
 const DENSITY_PAD: Record<AppConfig['density'], number> = { compact: 8, cozy: 16, spacious: 24 }
 
-// appConfig 的 zod schema:作为 dataSlots schema 自动注入字段说明(.describe())+ 写入校验
+// appConfig 的 zod schema:作为 data schema 自动注入字段说明(.describe())+ 写入校验
 const appConfigSchema = z.object({
   theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange']).describe('界面主题:清新蓝/暗夜紫/暖橙'),
   density: z.enum(['compact', 'cozy', 'spacious']).describe('信息密度:紧凑/舒适/宽松'),
@@ -40,10 +40,13 @@ const appConfigSchema = z.object({
 })
 
 const w = window as any
-// 顶层建响应式 appConfig 挂 window(供模板渲染),同时作为 dataSlots bind 入参
-const appConfigObj = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12 })
+// 顶层建普通对象 appConfig 挂 window(供页面读取),同时作为 data bind 入参;非 reactive → 靠 tick 重渲染
+const appConfigObj: AppConfig = { theme: 'fresh-blue', density: 'cozy', radius: 12 }
 w.appConfig = appConfigObj
 const config = appConfigObj
+
+// tick:onEvent('data_change') 时 ++,:key 强制预览重渲染读最新 config
+const tick = ref(0)
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -58,10 +61,8 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    // dataSlots 统一配置:bind 字段直连 reactive(自动挂 window + 注册 dataSlot),schema .describe() 自动注入字段说明到 systemPrompt
-    dataSlots: [
-      { path: 'appConfig', schema: appConfigSchema, bind: appConfigObj },
-    ],
+    // data 单主对象:bind 直连普通对象(集成方自己挂 window.appConfig),schema .describe() 自动注入字段说明到 systemPrompt
+    data: { schema: appConfigSchema, bind: appConfigObj },
     systemPrompt: [
       '你是界面风格设计助手。',
       '当用户给开放性需求(如「帮我设计风格」「换个感觉」「给几个方案我挑」)时,必须先征询用户(把候选方案做成可点选选项 + 给出你的推荐),不要只回文字罗列方案让用户自己回复。',
@@ -72,6 +73,10 @@ onMounted(() => {
     debug: true,
     title: '人工确认 · AI 主动征询',
     placeholder: '试试:帮我设计个界面风格;换个感觉,给几个方案我挑',
+    // 非 reactive bind:监听 data_change 触发 tick,:key 强制预览重渲染
+    onEvent(e) {
+      if ((e as any).type === 'data_change') tick.value++
+    },
   })
   agent.mount()
 })
@@ -88,16 +93,8 @@ onUnmounted(() => agent?.unmount())
         用户选完再用 <code>write</code> 落地(写前再弹一次被动确认)。两层 human-in-the-loop 一次看清。
       </p>
 
-      <!-- 实时预览:由 window.appConfig(reactive)驱动,Agent 改 → 立即刷新 -->
-      <div
-        class="preview"
-        :style="{
-          background: THEMES[config.theme].bg,
-          color: THEMES[config.theme].fg,
-          padding: DENSITY_PAD[config.density] + 'px',
-          borderRadius: config.radius + 'px',
-        }"
-      >
+      <!-- 预览:由 window.appConfig(普通对象)驱动,Agent 改 → onEvent 触发 tick → :key 重渲染 -->
+      <div :key="tick" class="preview" :style="{ background: THEMES[config.theme].bg, color: THEMES[config.theme].fg, padding: DENSITY_PAD[config.density] + 'px', borderRadius: config.radius + 'px' }">
         <div class="preview__tag" :style="{ background: THEMES[config.theme].accent, color: '#fff' }">
           {{ THEMES[config.theme].name }} · {{ config.density }} · r{{ config.radius }}
         </div>
@@ -113,7 +110,7 @@ onUnmounted(() => agent?.unmount())
         </button>
       </div>
 
-      <ul class="cfg">
+      <ul :key="tick" class="cfg">
         <li><span>theme</span><code>{{ config.theme }}</code></li>
         <li><span>density</span><code>{{ config.density }}</code></li>
         <li><span>radius</span><code>{{ config.radius }}px</code></li>

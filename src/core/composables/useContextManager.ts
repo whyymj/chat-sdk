@@ -46,7 +46,7 @@ export interface ContextManagerOptions {
   getRegisteredSlots?: () => { path: string; description: string }[]
   /**
    * 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉)。
-   * 如 ['describe_data_slot','list_data_slots'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
+   * 如 ['describe_data','read'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
    */
   preserveLastToolResults?: string[]
 }
@@ -255,13 +255,13 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     if (recallBlock) {
       parts.push(`\n【与当前问题可能相关的早期对话】`, recallBlock)
     }
-    // A:注入当前可操作数据槽 属性快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
+    // A:注入当前可操作数据快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
     if (config.getRegisteredSlots) {
       try {
         const props = config.getRegisteredSlots()
         if (props.length) {
-          const propLines = props.map((p) => `- ${p.path}: ${p.description}`).join('\n')
-          parts.push(`\n【当前可操作数据槽 属性(动态增删后的最新状态,操作前以 list_data_slots 为准)】`, propLines)
+          const propLines = props.map((p) => `- ${p.path ? p.path + ': ' : ''}${p.description}`).join('\n')
+          parts.push(`\n【当前可操作数据(动态增删后的最新状态,操作前以 describe_data / read 为准)】`, propLines)
         }
       } catch {
         /* getter 抛错不影响压缩 */

@@ -38,8 +38,9 @@
 
   <script>
     const { createChatSdk, z } = window.ChatSdk
-    // 预置可操作的数据槽
-    window.app = { theme: 'light', count: 0 }
+    // 主数据对象(单对象);集成方自己挂 window.app 供页面读取,SDK 工具直接读写 bind
+    const appObj = { theme: 'light', count: 0 }
+    window.app = appObj
 
     createChatSdk({
       container: '#root',
@@ -51,14 +52,18 @@
         model: 'deepseek-chat',
       },
       systemPrompt:
-        '你是页面操作助手。window.app 上注册了可改属性,按用户意图改对应字段即可。',
-      dataSlots: [
-        { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
-        { path: 'app.count', description: '计数器(整数)', schema: z.number().int() },
-      ],
+        '你是页面操作助手。主数据(挂 window.app)上注册了可改字段(theme/count),按用户意图改对应字段即可。',
+      data: {
+        schema: z.object({
+          theme: z.enum(['light', 'dark']).describe('主题'),
+          count: z.number().int().describe('计数器(整数)'),
+        }),
+        bind: appObj,
+        description: '应用配置',
+      },
       debug: true,
       title: '页面内 Agent(CDN)',
-      placeholder: '把 app.theme 改成 dark …',
+      placeholder: '把 theme 改成 dark …',
     }).mount()
   </script>
 </body>
