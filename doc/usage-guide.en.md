@@ -73,8 +73,9 @@ Minimal example — let the Agent read/write `window.app`:
 ```ts
 import { createChatSdk, z } from 'page-agent-sdk'
 
-// 1. your page state (any structure)
-window.app = { title: 'Hello', theme: 'light' }
+// 1. your page state (any structure; reactive/plain object both work)
+const app = { title: 'Hello', theme: 'light' }
+window.app = app  // optional: mount to window for your page to read; SDK tools operate on `bind` directly
 
 // 2. mount the Agent
 createChatSdk({
@@ -86,27 +87,31 @@ createChatSdk({
     baseUrl: 'https://api.deepseek.com/v1',
     model: 'deepseek-chat',
   },
-  systemPrompt: 'You are a page assistant. You may read/write window.app title / theme.',
-  dataSlots: [
-    { path: 'app.title', description: 'Page title', schema: z.string() },
-    { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
-  ],
+  systemPrompt: 'You are a page assistant. You may read/write the main data title / theme.',
+  data: {
+    schema: z.object({
+      title: z.string().describe('Page title'),
+      theme: z.enum(['light', 'dark']).describe('Theme'),
+    }),
+    bind: app,                            // direct-bind object (tools read/write bind, reactive refresh)
+    description: 'App config',           // optional: auto-generated if omitted
+  },
 }).mount()
 ```
 
-Open the page, type "change theme to dark" in the dialog → Agent calls `write({ path:'app.theme', value:'dark' })` to change `window.app.theme` directly. Done.
+Open the page, type "change theme to dark" in the dialog → Agent calls `write({ value:{ theme:'dark' }, patch:{ op:'merge' } })` to change `app.theme` directly. Done.
 
 ## 4. Core concepts
 
 | Concept | Description |
 |---|---|
 | **Agent** | ReAct loop: think → call tool → observe → think again, until final reply |
-| **dataSlots** | You declare "which data slots the Agent may read/write + value schema". Agent can only touch these (scope control) |
+| **data** | You declare "which main data object the Agent may read/write + value schema". Agent can only write schema-valid values (scope + validation) |
 | **tool** | The Agent's hands. Built-in window/vfs/fetch tools + ones you add via `defineTool` |
 | **middleware** | Hooks into the Agent lifecycle. Built-in todos/skills/vfs/summarization/memory/permissions/verify; also custom |
 | **storage** | Persist dialog/workspace/todos/memory (IndexedDB etc.), resumable after refresh |
 
-**Mental model**: you only handle ① declare `dataSlots` (what the Agent can touch) ② write `systemPrompt` (what the Agent should do) ③ optionally add `tools`/`skills`/`middleware`. The rest is up to the Agent.
+**Mental model**: you only handle ① declare `data` (what the Agent can touch) ② write `systemPrompt` (what the Agent should do) ③ optionally add `tools`/`skills`/`middleware`. The rest is up to the Agent.
 
 ## 5. Options reference
 
@@ -121,13 +126,13 @@ createChatSdk({
   // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per toolMode — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data
-  dataSlots: [{ path, description, schema }],  // register data slots + zod schema
+  data: { schema, bind, description? },  // single main object: bind directly connects reactive/plain object (tools read/write bind, not auto-mounted to window); schema field .describe() auto-injected into systemPrompt「operable data」section
   tools: [...],                    // custom tools (defineTool)
   skills: [...],                   // custom skills (defineSkill)
   memory: '...',                   // AGENTS.md-style persistent directives
 
   // capability toggles (default all on; verify default off)
-  capabilities: { planning?, dataSlotOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify? },
+  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify? },
 
   // human-in-the-loop
   humanConfirm: true,               // proactive inquiry (default on; AI asks when uncertain/multi-plan)
@@ -175,18 +180,18 @@ createChatSdk({
 
 ### 6.1 data slot ops (let the Agent edit your JSON)
 
-Declare `dataSlots`; the Agent reads/writes via tools, validated by schema:
+Declare `data`; the Agent reads/writes via tools, validated by schema:
 
 - **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load
-- `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` (hidden in `simple` mode, merged into `read`)
-- `set_data_slot` / `edit_data_slot` (jsonPath incremental patch) / `delete_data_slot` (hidden in `simple` mode, merged into `write`)
-- `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
-- `query_data_slot` (JSONPath) / `search_data_slot` (fuzzy) / `eval_script` (sandboxed)
+- `describe_data` / `describe_data` / `get_data` / `get_data` (hidden in `simple` mode, merged into `read`)
+- `set_data` / `edit_data` (jsonPath incremental patch) / `delete_data` (hidden in `simple` mode, merged into `write`)
+- `snapshot_data` / `list_data_snapshots` / `restore_data`
+- `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 
 Key points:
 - `set`/`edit`/`delete` are restricted to registered props (scope control); `set`/`edit` validate against schema — invalid → structured error (no write)
-- `edit_data_slot` patches by `jsonPath` (set/remove/merge/append) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
-- Snapshots auto-stored before `set`/`edit`/`delete`; `restore_data_snapshot` rolls back
+- `edit_data` patches by `jsonPath` (set/remove/merge/append) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
+- Snapshots auto-stored before `set`/`edit`/`delete`; `restore_data` rolls back
 - **Zero-bridge**: tool body's `window` = host page's main window (direct)
 
 #### High-level `read`/`write` (2.2+, recommended)
@@ -206,7 +211,7 @@ write({ path: 'page', value: { title: 'Merged title' }, patch: { op: 'merge' } }
 write({ path: 'page.oldField', del: true })
 ```
 
-`write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data_snapshot`) ③ optimistic lock (autoLock, compares hash from `read`; conflict → `VERSION_CONFLICT` or human escalation).
+`write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data`) ③ optimistic lock (autoLock, compares hash from `read`; conflict → `VERSION_CONFLICT` or human escalation).
 
 #### `toolMode` — tool presentation
 
@@ -248,50 +253,51 @@ createChatSdk({
   - `input`: preprocess user message at send entry (rewrite/audit)
   - `output`: postprocess before agent returns (rewrite final reply)
 
-#### `dataSlots` unified config (3.0+, recommended, declarative)
+#### `data` single main-object config (recommended, declarative)
 
-`dataSlots` is the single entry for data-slot config — combining schema declaration + object direct-bind + auto field-hint injection:
+`data` is the single entry for data config — combining schema declaration + object direct-bind + auto field-hint injection:
 
 ```ts
 import { reactive } from 'vue'  // or any reactivity impl
-const PageSchema = z.object({ title: z.string().describe('page title'), count: z.number() })
+const PageSchema = z.object({
+  title: z.string().describe('page title'),
+  count: z.number().describe('count'),
+})
 const page = reactive({ title: 'Home', count: 0 })
 
 const sdk = createChatSdk({
   // ...,
-  dataSlots: [
-    {
-      path: 'page',            // path on window (dot-nested supported)
-      schema: PageSchema,       // zod schema: write validation + field .describe() auto-injected into systemPrompt「可操作属性」section
-      bind: page,               // optional: reactive/plain object auto-mounted to window[path] + registered as dataSlot
-    },
-  ],
+  data: {
+    schema: PageSchema,       // zod schema: write validation + field .describe() auto-injected into systemPrompt「operable data」section
+    bind: page,               // required: reactive/plain object direct-bind (tools read/write bind directly)
+    description: 'Page config', // optional: auto-generated if omitted
+  },
 })
 // LLM write page → page reactively updates; integrator changes page → LLM read sees it
 ```
 
-- `schema` field `.describe()` is auto-extracted (via `extractSchemaHint`) into the systemPrompt「可操作属性」section — no manual description needed
-- `bind` is an optional `dataSlots` field: pass a reactive/plain object → auto-mount `window[path] = bind` (dot-nested path supported) + register as dataSlot; underlying still goes through registry + schema validation + optimistic lock
-- Omit `bind` when the integrator mounts `window[path]` themselves (object already exists / dynamic registration / field-whitelist read)
+- `bind` is required: direct-bind a reactive/plain object (tools read/write bind, reactive refresh); SDK no longer auto-mounts to window — integrator mounts `window.app = app` themselves if the page needs to read it
+- `schema` field `.describe()` is auto-extracted (via `extractSchemaHint`) into the systemPrompt「operable data」section — no manual description needed
 - Preview the hint to be injected: `extractSchemaHint(schema)` (exported)
 - **`bind` does NOT require reactive**: any object works. The difference is "reactive refresh after write":
   - Pass `reactive(obj)` (Vue): Agent `write` mutates props → template/watch auto-reactive (recommended for UI)
   - Pass a plain object: Agent `write` can mutate data, but the page won't react (suitable for headless / backend / integrator-managed refresh via `onEvent` or `watch`)
   - Tools `set`/`write` use `restoreInPlace` to mutate props in-place (no root-ref replacement), compatible with reactive proxies; plain objects also write fine
 - **Notifying the outside world of changes** (see §onEvent for details):
-  - `onEvent` / `sdk.hook` subscribe to `data_slot_change` event (fires after write, with `path`/`operation`/`value`) — for headless / non-Vue / plain-object bind
+  - `onEvent` / `sdk.hook` subscribe to `data_change` event (fires after write, with `operation`/`value`) — for headless / non-Vue / plain-object bind
   - Vue reactivity (bind with reactive) — template/watch auto-react, no manual notify needed
   - `onEvent` and reactivity can coexist: reactivity for UI refresh, `onEvent` for audit/analytics/cross-system sync
+- **Runtime swap**: `sdk.setData(config)` / `sdk.getData()` (replaces old add/remove/listDataSlots)
 
 #### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
 
-When a prop may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: `get_data_slot` returns a value with `hash=xxx` appended; pass `expectedHash` on write to verify.
+When the main data may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: `get_data`/`read` returns a value with `hash=xxx` appended (hash of the entire bound object); pass `expectedHash` on write to verify against the whole object.
 
 ```ts
 // Agent workflow (run by the LLM automatically; integrator writes nothing)
-// 1. get → "page.title = old (hash=a1b2)"
-// 2. write({ path:'page.title', value:'new' })  // auto-locks with last read hash
-//    if externally modified since → hash mismatch → conflict
+// 1. read({ jsonPath:'title' }) → "main data @ title = old (hash=a1b2)"
+// 2. write({ value:'new', patch:{ op:'set', jsonPath:'title' } })  // auto-locks with last read hash (whole-object)
+//    if any field externally modified since → whole-object hash mismatch → conflict
 ```
 
 **On conflict (human-in-the-loop enabled by default):** the tool suspends, `sdk.pendingConflict` ref is set, and the built-in ChatDialog shows a conflict bar with three choices:
@@ -322,7 +328,7 @@ sdk.hook((e) => {
 
 **Auto-resolution (prevent permanent hang):** on user stop (abort) / `unmount()` / `switchSession()`, a pending conflict is auto-resolved as "keep external".
 
-> Omitting `expectedHash` → backward-compatible direct write (no check). Using `createDataSlotOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
+> Omitting `expectedHash` → backward-compatible direct write (no check). Using `createDataOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
 
 ### 6.2 Custom tools
 
@@ -381,7 +387,7 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 
 | Event | When | Fields |
 |---|---|---|
-| `data_slot_change` | After Agent calls a write tool (high-level `write`, or low-level `set`/`edit`/`delete`/`restore_data_snapshot`) | `path` / `operation` (`set`/`edit`/`delete`/`restore`; `write` infers from args) / `value` (post-change value) |
+| `data_change` | After Agent calls a write tool (high-level `write`, or low-level `set`/`edit`/`delete`/`restore_data`) | `operation` (`set`/`edit`/`delete`/`restore`; `write` infers from args) / `value` (post-change value, i.e. the entire bind) |
 | `message_update` | After each Agent round | `count` (message count) |
 | `tool_call` | Before tool call (stream mode) | `name` / `args` |
 | `tool_result` | After tool returns (stream mode) | `name` / `result` / `status` |
@@ -392,7 +398,7 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 | `error` | Model call / tool throws | `message` |
 
 > ⚠️ `approval_request` is NOT forwarded (UI already handles it, to avoid double `resolve`).
-> ⚠️ `tool_call`/`tool_result`/`text`/`done` etc. fire only in **stream mode** (UI defaults to stream; imperative `sdk.send` uses invoke — no stream events, but `data_slot_change`/`message_update`/`error` still fire).
+> ⚠️ `tool_call`/`tool_result`/`text`/`done` etc. fire only in **stream mode** (UI defaults to stream; imperative `sdk.send` uses invoke — no stream events, but `data_change`/`message_update`/`error` still fire).
 
 **Example** (host page reactive refresh, replacing `setInterval` polling):
 
@@ -400,8 +406,8 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 createChatSdk({
   /* ... */
   onEvent(event) {
-    if (event.type === 'data_slot_change') {
-      // Agent changed a data slot → refresh your UI mirror in real time
+    if (event.type === 'data_change') {
+      // Agent changed the main data → refresh your UI mirror in real time
       renderState()
     } else if (event.type === 'tool_call') {
       analytics.track('agent_tool_call', { name: event.name })
@@ -423,7 +429,7 @@ const sdk = createChatSdk({ /* onEvent not required */ }).mount()
 
 // listener 1: host page reactive refresh
 const off1 = sdk.hook((event) => {
-  if (event.type === 'data_slot_change') renderUI()
+  if (event.type === 'data_change') renderUI()
 })
 
 // listener 2: analytics (coexists with listener 1, independent)
@@ -464,7 +470,7 @@ The SDK core is **framework-agnostic JS** and runs in Node.js (headless mode) as
 
 **Server config essentials**:
 - `ui: false` — headless, no ChatDialog (server has no DOM)
-- `capabilities: { dataSlotOps: false, fetch: false }` — disable browser-dependent tools (dataSlotOps needs `window`; `fetch_document` needs `fetch` — Node 18+ has global fetch, can keep)
+- `capabilities: { dataOps: false, fetch: false }` — disable browser-dependent tools (dataOps needs `window`; `fetch_document` needs `fetch` — Node 18+ has global fetch, can keep)
 - `storage: 'memory'` — memory backend (server has no IndexedDB/localStorage); omit for non-persistent
 - Inject business tools via `tools` (`defineTool`); drive via `send`/`stream`
 
@@ -484,7 +490,7 @@ const sdk = createChatSdk({
   storage: 'memory',
   llm: { apiKey: process.env.AI_API_KEY, baseUrl: '...', model: '...' },
   systemPrompt: 'You are a calc assistant; use add tool.',
-  capabilities: { dataSlotOps: false, fetch: false },
+  capabilities: { dataOps: false, fetch: false },
   tools: [add],
 })
 await sdk.mount()
@@ -493,9 +499,9 @@ console.log(reply) // AI calls add → "3 + 5 = 8"
 ```
 
 **Server-available**: custom tools / `fetch_document` (Node 18+) / subagents / verify / vfs / context compression / memory / onEvent
-**Server-unavailable**: dataSlotOps (needs `window`) / ChatDialog UI (needs DOM) / IndexedDB·localStorage·sessionStorage (use `memory`)
+**Server-unavailable**: dataOps (needs `window`) / ChatDialog UI (needs DOM) / IndexedDB·localStorage·sessionStorage (use `memory`)
 
-> `eval_script` relies on Web Worker (part of dataSlotOps, disabled). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
+> `eval_script` relies on Web Worker (part of dataOps, disabled). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
 
 ## 8. Framework-agnostic / CDN
 
@@ -555,16 +561,16 @@ Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill a
 
 | # | Scenario | Key setup |
 |---|---|---|
-| 1 | Low-code page builder | `dataSlots` = component tree; `write` with `patch` jsonPath; `onEvent` → canvas refresh; `checkpoint` + `approval` |
-| 2 | Form designer | `dataSlots` = field defs (enum/required schemas); schema validation prevents malformed forms |
-| 3 | CMS batch ops | `eval_script` bulk loops; `search_data_slot` filter; `write` with `patch` targeted edits |
+| 1 | Low-code page builder | `data` = component tree; `write` with `patch` jsonPath; `onEvent` → canvas refresh; `checkpoint` + `approval` |
+| 2 | Form designer | `data` = field defs (enum/required schemas); schema validation prevents malformed forms |
+| 3 | CMS batch ops | `eval_script` bulk loops; `search_data` filter; `write` with `patch` targeted edits |
 | 4 | Ops config console | `approval` human-confirm; `capabilities.verify:true` write-back read; `checkpoint` |
-| 5 | AI-native assistant | `capabilities:{dataSlotOps:false,fetch:false}` + custom `tools` (product API) |
-| 6 | Research agent | `capabilities:{dataSlotOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
-| 7 | Server-side Node.js | `ui:false` + `storage:'memory'` + `capabilities:{dataSlotOps:false,fetch:false}`; drive via `sdk.send` |
+| 5 | AI-native assistant | `capabilities:{dataOps:false,fetch:false}` + custom `tools` (product API) |
+| 6 | Research agent | `capabilities:{dataOps:false}`; `subagent:{allowedTools:['fetch_document']}`; `contextPreset:'conservative'` |
+| 7 | Server-side Node.js | `ui:false` + `storage:'memory'` + `capabilities:{dataOps:false,fetch:false}`; drive via `sdk.send` |
 | 8 | Multi-agent on one page | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
 | 9 | MCP integration | `mcp:[{transport,url}]` remote tools; `@modelcontextprotocol/sdk` optional peerDep |
 
 Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation).
 
-**Advanced extensibility examples** (custom tools / skills / subagents / MCP) in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/advanced.md`: copy-paste code for `defineTool` (error handling + coexisting with dataSlotOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha).
+**Advanced extensibility examples** (custom tools / skills / subagents / MCP) in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/advanced.md`: copy-paste code for `defineTool` (error handling + coexisting with dataOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha).

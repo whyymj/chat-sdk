@@ -1,7 +1,7 @@
 /**
  * 会话级 Checkpoint —— 整体回滚到"上次正常时"(human-in-the-loop 的回退侧)
  *
- * 与 dataSlotOps 的 per-path 快照互补:
+ * 与 dataOps 的 per-path 快照互补:
  *  - per-path 快照:精细,单属性回退,自动随 set/edit/delete 入栈
  *  - 会话 checkpoint:整体(对话历史 + 全部注册 数据槽 + vfs + todos),回滚到某轮起点
  *
@@ -68,7 +68,7 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
 
-// ---- 就地 path 读写(与 dataSlotOps 同思路,保留 reactive 容器引用) ----
+// ---- 就地 path 读写(与 dataOps 同思路,保留 reactive 容器引用) ----
 function getByPath(obj: unknown, path: string): unknown {
   const parts = path.split('.')
   let cur: any = obj

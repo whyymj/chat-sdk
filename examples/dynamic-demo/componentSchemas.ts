@@ -1,11 +1,11 @@
 import { z } from '../../src/core'
 
 /**
- * 动态注册示例的组件类型与各自 schema —— 演示「懒加载、结构各异」的组件如何经 sdk.addDataSlot 动态注册。
+ * 动态组件示例的组件类型与各自 schema —— 演示「懒加载、结构各异」的组件如何用单主数据 + edit_data 增量管理。
  *
  * 每种组件结构不同:banner(标题+配色)/ card(标题+价格+标签)/ stat(指标+单位)/ chart(图表类型+数据数组)。
- * 组件挂载时调 sdk.addDataSlot({ path: `app.components.${id}`, schema });卸载时 sdk.removeDataSlot。
- * Agent 即可按各自 schema 操作这些动态注册的 path,无需在 createChatSdk 时预声明全部组件。
+ * 组件挂载时集成方代码直接改 appObj.components[id](普通对象);Agent 用 edit_data 按 jsonPath 改子字段。
+ * 单主数据 schema 宽松(z.record),各组件结构由 systemPrompt 描述,无需在 createChatSdk 时预声明全部组件。
  */
 
 export interface BannerComp { id: string; type: 'banner'; title: string; bg: string; color: string }

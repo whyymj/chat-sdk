@@ -13,7 +13,7 @@
  *
  * 运行:npm run dev → 访问 /planner.html
  */
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, z, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
@@ -31,7 +31,7 @@ const THEMES: Record<string, { name: string; bg: string; fg: string }> = {
 }
 const DENSITY_PAD: Record<AppConfig['density'], number> = { compact: 8, cozy: 16, spacious: 24 }
 
-// appConfig 的 zod schema:作为 dataSlots schema 自动注入字段说明(.describe())+ 写入校验
+// appConfig 的 zod schema:作为 data schema 自动注入字段说明(.describe())+ 写入校验
 const appConfigSchema = z.object({
   theme: z.enum(['fresh-blue', 'night-purple', 'warm-orange', 'forest-green']).describe('界面主题:清新蓝/暗夜紫/暖橙/森绿'),
   density: z.enum(['compact', 'cozy', 'spacious']).describe('信息密度:紧凑/舒适/宽松'),
@@ -40,10 +40,13 @@ const appConfigSchema = z.object({
 })
 
 const w = window as any
-// 顶层建响应式 appConfig 挂 window(供模板渲染),同时作为 dataSlots bind 入参
-const appConfigObj = reactive<AppConfig>({ theme: 'fresh-blue', density: 'cozy', radius: 12, accent: '#3b82f6' })
+// 顶层建普通对象 appConfig 挂 window(供页面读取),同时作为 data bind 入参;非 reactive → 靠 tick 重渲染
+const appConfigObj: AppConfig = { theme: 'fresh-blue', density: 'cozy', radius: 12, accent: '#3b82f6' }
 w.appConfig = appConfigObj
 const config = appConfigObj
+
+// tick:onEvent('data_change') 时 ++,:key 强制预览重渲染读最新 config
+const tick = ref(0)
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
@@ -59,10 +62,8 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
       temperature: 0.3, // 主 agent 低温度:执行落地要稳
     },
-    // dataSlots 统一配置:bind 字段直连 reactive(自动挂 window + 注册 dataSlot),schema .describe() 自动注入字段说明到 systemPrompt
-    dataSlots: [
-      { path: 'appConfig', schema: appConfigSchema, bind: appConfigObj },
-    ],
+    // data 单主对象:bind 直连普通对象(集成方自己挂 window.appConfig),schema .describe() 自动注入字段说明到 systemPrompt
+    data: { schema: appConfigSchema, bind: appConfigObj },
     systemPrompt: [
       '你是界面设计执行助手。',
       '遇到创作/设计类需求,按"规划-反思-执行"流程:先委派 planner 出方案,再据需要委派 reflector 审查,最后落地。',
@@ -91,6 +92,10 @@ onMounted(() => {
     debug: true,
     title: '规划-反思-执行',
     placeholder: '试试:帮我设计夏日主题风格;给页面换个有创意的感觉',
+    // 非 reactive bind:监听 data_change 触发 tick,:key 强制预览重渲染
+    onEvent(e) {
+      if ((e as any).type === 'data_change') tick.value++
+    },
   })
   agent.mount()
 })
@@ -109,6 +114,7 @@ onUnmounted(() => agent?.unmount())
       </p>
 
       <div
+        :key="tick"
         class="preview"
         :style="{
           background: (THEMES[config.theme] || THEMES['fresh-blue']).bg,
@@ -122,11 +128,11 @@ onUnmounted(() => agent?.unmount())
           {{ (THEMES[config.theme] || THEMES['fresh-blue']).name }} · {{ config.density }} · r{{ config.radius }}
         </div>
         <h3 class="preview__title">实时预览</h3>
-        <p class="preview__text">theme / density / radius / accent 由 <code style="color: inherit">window.appConfig</code> 驱动,主 agent 落地后实时刷新。</p>
+        <p class="preview__text">theme / density / radius / accent 由 <code style="color: inherit">window.appConfig</code> 驱动,主 agent 落地后 onEvent 触发 tick 重渲染。</p>
         <button class="preview__btn" :style="{ background: config.accent, borderRadius: Math.max(4, config.radius - 4) + 'px' }">示例按钮</button>
       </div>
 
-      <ul class="cfg">
+      <ul :key="'cfg-' + tick" class="cfg">
         <li><span>theme</span><code>{{ config.theme }}</code></li>
         <li><span>density</span><code>{{ config.density }}</code></li>
         <li><span>radius</span><code>{{ config.radius }}px</code></li>

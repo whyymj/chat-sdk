@@ -2,9 +2,9 @@
 /**
  * 工具分离演示 —— 手动注入工具集(替代默认自动装配)
  *
- * 默认 createChatSdk 按 capabilities 自动装 dataSlotOps + fetchDoc(零配置)。
+ * 默认 createChatSdk 按 capabilities 自动装 dataOps + fetchDoc(零配置)。
  * 本 demo 展示「手动注入」:关闭默认自动装配(capabilities),改用 tools 手动组合(散工具 / 展开的预设数组);
- * 也演示 createDataSlotOps / fetchDocTools 的独立导出(按 tools 自由拼装)。
+ * 也演示 createDataOps / fetchDocTools 的独立导出(按 tools 自由拼装)。
  * 适合「主要业务工具集单独引入、按需组合」的进阶用法。
  *
  * 运行:npm run dev → 访问 /toolsets.html
@@ -13,17 +13,16 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import {
   createChatSdk,
   defineTool,
-  defineDataSlotToolset,
+  defineDataToolset,
   fetchTools,
   z,
   type ChatSdk,
 } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
-// 声明可操作的 数据槽(范围 + schema 校验)
-const dataSlots = [
-  { path: 'app.notes', description: '调研笔记', schema: z.array(z.string()) },
-]
+// 声明主数据对象(单对象 + schema 校验);bind 直连普通 notes 数组(非 reactive;模板不读 notes,无需 tick)
+const notesObj: string[] = []
+const data = { schema: z.array(z.string()), bind: notesObj, description: '调研笔记' }
 
 // 自定义工具:模拟文档搜索(真实场景换成你的 API)
 const search = defineTool({
@@ -47,12 +46,12 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入 app.notes。',
-    dataSlots,
+      '你是文档调研助手。用 search_docs 搜索、fetch_document 抓取网页;结论可写入主数据(调研笔记数组)。',
+    data,
     // ↓ 工具分离:关闭默认自动装配,改用 tools 手动组合(散工具 / 展开的预设数组)
-    capabilities: { dataSlotOps: false, fetch: false },
+    capabilities: { dataOps: false, fetch: false },
     tools: [
-      ...defineDataSlotToolset(dataSlots), // 手动注入 数据槽工具集(展开数组)
+      ...defineDataToolset(data), // 手动注入 数据工具集(展开数组)
       ...fetchTools, // 手动注入 fetch_document
       search, // 业务自定义工具
     ],
@@ -71,21 +70,21 @@ onUnmounted(() => agent?.unmount())
     <aside class="pane pane-left">
       <h2>🧰 工具分离演示</h2>
       <p class="hint">
-        默认 <code>createChatSdk</code> 按 <code>capabilities</code> 自动装 dataSlotOps + fetch(零配置)。
+        默认 <code>createChatSdk</code> 按 <code>capabilities</code> 自动装 dataOps + fetch(零配置)。
         本 demo 展示<strong>手动注入</strong>:关闭默认自动装配,改用 <code>tools</code> 手动组合(散工具 / 展开预设数组)。
       </p>
-      <pre v-pre class="code">capabilities: { dataSlotOps: false, fetch: false }
+      <pre v-pre class="code">capabilities: { dataOps: false, fetch: false }
 tools: [
-  ...defineDataSlotToolset(dataSlots),  // 手动注入 数据槽工具集
-  ...fetchTools,                         // 手动注入 fetch_document
-  search_docs,                           // 业务自定义工具
+  ...defineDataToolset(data),  // 手动注入 数据工具集
+  ...fetchTools,               // 手动注入 fetch_document
+  search_docs,                 // 业务自定义工具
 ]</pre>
       <p class="hint">
-        ▶ 打开「日志 / Agent 信息」tab:工具池只有<strong>手动注入的</strong>(dataSlotOps + fetch_document + search_docs)。
+        ▶ 打开「日志 / Agent 信息」tab:工具池只有<strong>手动注入的</strong>(dataOps + fetch_document + search_docs)。
         planning / skills / vfs / subagent 仍开(可经 <code>capabilities</code> 进一步关,省 token)。
       </p>
       <p class="hint muted">
-        进阶:也可 <code>import { createDataSlotOps, fetchDocTools }</code> 独立拿到工具数组,
+        进阶:也可 <code>import { createDataOps, fetchDocTools }</code> 独立拿到工具数组,
         按 <code>tools</code> 自由拼装(不经 toolset 封装)。
       </p>
     </aside>

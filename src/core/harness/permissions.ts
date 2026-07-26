@@ -17,11 +17,13 @@ export interface PermissionRule {
   mode: 'allow' | 'deny'
 }
 
-const WRITE_TOOLS = new Set(['set_data_slot', 'delete_data_slot', 'vfs_write', 'vfs_edit'])
+const WRITE_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write', 'vfs_write', 'vfs_edit'])
 const READ_TOOLS = new Set([
-  'get_data_slot',
-  'describe_data_slot',
-  'list_data_slots',
+  'get_data',
+  'describe_data',
+  'read',
+  'query_data',
+  'search_data',
   'vfs_read',
   'vfs_ls',
   'vfs_glob',
@@ -67,7 +69,7 @@ export function createPermissionsMiddleware(rules: PermissionRule[]): Middleware
         : READ_TOOLS.has(ctx.name)
           ? 'read'
           : null
-      const scope = (ctx.args?.path as string) || ''
+      const scope = (ctx.args?.jsonPath as string) || (ctx.args?.path as string) || ''
       if (op && scope) {
         const mode = decideAccess(rules, op, scope)
         if (mode === 'deny') {

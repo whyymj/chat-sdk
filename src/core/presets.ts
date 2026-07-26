@@ -2,21 +2,21 @@
  * 预设 —— 常见场景的推荐配置包,集成方 spread 进 createChatSdk,降低上手门槛。
  *
  * 用法:
- *   createChatSdk({ ...presets.pageBuilder, container: '#root', llm, dataSlots })
- *   createChatSdk({ ...presets.minimal, container, llm, dataSlots })  // 极简,省 token
+ *   createChatSdk({ ...presets.pageBuilder, container: '#root', llm, data })
+ *   createChatSdk({ ...presets.minimal, container, llm, data })  // 极简,省 token
  *
  * 预设只给场景化配置(systemPrompt / capabilities / subagent 等);
- * container / llm / dataSlots 等依赖集成方环境的选项仍由调用方提供。
+ * container / llm / data 等依赖集成方环境的选项仍由调用方提供。
  */
 import type { ChatSdkOptions } from './sdk/createChatSdk'
 
 export const presets: Record<string, Partial<ChatSdkOptions>> = {
   /**
-   * 页面构建助手 —— Agent 读写 window 驱动页面(配合 dataSlots 声明可操作属性)。
+   * 页面构建助手 —— Agent 读写主数据驱动页面(配合 data 声明 schema + bind)。
    */
   pageBuilder: {
     systemPrompt:
-      '你是页面构建助手。按用户意图读写 window 上注册的页面属性,改完页面实时更新。',
+      '你是页面构建助手。按用户意图读写主数据(经 data 声明 + schema 校验),改完页面实时更新。',
   },
 
   /**
@@ -29,7 +29,7 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
   },
 
   /**
-   * 极简助手 —— 只做 数据槽操作,关闭所有高级能力(省 token / 体积 / 上下文噪音)。
+   * 极简助手 —— 只做 数据操作,关闭所有高级能力(省 token / 体积 / 上下文噪音)。
    * ⚠️ vfs 关闭 → 大结果外存退化为截断;summarization 关闭 → 长会话不压缩。
    */
   minimal: {

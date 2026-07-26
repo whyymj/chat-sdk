@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { createDataSlotOps, filterByToolMode } from '../../tools/dataSlotOps'
+import { createDataOps, filterByToolMode } from '../../tools/dataOps'
 import { extractSchemaHint } from '../../presets'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -39,7 +39,6 @@ import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 
-// tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 import type { TestCtx } from './_ctx'
 
 // 对抗式验证(isAdversarialClean verdict 判定)
@@ -47,7 +46,6 @@ export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
   console.log('\n[adversarial verdict 判定]')
   {
-    // runAdversarial 整体依赖 LLM(createAgent + invoke),按惯例手动验证;此处测 verdict 判定纯函数
     assert(isAdversarialClean('无问题') === true, 'verdict "无问题" → 放行(返回 true)')
     assert(isAdversarialClean('经过审查,没有问题。') === true, 'verdict "没有问题" → 放行')
     assert(isAdversarialClean('未发现问题') === true, 'verdict "未发现问题" → 放行')
@@ -61,27 +59,27 @@ export async function run(ctx: TestCtx): Promise<void> {
     // fetchTools 静态预设(工具数组)
     assert(fetchTools.length === fetchDocTools.length && fetchTools[0].name === 'fetch_document', 'fetchTools 静态预设含 fetch_document')
 
-    // defineDataSlotToolset 工厂(依赖 dataSlots,故为工厂)
-    const props = [{ path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) }]
-    const wt = defineDataSlotToolset(props)
-    assert(wt.length === 15 && wt[0].name === 'list_data_slots', 'defineDataSlotToolset 工厂产出 15 个 数据槽工具(13 原有 + read/write 高层入口)')
+    // defineDataToolset 工厂(依赖 data 单主对象,故为工厂)
+    const config = { schema: z.enum(['light', 'dark']), bind: { $dummy: true } as any, description: '主题' }
+    const wt = defineDataToolset(config)
+    assert(wt.length === 13 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 13 个数据工具(11 基础 + read/write 高层入口)')
 
-    // selectBuiltinTools:默认全装(dataSlotOps + fetch)
-    const winOps = createDataSlotOps(props)
-    const all = selectBuiltinTools(undefined, winOps, fetchDocTools)
-    assert(all.length === winOps.length + fetchDocTools.length, 'selectBuiltinTools 默认全装(dataSlotOps + fetch)')
+    // selectBuiltinTools:默认全装(dataOps + fetch)
+    const dataOps = createDataOps(config)
+    const all = selectBuiltinTools(undefined, dataOps, fetchDocTools)
+    assert(all.length === dataOps.length + fetchDocTools.length, 'selectBuiltinTools 默认全装(dataOps + fetch)')
 
-    // dataSlotOps:false → 不含 数据槽工具,fetch 仍在
-    const noWin = selectBuiltinTools({ dataSlotOps: false }, winOps, fetchDocTools)
-    assert(noWin.length === fetchDocTools.length && noWin.every((t) => t.name === 'fetch_document'), 'dataSlotOps:false → 只剩 fetch_document')
+    // dataOps:false → 不含数据工具,fetch 仍在
+    const noData = selectBuiltinTools({ dataOps: false }, dataOps, fetchDocTools)
+    assert(noData.length === fetchDocTools.length && noData.every((t) => t.name === 'fetch_document'), 'dataOps:false → 只剩 fetch_document')
 
-    // fetch:false → 不含 fetch,window 仍在
-    const noFetch = selectBuiltinTools({ fetch: false }, winOps, fetchDocTools)
-    assert(noFetch.length === winOps.length && noFetch.every((t) => t.name !== 'fetch_document'), 'fetch:false → 只剩 数据槽工具')
+    // fetch:false → 不含 fetch,数据工具仍在
+    const noFetch = selectBuiltinTools({ fetch: false }, dataOps, fetchDocTools)
+    assert(noFetch.length === dataOps.length && noFetch.every((t) => t.name !== 'fetch_document'), 'fetch:false → 只剩数据工具')
 
     // 两者都关 → 空
-    const none = selectBuiltinTools({ dataSlotOps: false, fetch: false }, winOps, fetchDocTools)
-    assert(none.length === 0, 'dataSlotOps + fetch 都关 → 工具池空')
+    const none = selectBuiltinTools({ dataOps: false, fetch: false }, dataOps, fetchDocTools)
+    assert(none.length === 0, 'dataOps + fetch 都关 → 工具池空')
   }
 
   // ============ usageHints 中间件(能力用法默认提示,克制注入)============
@@ -90,26 +88,26 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 全开 → 含 planning/snapshot/spawn 三条提示
     const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
     const segFull = mwFull.augmentPrompt?.(createState()) || ''
-    assert(/write_todos/.test(segFull) && /restore_data_snapshot/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
-    // dataSlotOps 开 + simple(默认)→ 主推 read/write(高层入口,合并 list/describe/get 与 set/edit/delete)
-    assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataSlotOps 开 + simple → 注入 read/write 高层用法')
-    // advanced 模式 → 保留底层 get/list/describe 提示
+    assert(/write_todos/.test(segFull) && /restore_data/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
+    // dataOps 开 + simple(默认)→ 主推 read/write(高层入口)
+    assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 + simple → 注入 read/write 高层用法')
+    // advanced 模式 → 保留底层 get/describe 提示
     const mwAdv = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'advanced')
     const segAdv = mwAdv.augmentPrompt?.(createState()) || ''
-    assert(/list_data_slots/.test(segAdv) && /describe_data_slot/.test(segAdv), 'dataSlotOps 开 + advanced → 注入 list/describe 用法(动态注册场景关键)')
-    assert(/get_data_slot/.test(segAdv), 'dataSlotOps 开 + advanced → 注入 get 读真实值再改用法')
+    assert(/describe_data/.test(segAdv), 'dataOps 开 + advanced → 注入 describe 用法')
+    assert(/get_data/.test(segAdv), 'dataOps 开 + advanced → 注入 get_data 读真实值再改用法')
 
     // planning 关 → 无 write_todos 提示
     const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
     const segNoPlan = mwNoPlan.augmentPrompt?.(createState()) || ''
     assert(!/write_todos/.test(segNoPlan), 'planning 关 → 不注入 write_todos 提示')
 
-    // hasDataSlotOps=false → 无 snapshot 提示
-    const mwNoWin = createUsageHintsMiddleware({ planning: true, subagent: true }, false)
-    const segNoWin = mwNoWin.augmentPrompt?.(createState()) || ''
-    assert(!/restore_data_snapshot/.test(segNoWin), '无 数据槽工具 → 不注入 snapshot 提示')
+    // hasDataOps=false → 无 snapshot 提示
+    const mwNoData = createUsageHintsMiddleware({ planning: true, subagent: true }, false)
+    const segNoData = mwNoData.augmentPrompt?.(createState()) || ''
+    assert(!/restore_data/.test(segNoData), '无数据工具 → 不注入 snapshot 提示')
 
-    // 全关(planning/subagent 关 + 无 window)→ undefined(不增上下文)
+    // 全关 → undefined(不增上下文)
     const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false }, false)
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
@@ -119,23 +117,24 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ============ filterByToolMode(工具呈现模式筛选)============
   console.log('\n[filterByToolMode]')
   {
-    const all = createDataSlotOps([], {})  // 15 个工具
+    const config = { schema: z.any(), bind: { x: 1 } as any, description: 'd' }
+    const all = createDataOps(config)  // 13 个工具
     const names = (ts: any[]) => ts.map((t) => t.name)
-    // advanced → 全暴露(15)
+    // advanced → 全暴露(13)
     const adv = filterByToolMode(all, 'advanced')
-    assert(adv.length === 15 && adv.length === all.length, 'advanced → 全暴露(15 工具)')
-    // simple → 隐藏底层 get/set/edit/delete/list/describe(6),保留 read/write + query/search/eval/snapshot(9)
+    assert(adv.length === 13 && adv.length === all.length, 'advanced → 全暴露(13 工具)')
+    // simple → 隐藏底层 describe/get/set/edit/delete(5),保留 read/write + query/search/eval/snapshot/list/restore(8)
     const simple = filterByToolMode(all, 'simple')
     const simpleNames = names(simple)
-    assert(simple.length === 9, 'simple → 9 工具(隐藏 6 底层,保留 read/write + query/search/eval/snapshot)')
-    assert(['read', 'write', 'query_data_slot', 'search_data_slot', 'eval_script', 'snapshot_data_slot', 'list_data_snapshots', 'restore_data_snapshot', 'get_slot_paths'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + 高级查询/快照工具')
-    assert(['list_data_slots', 'describe_data_slot', 'get_data_slot', 'set_data_slot', 'edit_data_slot', 'delete_data_slot'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 get/set/edit/delete/list/describe')
+    assert(simple.length === 8, 'simple → 8 工具(隐藏 5 底层,保留 read/write + query/search/eval/snapshot/list/restore)')
+    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'snapshot_data', 'list_data_snapshots', 'restore_data'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + 高级查询/快照工具')
+    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 describe/get/set/edit/delete')
     // minimal → 只 read/write
     const minimal = filterByToolMode(all, 'minimal')
     assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')
     // 默认(不传 mode)= simple
     const def = filterByToolMode(all)
-    assert(def.length === 9, '默认 toolMode = simple')
+    assert(def.length === 8, '默认 toolMode = simple')
   }
 
   // ============ extractSchemaHint(io 契约注入 systemPrompt 用)============

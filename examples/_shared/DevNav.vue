@@ -5,6 +5,7 @@
  */
 const LINKS = [
   { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
+  { href: '/examples/complex-demo/', label: '复杂页面', match: (p: string) => p.startsWith('/examples/complex-demo') },
   { href: '/examples/subagent-demo/', label: '子 Agent', match: (p: string) => p.startsWith('/examples/subagent-demo') },
   { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },
   { href: '/examples/nested-demo/', label: '嵌套树', match: (p: string) => p.startsWith('/examples/nested-demo') },

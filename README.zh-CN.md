@@ -24,9 +24,9 @@
 
 | 约束 | 机制 | 作用 |
 |---|---|---|
-| **范围控制** | 属性注册表（`dataSlots`）—— 只能动声明的 path | AI 越界改未注册字段 → 拒绝 |
+| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值 | AI 传非法值 → 拒绝 |
 | **合法性校验** | zod schema —— `write`/`set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
-| **增量操作** | `write` 的 `patch`(或 advanced `edit_data_slot`)按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部 |
+| **增量操作** | `write` 的 `patch`(或 advanced `edit_data`)按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部 |
 | **可回滚** | per-path 快照(自动入栈)+ 会话 checkpoint | 改坏了一键回退到上次正常态 |
 | **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入 | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
 
@@ -58,16 +58,21 @@ npm install page-agent-sdk zod @langchain/openai @langchain/core
 import { createChatSdk } from 'page-agent-sdk'
 import { z } from 'zod'
 
-window.page = { title: '新品专区', theme: 'light' }
+const page = { title: '新品专区', theme: 'light' }
+window.page = page  // 可选:挂到 window 供页面读取;SDK 工具直接读写 bind
 
 createChatSdk({
   container: '#chat',
   llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  systemPrompt: '你是页面搭建助手，通过工具读写 window.page。',
-  dataSlots: [
-    { path: 'page.title', description: '页面标题', schema: z.string() },
-    { path: 'page.theme', description: '主题', schema: z.enum(['light', 'dark']) },
-  ],
+  systemPrompt: '你是页面搭建助手，通过工具读写主数据。',
+  data: {
+    schema: z.object({
+      title: z.string().describe('页面标题'),
+      theme: z.enum(['light', 'dark']).describe('主题'),
+    }),
+    bind: page,
+    description: '页面配置',
+  },
   approval: { tools: ['write'] }, // 写操作弹确认
   checkpoint: true, // 误改一键回退
 }).mount()
@@ -81,7 +86,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 
 | 能力 | 说明 | 选项 |
 |---|---|---|
-| 🛠 数据槽操作 | 读写注册属性，schema 校验 + 增量 patch + 快照回退 | `dataSlots` |
+| 🛠 数据操作 | 读写注册属性，schema 校验 + 增量 patch + 快照回退 | `data` |
 | 🧠 ReAct harness | 可插拔中间件（8 钩子），自研不引 LangGraph | `middleware` |
 | 📋 规划/技能/记忆 | `write_todos` / `define_skill` / AGENTS.md 指令 | `capabilities.*` |
 | 🗄 虚拟工作区 | 内存文件系统，大结果外存不撑爆上下文 | `capabilities.vfs` |
@@ -91,7 +96,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🤖 子 agent | 委派子任务，过程不占主上下文 | `subagent` |
 | 🔌 MCP | 连远程 MCP server 动态注入工具 | `mcp` |
 | 📦 上下文压缩 | 4 层自适应压缩，预设档位 + LLM 摘要 | `contextPreset` |
-| 🛡️ 压缩不丢信息 | 摘要内嵌当前 dataSlots 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
+| 🛡️ 压缩不丢信息 | 摘要内嵌当前 data 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
@@ -109,14 +114,14 @@ createChatSdk, defineTool, defineSkill, presets, z
 createAgent, createSubagentMiddleware, createSubagentsMiddleware,
 createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
 createHumanConfirmMiddleware, createHumanConfirmTool, createCheckpointMiddleware, createCheckpointManager,
-createUsageHintsMiddleware, createDataSlotOps, createVfs, connectMcp
+createUsageHintsMiddleware, createDataOps, createVfs, connectMcp
 // 上下文/模型
 resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
 // 存储
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI(headless 自建 UI 复用)
 ChatDialog, MessageContent, CodePreview, useChat
-// 类型(略):ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataSlotSpec, AgentMessage, StreamEvent …
+// 类型(略):ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataConfig, AgentMessage, StreamEvent …
 ```
 
 ### `createChatSdk` 选项速查
@@ -128,9 +133,9 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
 | | `systemPrompt` | `string` | Agent 身份（不硬编码业务，靠这注入）。可选——不传用内置默认（页面操作助手 + `reliableWriteRules`）；传了则完全覆盖 |
-| **页面数据** | `dataSlots` | `{path,description,schema}[]` | 注册可被工具读写的 数据槽 + zod schema 校验 |
+| **页面数据** | `data` | `{path,description,schema}[]` | 注册可被工具读写的 数据槽 + zod schema 校验 |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
-| **能力开关** | `capabilities` | `{planning?,dataSlotOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
+| **能力开关** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
@@ -139,7 +144,7 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · 默认 `auto` | 压缩预设档位 |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data_slot','list_data_slots']`——压缩摘要里保留字段说明） |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `50` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
@@ -175,8 +180,8 @@ createChatSdk({ subagents: [
 
 ### 内置工具（Agent 可调用）
 
-- **数据槽操作**（默认 `toolMode:'simple'`）：`read`（合并 list/get/describe）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `list_data_slots` / `describe_data_slot` / `get_data_slot` / `get_slot_paths` / `set_data_slot` / `edit_data_slot`（jsonPath 增量 patch）/ `delete_data_slot` / `snapshot_data_slot` / `list_data_snapshots` / `restore_data_snapshot`
-- **window 查询**：`query_data_slot`（JSONPath）/ `search_data_slot`（模糊搜索）/ `eval_script`（沙箱脚本）
+- **数据操作**（默认 `toolMode:'simple'`）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `describe_data` / `get_data` / `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `snapshot_data` / `list_data_snapshots` / `restore_data`
+- **window 查询**：`query_data`（JSONPath）/ `search_data`（模糊搜索）/ `eval_script`（沙箱脚本）
 - **抓取**：`fetch_document`
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
 - **规划/技能**：`write_todos` / `define_skill` / `load_skill`
@@ -195,7 +200,7 @@ src/core/
 │   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
 │   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
 │   permissions.ts  usageHints.ts
-├── tools/                      # dataSlotOps(注册表+增量编辑+快照)/ dataSlotQuery / fetchDoc
+├── tools/                      # dataOps(注册表+增量编辑+快照)/ dataSlotQuery / fetchDoc
 ├── backends/                   # vfs(内存) / storage(IndexedDB+多后端+配额淘汰)
 ├── mcp/client.ts              # MCP 远程工具接入
 ├── composables/               # useChat / useContextManager / useMarkdown
@@ -212,7 +217,7 @@ CLAUDE.md                       # 架构要点 + 约定坑 + 编码规范（agen
 
 | Skill | 触发场景 |
 |---|---|
-| `page-agent-sdk-integrate` | 集成 SDK —— 选引入方式、声明 `dataSlots` + zod schema、配 LLM、挂载、订阅事件（`onEvent` / `sdk.hook`）、跑 headless、排查常见坑 |
+| `page-agent-sdk-integrate` | 集成 SDK —— 选引入方式、声明 `data` + zod schema、配 LLM、挂载、订阅事件（`onEvent` / `sdk.hook`）、跑 headless、排查常见坑 |
 
 **安装**（任选其一）：
 
@@ -238,13 +243,13 @@ flowchart TD
     SDK --> CORE[AgentCore<br/>messages / vfs / store / checkpoint]
     CORE --> AGENT[createAgent<br/>ReAct 循环 + 中间件栈]
     AGENT --> MW[中间件栈<br/>usageHints→todos→skills→vfs→summarization<br/>→memory→permissions→checkpoint→approval<br/>→humanConfirm→verify→subagent→用户]
-    AGENT --> TOOLS[工具集<br/>dataSlotOps / fetchDoc / vfs / MCP / 用户]
+    AGENT --> TOOLS[工具集<br/>dataOps / fetchDoc / vfs / MCP / 用户]
     TOOLS -->|零桥接| WIN[宿主页面 window<br/>直接读写注册属性]
     AGENT --> LLM[LLM<br/>OpenAI 协议 / 任意 ChatModel]
     SDK --> UI[ChatDialog UI<br/>Vue 打包进库 / 或 headless]
 ```
 
-- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `dataSlotOps`+`fetch`，用 `storage:'memory'`）
+- **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `dataOps`+`fetch`，用 `storage:'memory'`）
 - **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
 - **自研 harness**：不引 LangGraph/langchain 整包，规避浏览器打包阻塞
 
@@ -265,11 +270,11 @@ createChatSdk({
   llm: { apiKey, baseUrl, model },
   id: 'my-agent',              // 稳定 id（多 agent 隔离 + 持久化恢复）
   systemPrompt: '...',
-  dataSlots: [{ path, description, schema, bind }],  // bind:reactive/普通对象自动挂 window[path] + 注册为 dataSlot;schema 字段 .describe() 自动注入 systemPrompt「可操作属性」段
+  data: { schema, bind, description? },  // 单主对象:bind 直连 reactive/普通对象(工具直接读写 bind,不自动挂 window);schema 字段 .describe() 自动注入 systemPrompt「可操作数据」段
   toolMode: 'simple',           // 工具呈现:simple(默认,主推 read/write)/ advanced(全暴露)/ minimal(只 read/write)
   interceptors: {              // 读写拦截器(脱敏/转换/审计/拒绝 LLM 读写;input/output 在 agent IO 入口/出口)
-    read: (path, value) => path.endsWith('secret') ? '***' : value,
-    write: (path, payload) => path === 'app.locked' ? { error: 'locked' } : payload,
+    read: (value) => value,
+    write: (payload) => payload,
     input: (msg) => msg,       // send 入口预处理
     output: (reply) => reply,  // 返回前 postprocess
   },
@@ -284,8 +289,8 @@ createChatSdk({
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* 自定义中间件 */],
-  onEvent(e) {                 // SDK 事件回调:订阅常用时机(数据槽变化/消息更新/工具调用/错误),替代轮询
-    if (e.type === 'data_slot_change') refreshUI()
+  onEvent(e) {                 // SDK 事件回调:订阅常用时机(主数据变化/消息更新/工具调用/错误),替代轮询
+    if (e.type === 'data_change') refreshUI()
   },
 }).mount()
 ```
@@ -298,7 +303,7 @@ createChatSdk({
 |---|---|---|
 | page-demo | `/` | 自举 demo：左 JSON 响应式页面 + 右对话框 |
 | nested-demo | `/examples/nested-demo/` | 嵌套区块树 + 人工确认 + checkpoint |
-| dynamic-demo | `/examples/dynamic-demo/` | 懒加载组件 + 动态注册 schema（`sdk.addDataSlot`/`removeDataSlot`） |
+| dynamic-demo | `/examples/dynamic-demo/` | 懒加载组件 + 动态注册 schema（`sdk.setData`/``） |
 | human-confirm-demo | `/examples/human-confirm-demo/` | AI 主动征询（多方案点选）+ 写前确认 |
 | planner-demo | `/examples/planner-demo/` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
 | subagent-demo | `/examples/subagent-demo/` | 子 agent 并行编排 |
@@ -312,7 +317,7 @@ createChatSdk({
 |---|---|
 | [文档索引](./doc/README.md) | 各文档导航 + 其他信息源（规范/变更/自测） |
 | [使用手册](./doc/usage-guide.md) | 安装 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
-| [功能架构](./doc/architecture.md) | 分层 / 控制流 / 数据槽操作安全流 |
+| [功能架构](./doc/architecture.md) | 分层 / 控制流 / 数据操作安全流 |
 | [上下文与压缩](./doc/context-management.md) | 上下文组成 / 4 层压缩 / 流程图 |
 | [文件全览](./doc/architecture-files.md) | 逐文件职责 / 依赖 / 数据流 |
 | [CLAUDE.md](./CLAUDE.md) | **agent 必读** · 架构要点 / 约定坑 / 编码规范 |
@@ -345,20 +350,25 @@ npm install -D vite typescript
 import { createChatSdk, z } from 'page-agent-sdk'
 import 'page-agent-sdk/style.css'
 
-window.app = { title: '示例', theme: 'light' }
+const app = { title: '示例', theme: 'light' }
+window.app = app  // 可选:挂到 window 供页面读取;工具直接读写 bind
 
 createChatSdk({
   container: '#root',
   llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  systemPrompt: '你是页面助手，用工具读写 window.app。',
-  dataSlots: [
-    { path: 'app.title', description: '标题', schema: z.string() },
-    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
-  ],
+  systemPrompt: '你是页面助手，用工具读写主数据。',
+  data: {
+    schema: z.object({
+      title: z.string().describe('标题'),
+      theme: z.enum(['light', 'dark']).describe('主题'),
+    }),
+    bind: app,
+    description: '应用配置',
+  },
 }).mount()
 ```
 
-`npx vite` → 对话框输入「把 app.theme 改成 dark」→ AI 调 `write({ path:"app.theme", value:"dark" })` → `window.app.theme` 变为 `dark` 即验证通过。
+`npx vite` → 对话框输入「把 app.theme 改成 dark」→ AI 调 `write({ value:{ theme:"dark" }, patch:{ op:"merge" } })` → `app.theme` 变为 `dark` 即验证通过。
 
 > 建议此测试目录加入 `.gitignore`（纯本地，不进仓库），避免把含真实 key 的 `.env` 提交到远程。
 
@@ -375,7 +385,7 @@ createChatSdk({
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
 - **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。
-- **关闭无用能力**:`capabilities:{ dataSlotOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
+- **关闭无用能力**:`capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
 - **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
 - **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。
 - **MCP 为可选 peer**:`@modelcontextprotocol/sdk` 仅在传 `options.mcp` 时动态 import —— 不用 MCP 完全不加载该运行时。

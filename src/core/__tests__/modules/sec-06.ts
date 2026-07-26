@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { createDataSlotOps } from '../../tools/dataSlotOps'
+import { createDataOps } from '../../tools/dataOps'
 import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataSlotToolset } from '../../toolsets'
+import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -47,16 +47,16 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[permissions middleware]')
   {
     const mw = createPermissionsMiddleware([
-      { operations: ['write'], scopes: ['app.secret'], mode: 'deny' },
+      { operations: ['write'], scopes: ['secret'], mode: 'deny' },
     ])
     const next = async () => ({ content: 'ok', status: 'done' as const })
-    let r = await mw.wrapToolCall!({ id: '1', name: 'set_data_slot', args: { path: 'app.secret' }, state: createState() }, next)
+    let r = await mw.wrapToolCall!({ id: '1', name: 'set_data', args: { jsonPath: 'secret' }, state: createState() }, next)
     assert(/权限拒绝/.test(r.content) && r.status === 'error', 'permissions deny 命中')
 
-    r = await mw.wrapToolCall!({ id: '2', name: 'set_data_slot', args: { path: 'app.theme' }, state: createState() }, next)
+    r = await mw.wrapToolCall!({ id: '2', name: 'set_data', args: { jsonPath: 'theme' }, state: createState() }, next)
     assert(r.content === 'ok', 'permissions 未命中规则默认 allow')
 
     r = await mw.wrapToolCall!({ id: '3', name: 'custom_tool', args: {}, state: createState() }, next)
-    assert(r.content === 'ok', 'permissions 不影响非 window/vfs 工具')
+    assert(r.content === 'ok', 'permissions 不影响非 data/vfs 工具')
   }
 }

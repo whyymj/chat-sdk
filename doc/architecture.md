@@ -1,9 +1,9 @@
 # page-agent-sdk 功能架构
 
-> 框架无关的「页面内 Agent」JS SDK。Agent 通过自定义 tool 读写宿主页面 `window` 对象(属性注册表 + schema 校验 + 乐观锁),并具备 planning / skills / 内存工作区 / context 管理 / 冲突人工介入能力。
+> 框架无关的「页面内 Agent」JS SDK。Agent 通过自定义 tool 读写宿主页面 `window` 对象(schema 校验 + 乐观锁),并具备 planning / skills / 内存工作区 / context 管理 / 冲突人工介入能力。
 > 核心为**自研 Deep Agents 风格 harness**(ReAct + 可插拔中间件),不引入 LangGraph/langchain 整包(规避 [`deepagentsjs#292`](https://github.com/langchain-ai/deepagentsjs/issues/292) 浏览器打包阻塞)。
 
-本文从六个视角描述:**分层结构**、**组装与挂载**、**ReAct 主循环**、**数据槽操作与乐观锁**、**冲突人工介入**、**上下文压缩与持久化**。
+本文从六个视角描述:**分层结构**、**组装与挂载**、**ReAct 主循环**、**数据操作与乐观锁**、**冲突人工介入**、**上下文压缩与持久化**。
 
 ---
 
@@ -12,15 +12,15 @@
 ```mermaid
 flowchart TD
   subgraph Host["🖥️ 宿主页面(任意网页)"]
-    WP["window.page = reactive({...})<br/>响应式数据(测试模块)"]
+    WP["主数据 bind = {...}<br/>(reactive 或普通对象,SDK 不强制)"]
   end
 
   subgraph SDK["📦 page-agent-sdk SDK — 框架无关,Vue 打包进,使用者无需装 Vue"]
-    Entry["<b>对外入口</b><br/>createChatSdk(container, llm, dataSlots, tools, skills, memory)<br/>.mount() / .unmount() / .send() / .resolveConflict()"]
+    Entry["<b>对外入口</b><br/>createChatSdk(container, llm, data, tools, skills, memory)<br/>.mount() / .unmount() / .send() / .resolveConflict()"]
     Core["<b>harness 核心</b> createAgent<br/>ReAct 循环 + 中间件契约(before/wrap/after)"]
     MW["<b>中间件栈(可插拔)</b><br/>usageHints → todos → skills → vfs → summarization<br/>→ memory → permissions → verify → subagent → 用户 → sdkEvent"]
-    Tools["<b>工具层</b><br/>内置: dataSlotOps · fetchDoc · vfs_*<br/>用户: defineTool(...) / defineSkill(...)"]
-    State["<b>状态 / 数据</b><br/>HarnessState · 属性注册表 · vfs store · 快照栈 · pendingConflict"]
+    Tools["<b>工具层</b><br/>内置: dataOps · fetchDoc · vfs_*<br/>用户: defineTool(...) / defineSkill(...)"]
+    State["<b>状态 / 数据</b><br/>HarnessState · 主数据 · vfs store · 快照栈 · pendingConflict"]
     UI["<b>UI</b><br/>ChatDialog(对话框+冲突条+确认条) · DebugDrawer"]
     Entry --> Core --> MW --> Tools --> State
     Tools -. "直接读写(零桥接,无 iframe)" .-> WP
@@ -35,8 +35,8 @@ flowchart TD
 | **对外入口** | 命令式 API,组装 harness + 内置工具/中间件,挂载 UI,暴露冲突解决 | `src/core/sdk/createChatSdk.ts`、`defineTool.ts` |
 | **harness 核心** | ReAct 循环 + 中间件生命周期 + 格式自纠 + verify 自纠 | `src/core/harness/createAgent.ts`、`middleware.ts`、`state.ts` |
 | **中间件栈** | 可插拔能力(planning/skills/工作区/压缩/记忆/权限/verify/subagent) | `src/core/harness/{todos,skills,summarization,memory,permissions,verify,subagent,usageHints}.ts` |
-| **工具层** | Agent 可调用的能力(数据槽操作含乐观锁/抓文档/工作区/自定义) | `src/core/tools/{dataSlotOps,fetchDoc}.ts`、`backends/vfs.ts`、`utils/offload.ts` |
-| **状态/数据** | 运行态 + 注册表 + 工作区 + 快照栈 + 冲突挂起 | `HarnessState`、属性注册表、`VfsStore`、`pendingConflict` ref |
+| **工具层** | Agent 可调用的能力(数据操作含乐观锁/抓文档/工作区/自定义) | `src/core/tools/{dataOps,fetchDoc}.ts`、`backends/vfs.ts`、`utils/offload.ts` |
+| **状态/数据** | 运行态 + 主数据 + 工作区 + 快照栈 + 冲突挂起 | `HarnessState`、主数据 bind、`VfsStore`、`pendingConflict` ref |
 | **UI(通用)** | 对话框 + 调试抽屉 + 冲突条 + 确认条(SDK 内) | `src/core/components/{ChatDialog,DebugDrawer}.vue` |
 
 ---
@@ -53,7 +53,7 @@ flowchart TD
   E --> E1["resolveStorage 持久化后端"]
   E --> E2["resolveModelCaps 模型能力"]
   E --> E3["createVfs + VfsStore"]
-  E --> E4["createDataSlotOps<br/>注入 onConflict=setPendingConflict"]
+  E --> E4["createDataOps<br/>注入 onConflict=setPendingConflict"]
   E --> E5["selectBuiltinTools 筛选(capabilities)"]
   E --> E6["组装中间件栈<br/>usageHints→todos→skills→vfs→summarization→memory<br/>→permissions→verify→subagent→用户→sdkEvent"]
   E --> E7["connectMcp 远程工具注入"]
@@ -73,7 +73,7 @@ flowchart TD
 
 **要点:**
 - `shareContext` 复用 core 时,`pendingConflict` ref 也共享——同 id 多实例是「同一 agent 的多对话框视图」,共享冲突 UI 一致
-- `dataSlotOps` 关闭(`capabilities.dataSlotOps:false`)时不注入 `onConflict`,`pendingConflict` 永远 null,无副作用
+- `dataOps` 关闭(`capabilities.dataOps:false`)时不注入 `onConflict`,`pendingConflict` 永远 null,无副作用
 
 ---
 
@@ -89,7 +89,7 @@ flowchart TD
   MC --> RESP{response}
   RESP --> TC{有 tool_calls?}
   TC -->|有| WT["wrapToolCall (洋葱)<br/>permissions 校验 / approval 人工确认 / vfs 大结果外存"]
-  WT --> EX["执行工具<br/>dataSlotOps(含乐观锁冲突挂起) / fetchDoc / vfs / 用户工具"]
+  WT --> EX["执行工具<br/>dataOps(含乐观锁冲突挂起) / fetchDoc / vfs / 用户工具"]
   EX --> AM["afterModel (逆序)"]
   AM --> LOOP
   TC -->|无| FG{"detectGarbledToolCall?<br/>(formatRetries < 2)"}
@@ -111,7 +111,7 @@ flowchart TD
 
 ---
 
-## ④ 数据槽操作与乐观锁流程
+## ④ 数据操作与乐观锁流程
 
 ```mermaid
 flowchart TD
@@ -144,8 +144,8 @@ flowchart TD
 
 **数据存储位置:**
 - **实际值** → 宿主 `window[path]`(唯一数据源,V0/V1/V2 都在这)
-- **快照** → `dataSlotOps` 闭包内 `snapshots: Map<path, SnapshotEntry[]>`(纯内存,per-path 栈,FIFO 限长 20)
-- **hash** → 实时计算 `djb2(safeStringify(value))`,不存储,只在 `get_data_slot` 返回末尾附 `hash=xxx`
+- **快照** → `dataOps` 闭包内 `snapshots: SnapshotEntry[]`(纯内存栈,FIFO 限长 20)
+- **hash** → 实时计算 `djb2(safeStringify(value))`,不存储,只在 `get_data`/`read` 返回末尾附 `hash=xxx`(整体 bind 的 hash)
 - **冲突挂起信息** → `core.pendingConflict` ref(响应式内存,供 UI)+ `SdkEvent 'conflict'` 外发
 
 **关键约定:**
@@ -191,7 +191,7 @@ stateDiagram-v2
 **集成方接入:**
 - 内置 UI:ChatDialog 渲染冲突条(三按钮 + 值对比 diff),用户点按钮调 `sdk.resolveConflict(action)`
 - headless:`watch(sdk.pendingConflict)` 或 `sdk.hook(e => e.type==='conflict')` 自建 UI,调 `sdk.resolveConflict(action)`
-- 独立 `createDataSlotOps(props, { onConflict })`:不接 ChatDialog 时自行处理冲突
+- 独立 `createDataOps(config, { onConflict })`:不接 ChatDialog 时自行处理冲突
 
 ---
 
@@ -220,11 +220,11 @@ flowchart LR
 | 维度 | 设计 |
 |---|---|
 | **Agent 核心** | 自研 ReAct + 中间件契约(对齐 Deep Agents,零 LangGraph 依赖)+ 格式自纠 + verify 自纠 |
-| **数据槽操作** | 属性注册表 + schema 校验 + 范围控制 + 增量编辑(jsonPath)+ 按路径读 + 快照回退 + **乐观锁(expectedHash)+ 冲突人工介入** + 大结果外存 vfs |
+| **数据操作** | schema 校验 + 增量编辑 + 增量编辑(jsonPath)+ 按路径读 + 快照回退 + **乐观锁(expectedHash)+ 冲突人工介入** + 大结果外存 vfs |
 | **能力扩展** | 中间件(todos/skills/vfs/summarization/memory/permissions/verify/subagent/usageHints)+ 工具(`defineTool`)+ 技能(`defineSkill` 渐进披露) |
 | **记忆** | 纯内存会话级;summarization 复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回);`maxMemoryRounds` 防长会话 OOM |
 | **持久化** | 多后端(IndexedDB/WebStorage/Memory)+ 多 agent 隔离 + 全局配额 LRU 淘汰 + 降级内存 |
-| **响应式** | `window.page = reactive()`;set 子属性不替换引用 → 页面实时更新 |
+| **响应式** | `bind = reactive() 或普通对象(集成方按需挂 window)`;set 子属性不替换引用 → 页面实时更新 |
 | **鲁棒性** | 模型调用重试(网络/429/5xx)+ 停止生成(abort 保留 partial)+ 出错重试 + 冲突挂起自动收口 |
 | **交付** | 框架无关 SDK(vue 打包进)+ 命令式 `mount` + headless(`ui:false`)+ 纯 HTML 集成(`demo/plain.html`) |
 

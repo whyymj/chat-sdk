@@ -9,7 +9,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
     const info = sdk.inspect()
@@ -24,10 +24,10 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-custom', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: '你是定制助手。',
-      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
-    assert(sdk.inspect().systemPrompt.startsWith('你是定制助手。') && /可操作属性/.test(sdk.inspect().systemPrompt), '自定义 systemPrompt 完全覆盖默认(dataSlots schema 仍自动追加「可操作属性」段)')
+    assert(sdk.inspect().systemPrompt.startsWith('你是定制助手。') && /可操作数据/.test(sdk.inspect().systemPrompt), '自定义 systemPrompt 完全覆盖默认(data schema 仍自动追加「可操作数据」段)')
     sdk.unmount()
   }
 
@@ -35,7 +35,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-default-detail', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
@@ -52,7 +52,7 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-custom-merge', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       systemPrompt: `${custom}\n${systemPromptHelpers.reliableWriteRules}`,
-      dataSlots: [{ path: 'app.title', description: '标题', schema: z.string() }],
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
