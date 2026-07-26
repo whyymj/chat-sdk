@@ -76,9 +76,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['get_data'], { jsonPath: 'theme' })
     assert(/dark/.test(r) && /hash=/.test(r), 'get_data 传 jsonPath 返回子路径值 + hash')
 
-    // get_data 读不存在的子路径
+    // get_data 读非 schema 声明字段 → PATH_DENIED(白名单模式:仅 schema 声明的 key 可读)
     r = await invoke(t['get_data'], { jsonPath: 'nope' })
-    assert(/undefined/.test(r), 'get_data 读不存在的子路径返回 undefined')
+    assert(/PATH_DENIED/.test(r), 'get_data 读非 schema 声明字段 → PATH_DENIED')
 
     // edit_data 增量 set 子路径(合法)
     r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '5' })
@@ -92,9 +92,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['delete_data'], { jsonPath: 'count' })
     assert(!('count' in appObj) && /已删除/.test(r), 'delete_data 删子路径生效')
 
-    // delete_data 删不存在的子路径
+    // delete_data 删非 schema 声明字段 → PATH_DENIED(白名单模式)
     r = await invoke(t['delete_data'], { jsonPath: 'nope' })
-    assert(/不存在/.test(r), 'delete_data 删不存在的子路径返回不存在')
+    assert(/PATH_DENIED/.test(r), 'delete_data 删非 schema 声明字段 → PATH_DENIED')
 
     // describe_data 返回说明
     r = await invoke(t['describe_data'], {})

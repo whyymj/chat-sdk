@@ -1,5 +1,5 @@
 /**
- * 复杂页面 demo:10 种组件拼装一个页面
+ * 复杂页面 demo:多种组件拼装一个页面
  *
  * 结构:每个组件 = { type, id?, style?, visible?, className?, props: {...业务字段} }
  * 通用配置(id/style/visible/className)在根,不通用字段统一包装到 props 子对象。
@@ -188,7 +188,7 @@ export const pageSchema = z.object({
 
 export type PageData = z.infer<typeof pageSchema>
 
-/** 初始示例页面:10 种叶子组件 + 3 种容器组件(含嵌套) */
+/** 初始示例页面:叶子组件 + 容器组件(含嵌套) */
 export const initialPage: PageData = {
   title: '复杂页面 Demo',
   components: [
@@ -235,7 +235,7 @@ export const complexBuilderSkillContent = `# 复杂页面构建 Skill(window.pag
 - 通用配置(根):id(唯一标识)、style(自定义样式对象)、visible(显隐)、className(附加 class)
 - 业务配置(props 子对象):各组件特有字段
 
-## 13 种组件(按 type 区分,业务字段在 props 内)
+## 组件类型(按 type 区分,业务字段在 props 内)
 叶子组件:
 - heading:props={ text, level? }
 - richText:props={ html }

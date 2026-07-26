@@ -161,5 +161,27 @@ export async function run(ctx: TestCtx): Promise<void> {
     const cmNoProps = useContextManager({ summaryThresholdRounds: 4, windowRounds: 2 })
     const rNoProps = await cmNoProps.compress(mkMsgsWithSteps(6))
     assert(!String(rNoProps.messages[0].content).includes('当前可操作数据'), 'A:未提供 getRegisteredSlots 时不注入注册表段')
+
+    // #双摘要冲突修复:compress 提取头部 trimMemoryMessages 留下的旧摘要正文,并入新摘要(防累积历史丢失)
+    const cmMerge = useContextManager({ summaryThresholdRounds: 2, windowRounds: 1 })
+    // 模拟 trimMemoryMessages 已裁过:头部有【更早对话摘要】system,后跟若干轮
+    const prevSummaryMsg: any = { role: 'system', content: '【更早对话摘要(2 轮)】\n- 第1轮:旧问题1 → 旧回复1\n- 第2轮:旧问题2 → 旧回复2', timestamp: 0 }
+    const msgsAfterTrim = [prevSummaryMsg, ...mkMsgsWithSteps(4)]
+    const rMerge = await cmMerge.compress(msgsAfterTrim)
+    assert(rMerge.stats.triggered, '双摘要:头部含旧摘要 + 4 轮触发压缩')
+    const mergedContent = String(rMerge.messages[0].content)
+    assert(mergedContent.includes('更早累积摘要'), '双摘要:新摘要并入头部旧摘要正文(【更早累积摘要】段)')
+    assert(mergedContent.includes('旧问题1') && mergedContent.includes('旧问题2'), '双摘要:旧摘要内容(旧问题1/2)不丢失,并入新摘要')
+    assert(mergedContent.includes('对话历史摘要'), '双摘要:仍含本轮 older 的索引摘要段')
+
+    // #getRegisteredData(新术语,单对象 data 模式):注入 description,无 path
+    const cmData = useContextManager({
+      summaryThresholdRounds: 2,
+      windowRounds: 1,
+      getRegisteredData: () => [{ description: '主数据对象:页面配置' }],
+    })
+    const rData = await cmData.compress(mkMsgsWithSteps(4))
+    const dataContent = String(rData.messages[0].content)
+    assert(dataContent.includes('当前可操作数据') && dataContent.includes('主数据对象:页面配置'), 'getRegisteredData:注入 description 到摘要')
   }
 }

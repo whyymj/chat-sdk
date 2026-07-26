@@ -4,7 +4,7 @@
  *
  * 演示能力:
  *  ① 声明:递归 schema(z.lazy 自引用)+ style 显式 schema + passthrough 放行自定义属性,注册根 path('Editor.PageInfo')
- *  ② 查:query_data_slot 用 $..*[?(@.type=="text")] 递归找任意深度的区块
+ *  ② 查:query_data 用 $..*[?(@.type=="text")] 递归找任意深度的区块
  *  ③ 改:write 的 patch 用 jsonPath(如 sections.0.children.0.style.color)深层定位,只发改动
  *  ④ 增/删:append 给 section 加 children、remove 删区块;校验自动穿透到 children + style
  *  ⑤ 刷新:bind 用普通对象(非 reactive),Agent 改后由 onEvent('data_change') 触发 tick,:key 强制树重渲染
@@ -92,7 +92,7 @@ onMounted(() => {
       'style 是样式对象,常用键:background/color/fontSize/fontWeight/padding/margin/borderRadius/display;可加自定义键。',
       '操作要点:',
       '1. jsonPath 相对 PageInfo 根逐级定位(如 sections.0.children.0.style.color),只发改动、不重传整页;',
-      '2. 查任意深度区块用 query_data_slot,expr 如 $..*[?(@.type=="text")] 找所有文本,$..*[?(@.name=="主标题")] 按名找;',
+      '2. 查任意深度区块用 query_data,expr 如 $..*[?(@.type=="text")] 找所有文本,$..*[?(@.name=="主标题")] 按名找;',
       '3. 改样式/文案/增删子区块用 write 的 patch 指向目标 jsonPath;',
       '4. 每次操作后用路径描述改了哪个区块(如「顶部 Banner/主标题 的 color」)。',
     ].join('\n'),

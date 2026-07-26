@@ -7,15 +7,14 @@
  *    - 默认用"索引摘要"（零 LLM 成本，复用每轮 userQuery/assistantPreview）
  *    - 可选 LLM 摘要（enableLLMSummary）生成更连贯的段落
  * 3. 关键词召回：从旧轮次中按当前问题检索相关历史，注入"相关历史"段
- * 4. 工具结果裁剪：单轮 ReAct 循环内累积的 ToolMessage 超长时截断（见 trimToolResults）
+ * 4. 单轮 ReAct 内的工具结果裁剪由 createAgent 侧的 trimContextIfNeededImpl 处理（本模块不负责）
  *
  * 注：跨轮历史中 state.messages 只含 user/assistant 文本，工具结果仅在
  * 单次 chat() 的 ReAct 循环内累积，因此跨轮压缩聚焦于窗口+摘要+召回。
  */
 import type { AgentMessage } from '../types'
 import type { BaseMessage } from '@langchain/core/messages'
-import { ToolMessage } from '@langchain/core/messages'
-import { groupRounds, plainSummary, type Round } from '../utils/rounds'
+import { groupRounds, plainSummary, MEMORY_SUMMARY_PREFIX, type Round } from '../utils/rounds'
 import { estimateTokens } from '../utils/modelCaps'
 
 export interface ContextManagerOptions {
@@ -40,9 +39,11 @@ export interface ContextManagerOptions {
   /** 保留最近窗口的 token 预算比例(默认 0.4) */
   windowRatio?: number
   /**
-   * 压缩时注入「当前可操作数据槽 属性」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)。
-   * 提供 getter 则每次压缩把当前注册表 path+description 作为一段附进摘要 system 消息(不进压缩)。
+   * 压缩时注入「当前可操作数据」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)。
+   * 提供 getter 则每次压缩把当前主数据 description 作为一段附进摘要 system 消息(不进压缩)。
    */
+  getRegisteredData?: () => { description: string }[]
+  /** @deprecated 旧多对象模型遗留(单对象 data 模式用 getRegisteredData);仍兼容,返回值 path 字段忽略 */
   getRegisteredSlots?: () => { path: string; description: string }[]
   /**
    * 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉)。
@@ -169,6 +170,20 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     const rounds = groupRounds(messages)
     const originalCount = messages.length
 
+    // 提取头部 trimMemoryMessages 留下的旧摘要正文(groupRounds 跳过头部 system,不并入 older →
+    // 需手动并入新摘要,防累积历史被 summarization 静默丢失)
+    let prevSummaryBody = ''
+    if (rounds.length) {
+      const firstUserIdx = rounds[0].startIdx
+      for (let i = 0; i < firstUserIdx; i++) {
+        const m = messages[i]
+        if (m.role === 'system' && typeof m.content === 'string' && m.content.startsWith(MEMORY_SUMMARY_PREFIX)) {
+          prevSummaryBody = m.content.replace(/^【[^】]*】\n?/, '')
+          break
+        }
+      }
+    }
+
     const notTriggered = (strategy: string) => ({
       messages,
       stats: {
@@ -248,19 +263,23 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
       : ''
 
     // 组装注入的系统消息
+    const fullSummaryText = prevSummaryBody
+      ? `${summaryText}\n【更早累积摘要】\n${prevSummaryBody}`
+      : summaryText
     const parts: string[] = [
       `【对话历史摘要】以下是之前 ${older.length} 轮对话的要点（最新 ${recent.length} 轮已完整保留）：`,
-      summaryText,
+      fullSummaryText,
     ]
     if (recallBlock) {
       parts.push(`\n【与当前问题可能相关的早期对话】`, recallBlock)
     }
     // A:注入当前可操作数据快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件)
-    if (config.getRegisteredSlots) {
+    const regGetter = config.getRegisteredData ?? config.getRegisteredSlots
+    if (regGetter) {
       try {
-        const props = config.getRegisteredSlots()
+        const props = regGetter()
         if (props.length) {
-          const propLines = props.map((p) => `- ${p.path ? p.path + ': ' : ''}${p.description}`).join('\n')
+          const propLines = props.map((p) => `- ${(p as any).path ? (p as any).path + ': ' : ''}${p.description}`).join('\n')
           parts.push(`\n【当前可操作数据(动态增删后的最新状态,操作前以 describe_data / read 为准)】`, propLines)
         }
       } catch {
@@ -296,34 +315,7 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     }
   }
 
-  return { compress, config, trimToolResults }
+  return { compress, config }
 }
 
-/**
- * 单轮 ReAct 循环内的工具结果裁剪
- *
- * 随着工具调用轮次增加，currentMessages 中累积的 ToolMessage 可能很长。
- * 保留最近 2 条工具结果完整，更早的工具结果超过 maxChars 时截断并附标记。
- * 原地返回新数组，不修改入参。
- */
-export function trimToolResults(messages: BaseMessage[], maxChars: number): BaseMessage[] {
-  // 收集所有 ToolMessage 的下标
-  const toolIdx: number[] = []
-  messages.forEach((m, i) => {
-    if (m instanceof ToolMessage) toolIdx.push(i)
-  })
-  if (toolIdx.length <= 2) return messages
 
-  // 最近 2 条保持完整，其余截断
-  const keepFull = new Set(toolIdx.slice(-2))
-  return messages.map((m, i) => {
-    if (!(m instanceof ToolMessage) || keepFull.has(i)) return m
-    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-    if (content.length <= maxChars) return m
-    const truncated = content.slice(0, maxChars) + `\n…[已截断，原长度 ${content.length}]`
-    return new ToolMessage({
-      tool_call_id: (m as any).tool_call_id || (m as any).lc_id || 'trimmed',
-      content: truncated,
-    })
-  })
-}

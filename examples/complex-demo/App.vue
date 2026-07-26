@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 复杂页面 demo —— 10 种组件拼装一个页面,右侧 Agent 对话框驱动左侧实时更新
+ * 复杂页面 demo —— 多种组件拼装一个页面,右侧 Agent 对话框驱动左侧实时更新
  *
  * 配置方式:reactive 对象经 data 的 `bind` 字段直连 SDK(集成方自己挂 window 供页面读取),
  * `schema` 用 zod 声明形状(字段 .describe() 自动注入 systemPrompt「可操作数据」段,无需手写)。
@@ -39,13 +39,13 @@ onMounted(() => {
     },
     streaming: true,
     systemPrompt:
-      '你是复杂页面构建助手。左侧页面由 window.page 驱动(含 13 种组件:10 种叶子组件 标题/富文本/商品瀑布流/图片/按钮/列表/卡片/间距/分割线/轮播 + 3 种容器组件 container/section/grid,容器 props.children 可嵌套任意组件)。用户要改左侧页面时,改 page.title 或 page.components(增删改组件、调 props、调 style、容器内改 children),左侧实时更新。组件类型与字段详见 load_skill("complex-builder")。',
+      '你是复杂页面构建助手。左侧页面由 window.page 驱动,结构 { title, components[] }(组件数组按顺序拼装)。每个组件 = { type, id?, style?, visible?, className?, props:{...业务字段} };容器组件(container/section/grid)的 props.children 可嵌套任意组件。用户要改左侧页面时,改 page.title 或 page.components(增删改组件、调 props、调 style、容器内改 children),左侧实时更新。组件类型与各字段详见 load_skill("complex-builder")。',
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     data: { schema: pageSchema, bind: pageObj },
     skills: [
       defineSkill({
         name: 'complex-builder',
-        description: '编辑 13 种组件拼装的复杂页面(window.page,含 container/section/grid 容器可嵌套 children)。用户要求改左侧页面(增删改组件 / 调 props / 调样式 / 容器内嵌套)时使用',
+        description: '编辑组件拼装的复杂页面(window.page,含 container/section/grid 容器可嵌套 children)。用户要求改左侧页面(增删改组件 / 调 props / 调样式 / 容器内嵌套)时使用',
         getContent: () => complexBuilderSkillContent,
       }),
     ],

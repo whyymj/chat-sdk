@@ -24,9 +24,10 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 | Constraint | Mechanism | Effect |
 |---|---|---|
-| **Scope control** | Property registry (`data`) — only declared paths are writable | AI touching undeclared fields → rejected |
+| **Scope control** | Property registry (`data`) — only declared paths are writable; schema shape auto-whitelist (top-level keys limit visible + writable; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
 | **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
-| **Incremental op** | `write` with `patch` (or advanced `edit_data`) patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits |
+| **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
+| **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
 | **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 

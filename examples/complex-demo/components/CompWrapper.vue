@@ -2,7 +2,7 @@
 /**
  * 组件包装器 —— 统一处理 BaseProps(id/style/visible/className)
  *
- * 10 种业务组件都经此包装:把 style 对象转成内联样式,visible=false 隐藏,
+ * 业务组件都经此包装:把 style 对象转成内联样式,visible=false 隐藏,
  * className 附加 class,id 设到根元素。业务组件只关心自己的 props。
  */
 import { computed } from 'vue'

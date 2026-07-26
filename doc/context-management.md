@@ -80,6 +80,7 @@ base systemPrompt（集成方注入的身份/规则）
 - 摘要方式：`enableLLMSummary`（默认开）→ LLM 摘要（失败/超时回退索引摘要）；否则零成本「索引摘要」（每轮 userQuery 60 字 + assistantPreview 80 字）
 - **召回 recall**：`enableRecall` 时从旧轮按当前问题关键词检索 topK（`recallTopK`），把命中轮的简短片段拼进摘要消息的「相关历史」段
 - **关键：只压输入，不改 state.messages** → 每轮从完整原文重新摘要，无累积损失叠加
+- **双摘要协同（2.4+ 修复）**：策略③（不改 messages）与策略④（splice 改 messages）独立运行。策略④会把【更早对话摘要】system 留在 messages 头部，下一轮策略③的 `groupRounds` 跳过头部 system → 旧累积摘要会被策略③静默丢失。修复：`compress` 现提取头部旧摘要正文，并入新摘要的【更早累积摘要】段，保证两套机制协同不丢历史。配置建议 `maxMemoryRounds >= summaryThresholdRounds`（否则策略④先裁，策略③永不触发）
 
 ### 策略 ④ 内存上限裁剪（trimMemoryMessages）
 

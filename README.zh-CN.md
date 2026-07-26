@@ -24,9 +24,10 @@
 
 | 约束 | 机制 | 作用 |
 |---|---|---|
-| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值 | AI 传非法值 → 拒绝 |
+| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值;schema 形状自动白名单(顶层 key 限制可见 + 可写,未声明字段隐藏/拒改/整体 set 转 merge 防误删) | AI 传非法值 → 拒绝;非声明字段 → `PATH_DENIED` |
 | **合法性校验** | zod schema —— `write`/`set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
-| **增量操作** | `write` 的 `patch`(或 advanced `edit_data`)按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部 |
+| **增量操作** | `write` 的 `patch`/`patches`(批量,原子回滚)或 advanced `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部;一次改多处用 `patches` |
+| **大对象检索** | `read` 支持 `fields`(字段裁剪)+ `depth`(深度截断)减体积;`query_data`(JSONPath)/`search_data`(文本)/`eval_script`(沙箱 JS) | 大 JSON 高效检索 + 局部定位 |
 | **可回滚** | per-path 快照(自动入栈)+ 会话 checkpoint | 改坏了一键回退到上次正常态 |
 | **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入 | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
 

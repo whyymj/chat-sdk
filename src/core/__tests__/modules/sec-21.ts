@@ -228,5 +228,105 @@ export async function run(ctx: TestCtx): Promise<void> {
     const t6 = byName(tools6)
     r = await invoke(t6['write'], { value: { name: 'abc' } })
     assert(page6.name === 'ABC', 'write 拦截器转换 → 值经拦截器改写后落地')
+
+    // LEAF_BIND:叶子 bind 的 set_data/write(set) 拒绝(不静默丢失)
+    const leaf = '原始字符串' as any
+    const leafTools = createDataOps({ schema: z.string(), bind: leaf, description: 'leaf' })
+    const lt = byName(leafTools)
+    r = await invoke(lt['set_data'], { value: '"新值"' })
+    assert(/LEAF_BIND/.test(r), 'set_data 叶子 bind → LEAF_BIND 拒绝(不静默丢失)')
+    r = await invoke(lt['write'], { value: '"新值"' })
+    assert(/LEAF_BIND/.test(r), 'write(set) 叶子 bind → LEAF_BIND 拒绝')
+
+    // edit 模式拦截器生效(#3 修复):拦截器收到 {op,jsonPath,value} 并能改 value
+    const page7: any = { items: ['a'] }
+    const tools7 = createDataOps(
+      { schema: z.object({ items: z.array(z.string()) }), bind: page7, description: 'p7' },
+      { interceptors: { write: (payload) => (payload as any).value?.toUpperCase() } },
+    )
+    const t7 = byName(tools7)
+    r = await invoke(t7['write'], { value: 'b', patch: { op: 'append', jsonPath: 'items' } })
+    assert(page7.items.length === 2 && page7.items[1] === 'B', 'write edit 模式拦截器 → 收到 value 并转换后落地(原 bug:edit 模式拦截器失效)')
+
+    // 字符串 value parse 一致性(统一启发式)
+    const page8: any = { count: 0, list: [] as any[] }
+    const tools8 = createDataOps({ schema: z.object({ count: z.number(), list: z.array(z.any()) }), bind: page8, description: 'p8' })
+    const t8 = byName(tools8)
+    r = await invoke(t8['edit_data'], { op: 'set', jsonPath: 'count', value: '5' })
+    assert(page8.count === 5, 'edit_data 裸数字字符串 "5" → parse 成数字 5')
+    r = await invoke(t8['edit_data'], { op: 'append', jsonPath: 'list', value: 'c' })
+    assert(page8.list[0] === 'c', 'edit_data 裸字符串 "c" → 当原值字符串(parse 失败 fallback)')
+    r = await invoke(t8['set_data'], { value: '{bad' })
+    assert(/JSON_PARSE/.test(r), 'set_data "{bad" → JSON_PARSE(以 { 开头按 JSON 解析失败报错)')
+
+    // #优化1:write 批量 patches(一次原子应用多个 patch)
+    const page9: any = { title: 't', a: 1, b: 2, items: ['x'] }
+    const tools9 = createDataOps({ schema: z.object({ title: z.string(), a: z.number(), b: z.number(), items: z.array(z.string()) }), bind: page9, description: 'p9' })
+    const t9 = byName(tools9)
+    r = await invoke(t9['write'], { patches: [
+      { op: 'set', jsonPath: 'title', value: '新标题' },
+      { op: 'set', jsonPath: 'a', value: 10 },
+      { op: 'append', jsonPath: 'items', value: 'y' },
+    ] })
+    assert(page9.title === '新标题' && page9.a === 10 && page9.items.length === 2 && page9.items[1] === 'y', 'write 批量 patches → 一次原子应用多个 patch 全部生效')
+    // 批量中任一 patch 非法 → 整体不写入(回滚)
+    const beforeA = page9.a
+    r = await invoke(t9['write'], { patches: [
+      { op: 'set', jsonPath: 'a', value: 99 },
+      { op: 'set', jsonPath: 'b', value: '非数字' },  // schema 拒绝(b 应为 number)
+    ] })
+    assert(/SCHEMA_INVALID|校验失败/.test(r) && page9.a === beforeA, 'write 批量 patches 任一非法 → 整体不写入(原子回滚)')
+
+    // #优化2:read 字段裁剪 + 深度截断
+    const page10: any = { title: 'T', meta: { author: 'me', ts: 123, deep: { x: 1 } }, list: [{ id: 1, name: 'a', extra: 'x' }, { id: 2, name: 'b', extra: 'y' }] }
+    const tools10 = createDataOps({ schema: z.any(), bind: page10, description: 'p10' })
+    const t10 = byName(tools10)
+    r = await invoke(t10['read'], { jsonPath: 'list', fields: ['id', 'name'] })
+    assert(/"id":1/.test(r) && /"name":"a"/.test(r) && !/extra/.test(r), 'read fields 裁剪 → 只返回指定字段(extra 不出现)')
+    r = await invoke(t10['read'], { jsonPath: 'meta', depth: 1 })
+    assert(/"author":"me"/.test(r) && /\{\.\.\.\}/.test(r) && !/"x":1/.test(r), 'read depth=1 → 第 2 层用 {...} 占位(deep.x 截断)')
+    r = await invoke(t10['read'], { jsonPath: 'list', fields: ['id'], depth: 2 })
+    assert(/"id":1/.test(r) && !/name/.test(r), 'read fields + depth 组合 → 先裁字段再截深度(id 保留,extra/name 裁掉)')
+
+    // #优化3:eval_script transform 增量 patches(返回 {patches:[...]} 而非完整新值)
+    // 注:沙箱 Worker 在 Node.js 不可用,此处仅校验 transform patches 的入参解析逻辑(脚本不实际执行,用 mock 替换 runSandboxedScript 不可行,改为验证描述/schema 含 patches 提示)
+    const evalDesc = (t10['eval_script'] as any).description || ''
+    assert(/patches/.test(evalDesc), 'eval_script 描述含 patches 增量模式说明')
+
+    // #白名单:schema 形状自动限制可见性 + 可写性(ZodObject 子集 + 完整大 JSON bind)
+    const bigJson: any = { title: '公开标题', components: [{ id: 1 }], secret: '机密字段', internalState: { flag: true } }
+    const wlTools = createDataOps({
+      schema: z.object({  // schema 只声明 title + components,隐藏 secret + internalState
+        title: z.string(),
+        components: z.array(z.object({ id: z.number() })),
+      }),
+      bind: bigJson,
+      description: '白名单示例',
+    })
+    const wlt = byName(wlTools)
+    // read 整体 → 只返回 schema 声明字段(secret/internalState 隐藏)
+    r = await invoke(wlt['read'], {})
+    assert(/公开标题/.test(r) && /components/.test(r) && !/机密字段/.test(r) && !/internalState/.test(r), '白名单 read 整体 → 隐藏未声明字段(secret/internalState 不暴露)')
+    // read 非声明字段 → PATH_DENIED
+    r = await invoke(wlt['read'], { jsonPath: 'secret' })
+    assert(/PATH_DENIED/.test(r), '白名单 read 非声明字段 → PATH_DENIED')
+    // edit 非声明字段 → PATH_DENIED
+    r = await invoke(wlt['edit_data'], { op: 'set', jsonPath: 'secret', value: '"泄露"' })
+    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 edit 非声明字段 → PATH_DENIED(不写入)')
+    // delete 非声明字段 → PATH_DENIED
+    r = await invoke(wlt['delete_data'], { jsonPath: 'secret' })
+    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 delete 非声明字段 → PATH_DENIED(不删除)')
+    // set_data 整体 → merge 语义(只更新声明字段,隐藏字段保留不动,防误删)
+    r = await invoke(wlt['set_data'], { value: { title: '新标题', components: [{ id: 2 }] } })
+    assert(bigJson.title === '新标题' && bigJson.secret === '机密字段' && bigJson.internalState.flag === true, '白名单 set_data → merge 语义:更新声明字段,隐藏字段(secret/internalState)保留不动')
+    // write(set) 整体 → 同样 merge 语义
+    r = await invoke(wlt['write'], { value: { title: '又改', components: [] } })
+    assert(bigJson.title === '又改' && bigJson.secret === '机密字段', '白名单 write(set) → merge 语义:隐藏字段保留')
+    // query_data → 只查白名单字段(隐藏字段不参与查询)
+    r = await invoke(wlt['query_data'], { expr: '$..*' })
+    assert(!/机密字段/.test(r) && !/internalState/.test(r), '白名单 query_data → 只查声明字段(隐藏字段不参与)')
+    // edit 声明字段子路径 → 允许
+    r = await invoke(wlt['edit_data'], { op: 'set', jsonPath: 'title', value: '"允许改"' })
+    assert(bigJson.title === '允许改', '白名单 edit 声明字段子路径 → 允许写入')
   }
 }

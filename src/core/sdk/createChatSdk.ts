@@ -710,7 +710,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             ...resolveContextOptions(options, modelCaps.contextWindow),
             llmInvoke: summaryLlmInvoke,
             // A:压缩时注入当前主数据说明(防 LLM 基于过时记忆操作;dataOps 关闭时 liveData() 返回 undefined,无影响)
-            getRegisteredSlots: () => liveData() ? [{ path: '', description: liveData()!.description ?? '主数据对象' }] : [],
+            getRegisteredData: () => liveData() ? [{ description: liveData()!.description ?? '主数据对象' }] : [],
             // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);用户可在 contextOptions 覆盖
             preserveLastToolResults:
               (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
