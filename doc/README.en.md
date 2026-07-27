@@ -31,10 +31,11 @@ import { z } from 'zod'
 createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
-  systemPrompt: 'You are a page-ops assistant…',
-  data: [
-    { path: 'app.theme', description: 'Theme', schema: z.enum(['light', 'dark']) },
-  ],
+  systemPrompt: 'You are a JSON-ops assistant…',
+  data: {
+    schema: z.object({ theme: z.enum(['light','dark']).describe('Theme') }),
+    bind: app,
+  },
   tools: [], skills: [], memory: '',
 }).mount()
 ```

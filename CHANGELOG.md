@@ -2,6 +2,83 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.9.1] - 2026-07-27
+
+### Docs
+- **对接提示词通用模板**:新增 `skills/page-agent-sdk-integrate/references/integration-prompt.md`(进 npm 包,英文),供集成方复制给对接项目的 AI(Cursor/Claude Code)按流程集成;README 中英 + SKILL.md + CLAUDE.md 补充"对接提示词推荐"段
+- 新增 `doc/集成提示词-Vue2-低代码页面-抽屉.md`(中文特定场景示例,仓库内)
+
+## [2.9.0] - 2026-07-27
+
+### Fixed
+- **schema 白名单子路径投影**:`read components.0` 等子路径读现按该位置的子 schema 递归投影(隐藏 child 未声明字段);原仅顶层投影,子路径泄露 child 不可见字段
+- **`isPathAllowed` 逐段校验**:`jsonPath` 逐级检查每段在 schema 声明内(防子路径绕过顶层白名单);`unwrapSchema` 支持 ZodLazy 解包(递归 schema)
+- **`set`/`write(set)` 整对象 + `interceptors.write` 补充不可见字段写回 bind**:原 schema strip + safeMerge 丢失补充字段;现从原始 parsed 取不在 allowKeys 的字段写回(信任集成方拦截器/用户显式传值)
+
+### Added
+- **ChatDialog 抽屉模式**(`drawer: true`):右侧滑出 + 遮罩 + 关闭按钮(替代折叠箭头);关闭默认 `hide()` 保留历史与生成进程
+- **`sdk.hide()` / `sdk.show()`**:不卸载 Vue 应用与 agent,仅加 `cs-hidden` 类隐藏;`mount()` 对已挂载隐藏实例幂等调 `show()`
+- **动画**:展开/收起、卸载退出、挂载进入(抽屉滑入)三类 CSS 过渡
+- **`onClose` 选项**:自定义关闭行为;抽屉模式默认 `hide()`,非抽屉默认 `unmount()`
+- `animation-demo`(动画 + hide/show)、`multi-agent-demo`(多 agent 并行 + 互斥切换)
+- `EditableBanner` 标识 AI 可编辑区、`DevNav` 折叠下拉
+
+## [2.8.0] - 2026-07-27
+
+### Added
+- **`sdk.setSkills(skills)`**:运行时替换整个 skill 列表(同名覆盖);下轮 system prompt skill 索引段重渲染,清 skill 全文缓存,下次 `load_skill` 取最新全文(含 vfs doc)
+- **`sdk.invalidateSkillCache(name?)`**:动态 skill 内容变化时主动失效缓存(不传清全部,传 name 清指定)
+- **`sdk.exportData()` / `sdk.importData(data)`**:导出/导入主数据 `bind` 的深拷贝
+- **`sdk.usage`**:累计 token 用量 `{prompt_tokens, completion_tokens, total_tokens}`
+- **`onAudit` 选项**:结构化审计回调(set/edit/delete/restore)
+- **`session_restored` 事件**:会话恢复时触发
+- **skill 全文缓存**:`SkillsController` + `contentCache`,跨轮不重复 load 同一 skill;`offloadLargeResult` 内容寻址去重(VFS 不重复存同一内容)
+- **`infoTick`**:DebugDrawer 实时刷新(动态 skill/data 变化反映)
+
+## [2.7.1] - 2026-07-27
+
+### Docs
+- README 中英补充「schema / systemPrompt / skill 三层配合」设计思路章节
+
+## [2.7.0] - 2026-07-27
+
+### Changed
+- **`appendReliableWriteRules` 默认改 `true`**:自定义 `systemPrompt` 时自动追加 `reliableWriteRules`(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch),用 `\n\n---\n\n` 分隔线明确区分用户内容与 SDK 追加
+
+## [2.6.1] - 2026-07-26
+
+### Docs
+- 所有 demo 展示 `appendReliableWriteRules: true` + 注释说明
+
+## [2.6.0] - 2026-07-26
+
+### Added
+- **`appendReliableWriteRules` 选项**:自定义 `systemPrompt` 时自动追加 `systemPromptHelpers.reliableWriteRules`(默认 false,2.7.0 改 true)
+
+## [2.5.1] - 2026-07-26
+
+### Fixed
+- **verify/checkpoint 支持单对象 data 模型**:`createWriteBackCheck` 加 `root` 选项、`createCheckpointManager` 加 `getData` 选项,`createChatSdk` 传 `root: () => liveData()?.bind` / `getData: () => liveData()?.bind`(原误读 `globalThis.window` 致单对象 data 校验/回滚失效)
+- skills 重写 + 文档同步
+
+## [2.5.0] - 2026-07-26
+
+### Added
+- **schema 形状自动白名单**:`data.schema` 为 `ZodObject` 时,顶层声明 key 自动作为可读写白名单(`read` 整体按 schema 投影隐藏未声明字段;`write`/`edit`/`delete` jsonPath 顶层段必须在白名单内否则 `PATH_DENIED`;整体 set 转 merge 语义防误删)
+- **`write` 批量 `patches`**:一次原子应用多个 patch,任一失败整体回滚
+- **`read` 字段裁剪 + 深度截断**:`read({ jsonPath, fields, depth })` 支持字段投影 + 深度截断瘦身大返回
+- **`eval_script` 增量 transform**:沙箱脚本返回 transform 函数增量改 bind
+- **`allowPaths` 选项**:细粒度 per-path 权限
+
+### Fixed
+- 记忆系统:`trimToolResults` 死代码移除;`summarization` 与 `trimMemoryMessages` 双摘要合并;`getRegisteredSlots` 术语更新为 `getRegisteredData`
+
+## [2.4.1] - 2026-07-26
+
+### Fixed
+- 修复代码层旧名残留(window* → dataSlot*/slot* 重命名遗漏)
+- examples 非 Vue 场景改造(普通对象 bind + onEvent tick 重渲染)
+
 ## [2.4.0] - 2026-07-26
 
 ### Breaking(统一配置:删 `io`/`bind` 顶层选项,并入 `dataSlots`;按 minor 发布,不升 major)

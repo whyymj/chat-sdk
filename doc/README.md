@@ -32,9 +32,10 @@ createChatSdk({
   container: '#root',
   llm: { apiKey, baseUrl, model },
   systemPrompt: '你是JSON 操作助手…',
-  data: [
-    { path: 'app.theme', description: '主题', schema: z.enum(['light', 'dark']) },
-  ],
+  data: {
+    schema: z.object({ theme: z.enum(['light','dark']).describe('主题') }),
+    bind: app,
+  },
   tools: [], skills: [], memory: '',
 }).mount()
 ```
