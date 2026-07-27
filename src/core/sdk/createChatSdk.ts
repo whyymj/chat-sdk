@@ -32,6 +32,7 @@ import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOO
 import {
   createCheckpointManager,
   createCheckpointMiddleware,
+  restoreInPlace,
   type CheckpointManager,
 } from '../harness/checkpoint'
 import type { Middleware } from '../harness/middleware'
@@ -52,7 +53,7 @@ import { createSessionStore, type SessionStore, type StorageConfig, type Storage
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../utils/rounds'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
 
 export interface LLMConfig {
@@ -117,6 +118,8 @@ export interface ChatSdkOptions {
   maxSnapshots?: number
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean
+  /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
+  onAudit?: (entry: { op: string; jsonPath?: string; opDetail?: string; timestamp: number; success: boolean; error?: string }) => void
   /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
   toolMode?: 'simple' | 'advanced' | 'minimal'
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
@@ -278,6 +281,26 @@ export interface ChatSdk {
   setData(config: DataConfig): void
   /** 读取当前主数据配置(schema + bind + description);dataOps 关闭时返回 undefined */
   getData(): DataConfig | undefined
+  /**
+   * 运行时替换整个 skill 列表(同名 skill 覆盖更新)。立即生效:system prompt 的 skill 索引段下轮重渲染反映新 skill;
+   * 清空 skill 全文缓存与本轮已加载记录,下次 load_skill 重新取最新全文(含 vfs doc)。需开启 skills(默认开)
+   */
+  setSkills(skills: SkillSpec[]): void
+  /**
+   * 清 skill 全文缓存(动态 skill 内容变化时主动失效)。不传 name 清全部;传 name 清指定。
+   * 下次 load_skill 重新 getContent/readSkillDoc 取最新。需开启 skills(默认开)
+   */
+  invalidateSkillCache(name?: string): void
+  /** 导出主数据 bind 的深拷贝(备份/迁移用);dataOps 关闭或无 data 返回 null */
+  exportData(): any
+  /**
+   * 导入数据整体替换主数据 bind(就地还原,保留 reactive 引用)。
+   * - 默认经 schema 校验,不合法返回 {ok:false,error};校验通过写入并发 data_change 事件,返回 {ok:true}
+   * - opts.validate:false 跳过校验(集成方自行保证数据合法);opts.emit:false 不发 data_change 事件
+   */
+  importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string }
+  /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
+  usage: import('../types').TokenUsage
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
   pendingConflict: import('vue').Ref<PendingConflict | null>
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
@@ -341,10 +364,16 @@ interface AgentCore {
   checkpoint: CheckpointManager | null
   /** dataOps 控制器(运行时替换配置;dataOps 关闭 → null) */
   dataOpsController: DataOpsController | null
+  /** skills 控制器(运行时 setSkills/invalidateSkillCache;skills 关闭 → null) */
+  skillsController: import('../harness/skills').SkillsController | null
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
   pendingConflict: Ref<PendingConflict | null>
   /** 当前主数据配置(反映运行时替换;供 inspect/verify/getData 读最新状态) */
   liveData: () => DataConfig | undefined
+  /** 累计 token 用量(每轮 LLM 调用累加;供 sdk.usage 暴露) */
+  usage: import('../types').TokenUsage
+  /** 内部事件分发(供 return 对象的 importData 等手动发事件复用) */
+  emit: SdkEventHandler
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
   send(message: string): Promise<string>
@@ -444,10 +473,12 @@ function matchDataOp(name: string, args?: any): 'set' | 'edit' | 'delete' | 'res
 /**
  * 内部事件中间件:把常用时机经 onEvent 外发给集成方。
  * - wrapToolCall:数据写工具(set/edit/delete/restore)执行后发 data_change(operation/value)
+ * - afterModel:每轮 LLM 调用后提取 usage 累加到 core.usage,发 usage 事件(单轮 + 累计)
  * - afterAgent:每轮 agent 结束发 message_update(消息数)
  * stream 事件(round_start/text/tool_call/done 等)由 core.stream 包装层转发(见下)。
  */
-function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[], liveData: () => DataConfig | undefined): Middleware {
+function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[], liveData: () => DataConfig | undefined, usage: TokenUsage): Middleware {
+  let roundCounter = 0
   return {
     name: 'sdk-events',
     wrapToolCall: async (ctx: ToolCallContext, next) => {
@@ -458,6 +489,23 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
       }
       return result
     },
+    afterModel: (res) => {
+      // 从 LLM 响应消息提取 usage(OpenAI/DeepSeek 在 additional_kwargs.usage;部分 provider 在 response_metadata.token_usage/usage)
+      const ak = (res.message as any).additional_kwargs || {}
+      const rm = (res.message as any).response_metadata || {}
+      const u: any = ak.usage || rm.usage || rm.token_usage || rm.tokenUsage
+      if (u && typeof u === 'object') {
+        const p = Number(u.prompt_tokens ?? u.promptTokens ?? 0) || 0
+        const c = Number(u.completion_tokens ?? u.completionTokens ?? 0) || 0
+        const t = Number(u.total_tokens ?? u.totalTokens ?? (p + c)) || 0
+        const roundUsage: TokenUsage = { prompt_tokens: p, completion_tokens: c, total_tokens: t }
+        usage.prompt_tokens = (usage.prompt_tokens ?? 0) + p
+        usage.completion_tokens = (usage.completion_tokens ?? 0) + c
+        usage.total_tokens = (usage.total_tokens ?? 0) + t
+        roundCounter++
+        emit({ type: 'usage', round: roundCounter, usage: roundUsage, cumulative: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, total_tokens: usage.total_tokens } })
+      }
+    },
     afterAgent: async () => {
       emit({ type: 'message_update', count: messages.length })
     },
@@ -466,6 +514,8 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
+  // ===== 累计 token 用量(每轮 LLM 调用经 sdk-events 中间件 afterModel 提取累加;供 sdk.usage 暴露 + onEvent('usage') 单轮外发) =====
+  const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
   const pendingConflict = ref<PendingConflict | null>(null)
   let conflictSeq = 0
@@ -565,7 +615,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
   const dataOpsTools = useDataOps && finalDataConfig
     ? createDataOps(finalDataConfig, {
-        onAudit: options.debug ? (e) => console.log('[page-agent-sdk][data audit]', e) : undefined,
+        onAudit: options.onAudit ?? (options.debug ? (e) => console.log('[page-agent-sdk][data audit]', e) : undefined),
         maxSnapshots: options.maxSnapshots,
         onConflict: setPendingConflict,
         autoLock: options.autoLock,
@@ -701,13 +751,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     for (const l of listeners) { try { l(event) } catch { /* 单个监听器抛错不影响其他 */ } }
   }
 
+  let skillsMw: ReturnType<typeof createSkillsMiddleware> | undefined
   const middlewares = [
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
       ? [
-          createSkillsMiddleware(options.skills || [], {
+          skillsMw = createSkillsMiddleware(options.skills || [], {
             // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
             readVfs: useVfs ? (p: string) => vfsStore.files[p]?.content : undefined,
           }),
@@ -745,7 +796,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(options.middleware || []),
     // SDK 事件中间件(最末,最后观察):数据写后发 data_change;每轮结束发 message_update
     // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
-    createSdkEventMiddleware(emit, messages, liveData),
+    createSdkEventMiddleware(emit, messages, liveData, usage),
   ]
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
@@ -766,8 +817,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     mcpServers: [],
     checkpoint: checkpointMgr,
     dataOpsController,
+    skillsController: skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null,
     pendingConflict,
     liveData,
+    usage,
+    emit,
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -833,7 +887,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
       core.agent!.debugLogs.value = []
       if (!snap) snap = await store.load(agentId, target)
-      if (snap) core.applySnapshot(snap)
+      if (snap) {
+        core.applySnapshot(snap)
+        emit({ type: 'session_restored', sessionId: target, rounds: snap.messages?.length ?? 0 })
+      }
       if (options.memory) void store.save(agentId, core.sessionId, { memory: options.memory })
       return target
     },
@@ -876,7 +933,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
         systemPrompt: finalSystemPrompt,
         tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
-        skills: (options.skills ?? []).map((s) => ({ name: s.name, description: s.description })),
+        skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
         memory: options.memory ?? '',
         middleware: middlewares.map((m) => m.name),
@@ -909,8 +966,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     if (sessOpts.id) {
       core.sessionId = sessOpts.id
       const snap = await store.load(agentId, core.sessionId)
-      if (snap) core.applySnapshot(snap)
-      else await store.createSession(agentId, sessOpts.title, core.sessionId)
+      if (snap) {
+        core.applySnapshot(snap)
+        emit({ type: 'session_restored', sessionId: core.sessionId, rounds: snap.messages?.length ?? 0 })
+      } else await store.createSession(agentId, sessOpts.title, core.sessionId)
     } else if (sessOpts.autoResume !== false) {
       const sessions = await store.listSessions(agentId)
       if (options.debug) console.log('[page-agent-sdk][restore] listSessions', agentId, sessions.length, sessions.map((s) => s.sessionId))
@@ -919,6 +978,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         const snap = await store.load(agentId, core.sessionId)
         if (snap) {
           core.applySnapshot(snap)
+          emit({ type: 'session_restored', sessionId: core.sessionId, rounds: snap.messages?.length ?? 0 })
           if (options.debug) console.log('[page-agent-sdk][restore] 恢复会话', core.sessionId, `${snap.messages?.length ?? 0} msgs`)
         } else if (options.debug) {
           console.log('[page-agent-sdk][restore] 会话 meta 存在但快照为空', core.sessionId)
@@ -1156,6 +1216,49 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     },
     /** 读取当前主数据配置;dataOps 关闭时返回 undefined */
     getData: () => core.liveData(),
+    /** 运行时替换整个 skill 列表(同名覆盖);清缓存,下轮 system prompt 索引反映新 skill,下次 load_skill 取最新全文 */
+    setSkills: (skills: SkillSpec[]) => {
+      const ctrl = core.skillsController
+      if (!ctrl) {
+        console.warn('[page-agent-sdk] setSkills 忽略:skills 已关闭(capabilities.skills:false)')
+        return
+      }
+      ctrl.set(skills)
+    },
+    /** 清 skill 全文缓存(动态 skill 内容变化时主动失效);不传清全部,传 name 清指定 */
+    invalidateSkillCache: (name?: string) => {
+      const ctrl = core.skillsController
+      if (!ctrl) {
+        console.warn('[page-agent-sdk] invalidateSkillCache 忽略:skills 已关闭(capabilities.skills:false)')
+        return
+      }
+      ctrl.invalidateCache(name)
+    },
+    /** 导出主数据 bind 的深拷贝(备份/迁移用);dataOps 关闭或无 data 返回 null */
+    exportData: () => {
+      const bind = core.liveData()?.bind
+      return bind == null ? null : JSON.parse(JSON.stringify(bind))
+    },
+    /**
+     * 导入数据整体替换主数据 bind(就地还原,保留 reactive 引用)。
+     * 默认经 schema 校验,不合法返回 {ok:false,error};校验通过写入并发 data_change 事件,返回 {ok:true}。
+     * opts.validate:false 跳过校验(集成方自行保证数据合法);opts.emit:false 不发 data_change 事件。
+     */
+    importData: (json, opts) => {
+      const cfg = core.liveData()
+      if (!cfg || !core.dataOpsController) return { ok: false, error: 'dataOps 未开启或无主数据' }
+      const bind = cfg.bind
+      if (bind == null || typeof bind !== 'object') return { ok: false, error: '主数据 bind 非对象,无法就地还原(集成方应用对象包裹)' }
+      if (opts?.validate !== false) {
+        const r = (cfg.schema as any).safeParse(json)
+        if (!r.success) return { ok: false, error: 'schema 校验失败:' + (r.error?.message ?? '未知错误') }
+      }
+      restoreInPlace(bind as Record<string, unknown> | unknown[], json)
+      if (opts?.emit !== false) core.emit({ type: 'data_change', operation: 'set', value: bind })
+      return { ok: true }
+    },
+    /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
+    usage: core.usage,
     /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
     pendingConflict: core.pendingConflict,
     /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */

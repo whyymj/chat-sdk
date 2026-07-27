@@ -97,8 +97,8 @@ function setByPath(obj: unknown, path: string, value: unknown): void {
   cur[parts[parts.length - 1]] = value
 }
 
-/** 就地还原容器内容,保留引用(数组:清空+push;对象:删多余 key + 覆盖) */
-function restoreInPlace(live: Record<string, unknown> | unknown[], snap: unknown): void {
+/** 就地还原容器内容,保留引用(数组:清空+push;对象:删多余 key + 覆盖)。导出供 importData 等复用 */
+export function restoreInPlace(live: Record<string, unknown> | unknown[], snap: unknown): void {
   if (Array.isArray(live)) {
     live.length = 0
     if (Array.isArray(snap)) (live as unknown[]).push(...snap)

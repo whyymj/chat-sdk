@@ -141,5 +141,79 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:custom-injection] exportData 导出主数据深拷贝 + importData 导入(默认校验 + 就地还原保留引用)')
+  {
+    const bind = { title: '原', count: 1, items: [{ id: 1, name: 'a' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-export', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string(), count: z.number(), items: z.array(z.object({ id: z.number(), name: z.string() })) }), bind },
+    })
+    await sdk.mount()
+    // exportData:深拷贝(改导出不影响原 bind)
+    const exported = sdk.exportData()
+    assert(exported && exported.title === '原' && exported.count === 1 && exported.items.length === 1, 'exportData 返回 bind 深拷贝(内容一致)')
+    exported.title = '改'
+    assert(bind.title === '原', 'exportData 是深拷贝(改导出对象不影响原 bind)')
+    // importData:校验通过 → 就地还原(保留 bind 引用)
+    const r = sdk.importData({ title: '新', count: 5, items: [{ id: 2, name: 'b' }] })
+    assert(r.ok === true, 'importData 合法数据 → 校验通过,返回 {ok:true}')
+    assert(bind.title === '新' && bind.count === 5 && bind.items.length === 1 && bind.items[0].id === 2, 'importData 就地还原 bind 内容(保留同一引用)')
+    // importData:校验失败 → 不写入,返回 {ok:false,error}
+    const r2 = sdk.importData({ title: 123, count: 'bad' })
+    assert(r2.ok === false && typeof r2.error === 'string', 'importData 非法数据 → 校验失败,返回 {ok:false,error}')
+    assert(bind.title === '新', 'importData 校验失败不写入(bind 不变)')
+    // importData:validate:false 跳过校验
+    const r3 = sdk.importData({ title: '跳过', count: 99 }, { validate: false })
+    assert(r3.ok === true && bind.title === '跳过' && bind.count === 99, 'importData validate:false 跳过校验,直接写入')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] onAudit 审计回调选项 → 构造时不报错(独立于 debug)')
+  {
+    let audited = null
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-onaudit', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+      onAudit: (e) => { audited = e },
+    })
+    await sdk.mount()
+    assert(typeof sdk.send === 'function', 'onAudit 选项透传 → mount 成功(独立于 debug,无需 debug:true)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] setSkills/invalidateSkillCache → 运行时替换 skill 列表')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-setskills', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, skills: true },
+      skills: [{ name: 's1', description: '初始 skill', getContent: () => 'OLD' }],
+    })
+    await sdk.mount()
+    assert(typeof sdk.setSkills === 'function' && typeof sdk.invalidateSkillCache === 'function', 'sdk 暴露 setSkills/invalidateSkillCache')
+    assert(sdk.inspect().skills.length === 1 && sdk.inspect().skills[0].description === '初始 skill', 'inspect().skills 反映初始 skill')
+    // 同名替换为 v2
+    sdk.setSkills([{ name: 's1', description: '新 skill', getContent: () => 'NEW' }])
+    assert(sdk.inspect().skills.length === 1 && sdk.inspect().skills[0].description === '新 skill', 'setSkills 同名替换 → inspect().skills 反映新 skill')
+    // invalidateSkillCache 不报错(无已加载缓存也安全)
+    sdk.invalidateSkillCache('s1')
+    sdk.invalidateSkillCache()
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] setSkills skills 关闭 → 控制台 warn 不抛错')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-setskills-off', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: false },
+    })
+    await sdk.mount()
+    assert(sdk.inspect().skills.length === 0, 'skills 关闭 → inspect().skills 为空')
+    // 调 setSkills 应 warn 但不抛错
+    let threw = false
+    try { sdk.setSkills([{ name: 'x', description: 'x', getContent: () => 'x' }]) } catch { threw = true }
+    assert(!threw, 'skills 关闭时 setSkills → warn 不抛错')
+    assert(sdk.inspect().skills.length === 0, 'skills 关闭时 setSkills → inspect 仍为空(no-op)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

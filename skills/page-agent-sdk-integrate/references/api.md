@@ -14,6 +14,11 @@
 | `hook(handler)` | `(h: SdkEventHandler) => () => void` | Runtime event subscription (multi-listener, returns unsubscribe). Complements `onEvent`. |
 | `setData(config)` | `(config: DataConfig) => void` | Runtime swap the main data config (`{ schema, bind, description? }`). Tools pick up new bind/schema immediately, no rebuild. Clears snapshots & resets optimistic-lock hash. |
 | `getData()` | `() => DataConfig \| undefined` | Read current main data config (reflects runtime `setData`). `undefined` if `dataOps` disabled. |
+| `exportData()` | `() => any` | Deep copy of main data `bind` (backup/migration). `null` if dataOps off / no data. |
+| `importData(json, opts?)` | `(json, opts?: { validate?: boolean; emit?: boolean }) => { ok: boolean; error?: string }` | Replace `bind` entirely (in-place, preserves reactive ref). Schema-validated by default; `opts.validate:false` skips; `opts.emit:false` suppresses `data_change`. |
+| `setSkills(skills)` | `(skills: SkillSpec[]) => void` | Runtime swap the entire skill list (same-name skill overwrites). Takes effect next round: the skill index section of the system prompt re-renders with the new skills; clears the skill full-text cache & in-round loaded set, so the next `load_skill` re-fetches the latest full text (incl. vfs doc). Requires skills enabled (default on). |
+| `invalidateSkillCache(name?)` | `(name?: string) => void` | Invalidate the skill full-text cache (proactive invalidation when a dynamic skill's content changes). Omit `name` to clear all; pass `name` to clear one. The next `load_skill` re-runs `getContent`/`readSkillDoc`. Requires skills enabled (default on). |
+| `usage` | `TokenUsage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` (accumulated per LLM call). |
 | `restoreLastCheckpoint()` | `() => boolean` | Restore last good checkpoint (needs `checkpoint` enabled). |
 | `listCheckpoints()` | `() => CheckpointMeta[]` | List available checkpoints. |
 
@@ -121,6 +126,8 @@ Example: `write({ value: 9.9, patch: { op: 'set', jsonPath: 'items.0.price' } })
 | `tool_result` | `name, result, status` | Tool returns (`status`: `done`/`error`) |
 | `subagent` | `taskId, label, kind, name, args?, result?, status?` | Subagent tool progress (forwarded to UI, NOT into main LLM context) |
 | `done` | `content` | Agent round completes |
+| `usage` | `round, usage, cumulative` | After each LLM call (if provider returns usage); `usage`/`cumulative` are `{prompt_tokens, completion_tokens, total_tokens}` |
+| `session_restored` | `sessionId, rounds` | After storage restores a session snapshot (mount auto-resume / `switchSession` to existing session) |
 | `data_change` | `operation, value?` | Main data was written via `write` (infers `set`/`edit`/`delete` from args) or low-level `set`/`edit`/`delete`/`restore_data` |
 | `message_update` | `count` | The `messages` array changed |
 | `error` | `message` | An error occurred (abort excluded) |
@@ -152,6 +159,7 @@ createChatSdk({
 - **`bind` is required** (any object): reactive → auto-refresh on write (recommended for UI); plain object → write works but no auto-refresh (suitable for headless / backend; integrator uses `onEvent`/`hook` `data_change` to be notified). Tools mutate in-place (`restoreInPlace`), compatible with reactive proxies; plain objects also write fine.
 - **Notifying the outside world of changes**: subscribe `data_change` via `onEvent` (constructor) or `sdk.hook` (runtime, multi-listener, cancellable) — fires after `write`/`set`/`edit`/`delete`/`restore`, with `operation`/`value`. For Vue + reactive bind, template/watch auto-react (no manual notify needed); `onEvent` can coexist for audit/analytics.
 - **Runtime swap**: `sdk.setData({ schema, bind, description? })` replaces the whole config; tools pick up immediately (no rebuild). Snapshots & lock hash reset.
+- **Runtime skill swap**: `sdk.setSkills(skills)` replaces the entire skill list (same-name overwrites); the skill index section of the system prompt re-renders next round, and the skill full-text cache is cleared so the next `load_skill` re-fetches the latest content (incl. vfs doc). Use `sdk.invalidateSkillCache(name?)` to proactively invalidate the cache when a dynamic skill's content changes (without swapping the whole list).
 
 ## Exported building blocks (for custom UIs)
 

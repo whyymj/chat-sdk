@@ -233,3 +233,35 @@ sdk.getData()  // read current config (reflects runtime swap)
 
 **完整可运行示例**:`examples/dynamic-demo/`(`npm run dev` → `/examples/dynamic-demo/`)。
 **何时用**:可视化编辑器/低代码平台中,组件按需加载且结构各异(图表/表单/卡片 schema 各不同),无法在初始化时确定唯一 schema。详见 `advanced.md` §0。
+
+## 11. Dynamic skills (swap / invalidate at runtime)
+
+When the skill set changes at runtime (different business stages load different skill docs; lazy-loaded skill modules; a skill's content gets updated), swap the whole skill list or invalidate the cache on demand — the system-prompt skill index re-renders next round and `load_skill` re-fetches the latest full text (incl. vfs doc).
+
+```ts
+const sdk = createChatSdk({
+  container: '#chat', llm: { ... },
+  skills: [
+    { name: 'stage1', description: '阶段一:建表', getContent: () => STAGE1_DOC },
+  ],
+}).mount()
+
+// later: business stage changes → swap the whole skill list (same-name overwrites)
+function onStageChange(stage: 'stage2' | 'stage3') {
+  sdk.setSkills([
+    { name: stage, description: `阶段:${stage}`, getContent: () => STAGE_DOCS[stage] },
+  ])
+  // system-prompt skill index re-renders next round; load_skill re-fetches full text (cache cleared)
+}
+
+// or: a skill's content changed but the list stays → proactively invalidate that skill's cache
+function onSkillContentUpdate(name: string) {
+  sdk.invalidateSkillCache(name)   // next load_skill re-runs getContent / readSkillDoc
+  // sdk.invalidateSkillCache()    // omit name to clear all
+}
+
+sdk.inspect().skills  // reflects runtime swap (reads controller.get())
+```
+
+**何时用**:多阶段业务流程(各阶段 skill 文档不同)、运行时按权限/角色加载不同 skill、skill 文档热更新(vfs doc 内容变化需主动失效缓存)。skills 关闭(`capabilities.skills:false`)时 `setSkills`/`invalidateSkillCache` 输出 warn 并 no-op,不抛错。
+

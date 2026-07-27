@@ -61,7 +61,16 @@ export type SdkEvent =
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
   | { type: 'conflict'; conflict: import('../sdk/createChatSdk').PendingConflict }
+  | { type: 'session_restored'; sessionId: string; rounds: number }
+  | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string }
+
+/** token 用量(OpenAI 协议字段名) */
+export interface TokenUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+}
 
 /** SDK 事件回调签名 */
 export type SdkEventHandler = (event: SdkEvent) => void

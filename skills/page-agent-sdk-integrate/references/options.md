@@ -120,8 +120,17 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `onEvent` | `(e: SdkEvent) => void` | — | Constructor-time event subscription (single). Replaces polling for host-page reactivity. See [api.md](api.md) for event types. |
+| `onAudit` | `(entry) => void` | — | Structured audit callback for data writes (independent of `debug`). Fires on every `set`/`edit`/`delete`/`restore` with `{op, jsonPath, opDetail, timestamp, success, error?}`. For compliance audit / operation tracing. |
 
 Runtime subscription via `sdk.hook(handler) => () => void` (multi-listener, cancellable) — see [api.md](api.md).
+
+## Convenience APIs (export / import / usage)
+
+| API | Purpose | Notes |
+|---|---|---|
+| `sdk.exportData()` | Deep copy of main data `bind` (backup/migration) | Returns `null` if dataOps off / no data; mutating return does not affect original bind |
+| `sdk.importData(json, opts?)` | Replace `bind` entirely (in-place, preserves reactive ref) | Schema-validated by default → `{ok:false,error}` if invalid; `opts.validate:false` skips; `opts.emit:false` suppresses `data_change` |
+| `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` | Accumulated per LLM call; per-round detail via `onEvent('usage')` |
 
 ## vfs (in-memory workspace)
 

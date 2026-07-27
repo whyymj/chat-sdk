@@ -58,7 +58,16 @@ export type SdkEvent =
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
   | { type: 'conflict'; conflict: PendingConflict }
+  | { type: 'session_restored'; sessionId: string; rounds: number }
+  | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string };
+
+/** token 用量(OpenAI 协议字段名) */
+export interface TokenUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
 
 export type SdkEventHandler = (event: SdkEvent) => void;
 
@@ -192,6 +201,15 @@ export interface DataOpsController {
   set(config: DataConfig): void;
   /** 仅替换 bind 引用;清空快照栈与乐观锁缓存 */
   update(bind: any): void;
+}
+
+export interface SkillsController {
+  /** 运行时替换整个 skill 列表(同名 skill 覆盖更新;清缓存) */
+  set(skills: SkillSpec[]): void;
+  /** 读取当前 skill 列表(反映运行时 setSkills 替换) */
+  get(): SkillSpec[];
+  /** 清指定 skill 的全文缓存(不传清全部);下次 load_skill 重新取最新 */
+  invalidateCache(name?: string): void;
 }
 
 export interface PermissionRule {
@@ -354,6 +372,8 @@ export interface ChatSdkOptions {
   maxSnapshots?: number;
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean;
+  /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
+  onAudit?: (entry: { op: string; jsonPath?: string; opDetail?: string; timestamp: number; success: boolean; error?: string }) => void;
   /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
   toolMode?: 'simple' | 'advanced' | 'minimal';
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
@@ -434,6 +454,22 @@ export interface ChatSdk {
   setData(config: DataConfig): void;
   /** 读取当前主数据配置;dataOps 关闭时返回 undefined */
   getData(): DataConfig | undefined;
+  /**
+   * 运行时替换整个 skill 列表(同名 skill 覆盖更新)。立即生效:system prompt 的 skill 索引段下轮重渲染反映新 skill;
+   * 清空 skill 全文缓存与本轮已加载记录,下次 load_skill 重新取最新全文(含 vfs doc)。需开启 skills(默认开)
+   */
+  setSkills(skills: SkillSpec[]): void;
+  /**
+   * 清 skill 全文缓存(动态 skill 内容变化时主动失效)。不传 name 清全部;传 name 清指定。
+   * 下次 load_skill 重新 getContent/readSkillDoc 取最新。需开启 skills(默认开)
+   */
+  invalidateSkillCache(name?: string): void;
+  /** 导出主数据 bind 的深拷贝(备份/迁移用);dataOps 关闭或无 data 返回 null */
+  exportData(): any;
+  /** 导入数据整体替换主数据 bind(就地还原,保留 reactive 引用);默认经 schema 校验,不合法返回 {ok:false,error};opts.validate:false 跳过校验,opts.emit:false 不发 data_change */
+  importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string };
+  /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
+  usage: TokenUsage;
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */
   pendingConflict: Ref<PendingConflict | null>;
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */

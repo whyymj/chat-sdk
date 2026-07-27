@@ -215,6 +215,170 @@ flowchart LR
 
 ---
 
+## ⑦ 事件流(订阅入口 + 各事件触发点)
+
+```mermaid
+flowchart LR
+  subgraph subs["订阅入口(三套互补)"]
+    S1["createChatSdk({ onEvent })<br/>构造时单回调"]
+    S2["sdk.hook(handler)<br/>运行时多监听器,返回 off"]
+    S3["onAudit 选项<br/>只审计数据写"]
+  end
+
+  subgraph emit["emit 经 sdk-events 中间件 + core.stream 包装外发"]
+    E1["round_start<br/>(每轮模型调用开始)"]
+    E2["reasoning / text<br/>(流式增量,stream 模式)"]
+    E3["tool_call / tool_result<br/>(stream 模式)"]
+    E4["usage<br/>(每轮 LLM 后,afterModel 提取)"]
+    E5["data_change<br/>(wrapToolCall 后,写工具)"]
+    E6["message_update<br/>(afterAgent,消息数)"]
+    E7["session_restored<br/>(mount/switchSession 恢复快照)"]
+    E8["conflict<br/>(乐观锁冲突挂起)"]
+    E9["done<br/>(一轮回复完成,stream 模式)"]
+    E10["error<br/>(模型/工具抛错,abort 除外)"]
+  end
+
+  subgraph noemit["不外发"]
+    N1["approval_request<br/>(UI 已处理,避免双重收口)"]
+  end
+
+  S1 --> emit
+  S2 --> emit
+  S3 -. "仅 set/edit/delete/restore<br/>结构化审计" .-> E5
+```
+
+**要点:**
+- `onEvent`(构造时单回调)与 `sdk.hook`(运行时多监听器、可取消)功能重叠,前者便捷、后者灵活,可并存
+- `onAudit` 独立于 `debug`,无需 `debug:true`,只发数据写操作的结构化审计事件
+- 流式事件(`text`/`reasoning`/`tool_call`/`tool_result`/`done`)仅 **stream 模式**触发(UI 默认 stream;`sdk.send` 走 invoke 无流式,但 `data_change`/`message_update`/`error` 仍发)
+- `sdk.usage` 累计 token 用量,单轮明细经 `usage` 事件外发
+
+---
+
+## ⑧ 会话恢复流程(mount 自动恢复 / switchSession 切换)
+
+```mermaid
+flowchart TD
+  M["mount()"] --> RD["await core.initDone"]
+  RD --> ST{"storage 开启?"}
+  ST -->|否| NEW["createSession 新建会话"]
+  ST -->|是| SO{"session.id 指定?"}
+  SO -->|是| L1["load(agentId, id)"]
+  SO -->|否 autoResume| LS["listSessions"]
+  LS --> L2{"有历史会话?"}
+  L2 -->|是| L3["load(agentId, sessions[0])"]
+  L2 -->|否| NEW
+  L1 --> AP{"快照存在?"}
+  L3 --> AP
+  AP -->|是| AS["applySnapshot(snap)<br/>灌入 messages/vfs/todos/memory"]
+  AS --> EM["emit session_restored<br/>{sessionId, rounds}"]
+  AP -->|否| NEW
+  NEW --> DONE["mount 完成"]
+  EM --> DONE
+
+  SW["switchSession(id?)"] --> FL["store.flush + 收口挂起 conflict"]
+  FL --> T{"id 指定?"}
+  T -->|是| LD["load(id)"]
+  T -->|否| CR["createSession 新建"]
+  LD --> CK{"快照存在?"}
+  CK -->|否| CR
+  CK -->|是| CL["清空当前内存态<br/>messages/vfs/todos/debugLogs"]
+  CL --> AS2["applySnapshot"]
+  AS2 --> EM2["emit session_restored"]
+  EM2 --> RT["返回新会话 id"]
+  CR --> RT
+```
+
+**要点:**
+- `applySnapshot` 灌入 messages/vfs/todos/memory;**不灌 `bind`**(bind 是集成方外部业务对象,由集成方管理)
+- 恢复会话后发 `session_restored` 事件(`rounds` = 恢复的消息数),集成方可据此提示「已恢复 N 轮对话」
+- `switchSession` 开头自动收口挂起的 conflict(按「保留外部」),防切会话后旧 conflict Promise 永挂
+
+---
+
+## ⑨ 子 agent 编排(spawn 委派 + 进度转发)
+
+```mermaid
+flowchart TD
+  MAIN["主 agent ReAct 循环"] --> TC{"LLM 调 spawn_agent / spawn_agents?<br/>(subagent 中间件,默认开)"}
+  TC -->|是| MK["createAgent(子)<br/>只读工具子集(排除 spawn 防递归)"]
+  MK --> DEPTH{"depth < maxDepth?<br/>(默认 1)"}
+  DEPTH -->|否| ERR["拒绝:超最大深度"]
+  DEPTH -->|是| RUN["子 agent 独立跑子任务<br/>(过程隔离,不进主上下文)"]
+  RUN --> PROG["子 agent 流式事件<br/>→ onLog 转发到主 debugLogs<br/>(带 source 标签)"]
+  PROG --> DONE2["子 agent 返回最终结论"]
+  DONE2 --> BACK["只把最终结论作为 spawn 工具的 result<br/>返回主上下文(省 token)"]
+  BACK --> MAIN
+
+  PRE["预声明子 agent<br/>subagents:[{id,description,...}]"] --> AUTO["自动生成 use_<id> 委派工具<br/>(Claude Code 风格)"]
+  AUTO --> MAIN
+```
+
+**要点:**
+- 子 agent 只读工具子集,排除 `spawn_agent`/`spawn_agents` 防递归
+- 子 agent 过程不进主上下文,只回最终结论 → 省 token
+- `maxDepth`(默认 1)递归物理切断;预声明子 agent 自动生成 `use_<id>` 委派工具
+- 子 agent 日志经 `onLog` 转发到主 debugLogs(带 `source` 标签,调试面板可区分)
+- **skill 全文缓存**:`load_skill` 首次 `getContent` 后缓存到 middleware 内存(contentCache),跨轮跨会话复用,避免重复 IO + 重复 offload;`beforeAgent` 清 `loaded` Set(允许跨轮重新 load,但用缓存内容);offload 内容寻址去重(相同内容复用同一 vfs 文件)
+- **运行时动态 skill**:`skills` 中间件挂 `SkillsController`(不可枚举),`createChatSdk` 暴露 `sdk.setSkills(skills)`(替换整个列表,同名覆盖,清 contentCache + loaded,下轮 `augmentPrompt` 重渲染索引)/ `sdk.invalidateSkillCache(name?)`(清指定/全部缓存);`inspect().skills` 读 `controller.get()` 反映运行时替换。用于懒加载组件等运行时增删 skill 场景
+
+---
+
+## ⑩ MCP 远程工具注入
+
+```mermaid
+flowchart TD
+  OPT["createChatSdk({ mcp:[{transport,url,name?}] })"] --> DYN["动态 import @modelcontextprotocol/sdk<br/>(仅用时加载,optional peerDep)"]
+  DYN --> CONN["Promise.allSettled 连接各 server<br/>(故障隔离:单个失败不影响其他)"]
+  CONN --> LIST["listTools() 拉取远程工具清单"]
+  LIST --> SCHEMA["inputSchema 直传 LangChain tool()<br/>(zod 4 兼容)"]
+  SCHEMA --> INJ["注入 allTools(source='mcp:<name>')"]
+  INJ --> FILTER["filterByToolMode 按 toolMode 筛选"]
+  FILTER --> AGENT["进 ReAct 循环供 LLM 调用"]
+  AGENT --> CALL{"LLM 调远程工具?"}
+  CALL -->|是| INV["client.invokeTool(name, args)"]
+  INV --> RES["结果回灌为 ToolMessage"]
+  RES --> AGENT
+```
+
+**要点:**
+- MCP 仅支持远程 transport(http/sse/websocket),浏览器无本地 stdio
+- `Promise.allSettled` 故障隔离:单个 server 连接失败不影响其他
+- `inspect().mcp.servers` 与每个工具 `source` 字段反映 MCP 配置
+- dev 预构建坑:`vite.config.ts` 的 `optimizeDeps.include` 已预声明 SDK 子路径,否则冷启动首次注入失败
+
+---
+
+## ⑪ Approval 人工确认(human-in-the-loop)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Checking: LLM 调工具(在 approval.tools 白名单)
+  Checking --> AutoPass: 不在白名单 → 直接执行
+  Checking --> Pending: 在白名单 → 挂起 + 发 approval_request
+  Pending --> Approved: 用户点「确认」
+  Pending --> Rejected: 用户点「拒绝」
+  Pending --> AutoReject: abort/unmount 自动拒绝
+  Approved --> Executing: 继续执行工具
+  Rejected --> Skipped: 跳过工具,返回拒绝原因给 LLM
+  AutoReject --> Skipped
+  Executing --> Idle
+  Skipped --> Idle
+  AutoPass --> Idle
+
+  note right of Pending: approval_request 不外发 onEvent/hook<br/>(UI 已处理,避免双重收口)
+  note right of Rejected: headless 集成方监听 approval_request 自建确认 UI
+```
+
+**要点:**
+- `approval:{ tools?, confirm?, ... }` 默认关闭,传 `approval` 即启用
+- 被动白名单:`approval.tools` 列出需确认的工具名;主动工具:`request_human_confirmation` 工具供 LLM 主动请求确认
+- `approval_request` 不外发 `onEvent`/`hook`(内置 UI 已处理,避免集成方误调 `resolve` 双重收口);headless 集成方监听 `approval_request` 自建确认框
+- abort/unmount 自动拒绝,防永久挂起
+
+---
+
 ## 关键特性
 
 | 维度 | 设计 |

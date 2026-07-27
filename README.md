@@ -371,10 +371,20 @@ createChatSdk({
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
   middleware: [/* custom middleware */],
-  onEvent(e) {                 // SDK event callback: subscribe to common moments (data change / message update / tool call / error), replaces polling
+  onEvent(e) {                 // SDK event callback: data change / message update / tool call / usage / session_restored / error, replaces polling
     if (e.type === 'data_change') refreshUI()
+    if (e.type === 'usage') console.log('round tokens', e.usage, 'cumulative', e.cumulative)
+    if (e.type === 'session_restored') toast(`restored ${e.rounds} rounds`)
   },
+  // onAudit: (entry) => logAudit(entry),  // structured audit of data writes (independent of debug)
 }).mount()
+
+// Convenience API
+// sdk.exportData()              // deep copy of main data bind (backup/migrate)
+// sdk.importData(json)          // replace bind in-place (preserves reactive ref; schema-validated by default)
+// sdk.setSkills(skills)         // runtime swap the entire skill list (same-name overwrites; clears cache, index re-renders next round)
+// sdk.invalidateSkillCache(name?)  // invalidate skill full-text cache (proactive; omit name to clear all)
+// sdk.usage                     // cumulative token usage {prompt_tokens, completion_tokens, total_tokens}
 ```
 
 ## Examples
@@ -407,8 +417,8 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 ## Self-tests
 
 ```bash
-npm test            # 434 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 131 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
+npm test            # 450 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 149 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
 ```
 
 ## Local npm package test

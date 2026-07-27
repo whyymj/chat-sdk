@@ -208,5 +208,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/已截断/.test(stillTruncated) && stillTruncated.length < big.length, 'vfs 不可用 + 结果 > 放行上限 → 截断兜底')
     const defaultTrunc = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000 })
     assert(/已截断/.test(defaultTrunc), 'vfs 不可用 + 未传 passThrough → 默认截断(= threshold)')
+
+    // 内容寻址去重:相同内容 → 相同文件名,反复外存不新增文件
+    const files2: Record<string, { content: string; updatedAt: number }> = {}
+    const bigA = 'A'.repeat(10000)
+    const r1 = offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 })
+    const keys1 = Object.keys(files2)
+    const r2 = offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 })
+    const keys2 = Object.keys(files2)
+    assert(keys1.length === 1 && keys2.length === 1 && keys1[0] === keys2[0], '内容寻址去重:相同内容 → 相同文件名,反复外存不新增文件')
+    assert(files2[keys1[0]].content === bigA, '外存内容完整')
+    // 不同内容 → 不同文件名
+    const bigB = 'B'.repeat(10000)
+    offloadLargeResult(bigB, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 })
+    assert(Object.keys(files2).length === 2, '不同内容 → 不同文件名(各一份)')
   }
 }

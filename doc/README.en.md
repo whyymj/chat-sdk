@@ -8,14 +8,14 @@
 |---|---|
 | [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / custom middleware / FAQ |
 | [Architecture](./architecture.md) *(Chinese)* | Layering / assembly & mount / ReAct loop (format self-correction + verify self-correction) / window-op & optimistic lock / **conflict human-in-the-loop (state machine + abort linkage)** / context compression & persistence (6 mermaid diagrams) |
-| [Context & Compression](./context-management.md) *(Chinese)* | Context 3-part composition / 4-layer compression / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
+| [Context & Compression](./context-management.md) / [EN](./context-management.en.md) | Context 3-part composition / offload + 3-layer compression (per-layer principle/flow/params/boundaries) / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
 
 ## Other info sources (in repo)
 - **Specs source of truth** (Requirements): [`../openspec/specs/page-agent-core.md`](../openspec/specs/page-agent-core.md)
 - **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
 - **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
-- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 434 assertions) + `npm run test:e2e` (integration e2e, 131 assertions)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 450 assertions) + `npm run test:e2e` (integration e2e, 149 assertions)
 
 ## Quick start
 ```bash

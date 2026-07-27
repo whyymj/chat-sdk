@@ -99,27 +99,59 @@ export interface SkillsMiddlewareOptions {
   readVfs?: (path: string) => string | undefined
 }
 
+export interface SkillsController {
+  /** 运行时替换整个 skill 列表(同名 skill 覆盖更新;清 contentCache 与 loaded,下次 load_skill 重新取最新) */
+  set(skills: SkillSpec[]): void
+  /** 读取当前 skill 列表(反映运行时 setSkills 替换) */
+  get(): SkillSpec[]
+  /** 清指定 skill 的全文缓存(不传清全部);下次 load_skill 重新 getContent/readSkillDoc。用于动态 skill 内容变化时主动失效 */
+  invalidateCache(name?: string): void
+}
+
 export function createSkillsMiddleware(
-  skills: SkillSpec[],
+  initialSkills: SkillSpec[],
   opts?: SkillsMiddlewareOptions,
 ): Middleware {
-  const skillMap = new Map(skills.map((s) => [s.name, s]))
+  let skills = [...initialSkills]
+  let skillMap = new Map(skills.map((s) => [s.name, s]))
+  // 本轮已加载记录(同轮内拦截重复 load,避免浪费);beforeAgent 每轮清空 → 跨轮可重新 load(用缓存)
   const loaded = new Set<string>()
+  // skill 全文缓存(middleware 实例级,跨轮跨会话复用):skill 全文是静态文档,首次 getContent 后缓存,避免重复 IO + 重复 offload;
+  // setSkills/invalidateCache 时清空,支持动态 skill
+  const contentCache = new Map<string, string>()
+
+  const controller: SkillsController = {
+    set(newSkills) {
+      skills = [...newSkills]
+      skillMap = new Map(skills.map((s) => [s.name, s]))
+      contentCache.clear()  // 新 skill 全文未缓存,下次 load 重新取
+      loaded.clear()        // 清本轮已加载记录,允许重新 load
+    },
+    get() { return skills },
+    invalidateCache(name) {
+      if (name) contentCache.delete(name)
+      else contentCache.clear()
+    },
+  }
 
   const loadSkillTool = tool(
     async ({ name }) => {
       const s = skillMap.get(name)
       if (!s) return `未找到 skill "${name}"。`
       if (loaded.has(name)) return `skill "${name}" 已在本轮加载,无需重复。`
-      let content: string
-      if (s.doc) {
-        const r = await readSkillDoc(s.doc, opts?.readVfs)
-        if (!r.ok) return `加载 skill "${name}" 文档失败:${r.error}`
-        content = r.content
-      } else if (s.getContent) {
-        content = await s.getContent()
-      } else {
-        return `skill "${name}" 未配置内容(doc 或 getContent 任选其一)。`
+      // 优先用缓存(skill 全文静态,跨轮跨会话复用,避免重复 getContent/读 vfs/重复 offload)
+      let content = contentCache.get(name)
+      if (content == null) {
+        if (s.doc) {
+          const r = await readSkillDoc(s.doc, opts?.readVfs)
+          if (!r.ok) return `加载 skill "${name}" 文档失败:${r.error}`
+          content = r.content
+        } else if (s.getContent) {
+          content = await s.getContent()
+        } else {
+          return `skill "${name}" 未配置内容(doc 或 getContent 任选其一)。`
+        }
+        contentCache.set(name, content)
       }
       loaded.add(name)
       return `skill "${name}" 完整指令:\n\n${content}`
@@ -131,14 +163,22 @@ export function createSkillsMiddleware(
     },
   )
 
-  return {
+  const mw: Middleware = {
     name: 'skills',
     tools: [loadSkillTool],
-    beforeAgent: () => ({
-      skillsMetadata: skills.map((s) => ({ name: s.name, description: s.description })),
-      skillsLoaded: [],
-    }),
+    beforeAgent: () => {
+      // 每轮 run 开始清 loaded Set:允许跨轮重新 load_skill(ToolMessage 跨轮不保留,agent 需重新拿全文);
+      // contentCache 不清(skill 全文静态,跨轮跨会话复用,避免重复 getContent/offload;setSkills/invalidateCache 时清)
+      loaded.clear()
+      return {
+        skillsMetadata: skills.map((s) => ({ name: s.name, description: s.description })),
+        skillsLoaded: [],
+      }
+    },
     augmentPrompt: () => renderSkillsIndex(skills),
     afterModel: () => ({ skillsLoaded: [...loaded] }),
   }
+  // 挂 controller(不可枚举,供 createChatSdk 暴露 sdk.setSkills/invalidateSkillCache)
+  Object.defineProperty(mw, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
+  return mw
 }

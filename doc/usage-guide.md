@@ -317,6 +317,7 @@ const sdk = createChatSdk({
   - Vue 响应式(bind 传 reactive)—— 模板/watch 自动响应,无需手动通知
   - `onEvent` 与响应式可并用:响应式管 UI 刷新,`onEvent` 管审计/埋点/跨系统联动
 - **运行时替换主数据**:`sdk.setData(config)` / `sdk.getData()`(替代旧 add/remove/listDataSlots)
+- **运行时替换 skill**:`sdk.setSkills(skills)`(同名 skill 覆盖更新;清 skill 全文缓存,下轮 system prompt 索引重渲染,下次 `load_skill` 取最新全文含 vfs doc)/ `sdk.invalidateSkillCache(name?)`(动态 skill 内容变化时主动失效缓存,不传清全部,传 name 清指定)
 
 - **大 JSON 增量改**:改数组元素某字段用 `write({ value:180, patch:{ op:'set', jsonPath:'components.0.price' } })` 增量 patch,只发改动、不重传整个数组。改大对象/数组优先用 patch,避免整体重传被 max_tokens 截断致 JSON 不完整。
 - **树形/递归 children 结构**:节点含 `children` 自引用时,用 zod `z.lazy(() => TreeNode)` 声明递归 schema,`.passthrough()` 让节点可带未声明字段:
@@ -739,6 +740,8 @@ createChatSdk({
 | `round_start` | 每轮模型调用开始 | `round` |
 | `subagent` | 子 agent 工具进度 | `taskId`/`label`/`kind`/`name`/... |
 | `done` | 一轮回复完成(stream 模式) | `content` |
+| `usage` | 每轮 LLM 调用后(若 provider 返回 usage) | `round` / `usage`(本轮 prompt/completion/total_tokens) / `cumulative`(累计) |
+| `session_restored` | storage 恢复会话快照后(mount 自动恢复 / `switchSession` 切到已存会话) | `sessionId` / `rounds`(恢复的消息数) |
 | `error` | 模型调用/工具抛错 | `message` |
 
 > ⚠️ `approval_request` 不外发(UI 已处理,避免集成方误调 `resolve` 双重收口)。
@@ -787,6 +790,37 @@ off2()
 ```
 
 `onEvent` 与 `hook` 互补:前者构造时单回调,后者运行时多监听器;两者可并存。事件类型与过滤规则同上(`approval_request` 不外发;流式事件仅 stream 模式)。
+
+### 6.10 便捷 API(导出/导入/用量/审计)
+
+除事件订阅外,SDK 实例还提供几个便捷 API,覆盖备份迁移、用量统计、审计追溯:
+
+| API | 作用 | 备注 |
+|---|---|---|
+| `sdk.exportData()` | 返回主数据 `bind` 的**深拷贝**(JSON 序列化) | 备份/迁移用;改返回值不影响原 bind;dataOps 关闭或无 data 返回 `null` |
+| `sdk.importData(json, opts?)` | 整体替换 `bind`(就地还原,保留 reactive 引用) | 默认经 `schema` 校验,不合法返回 `{ok:false,error}`;`opts.validate:false` 跳过校验;`opts.emit:false` 不发 `data_change` |
+| `sdk.setSkills(skills)` | 运行时替换整个 skill 列表(同名覆盖) | 立即生效:下轮 system prompt 索引重渲染;清 skill 全文缓存与本轮已加载记录,下次 `load_skill` 取最新全文(含 vfs doc);需开启 skills(默认开) |
+| `sdk.invalidateSkillCache(name?)` | 清 skill 全文缓存(主动失效) | 不传 `name` 清全部,传 `name` 清指定;动态 skill 内容变化时用;下次 `load_skill` 重新 `getContent`/`readSkillDoc`;需开启 skills(默认开) |
+| `sdk.usage` | 累计 token 用量 `{prompt_tokens, completion_tokens, total_tokens}` | 每轮 LLM 调用累加;无调用时全 0;单轮明细经 `onEvent('usage')` 外发 |
+| `onAudit(entry)` 选项 | 数据写操作结构化审计回调(独立于 `debug`) | 每次 `set`/`edit`/`delete`/`restore` 经此回调外发 `{op, jsonPath, opDetail, timestamp, success, error?}`;合规审计/操作追溯 |
+
+```ts
+// 备份 + 恢复
+const backup = sdk.exportData()
+localStorage.setItem('backup', JSON.stringify(backup))
+// ...出问题后恢复
+sdk.importData(JSON.parse(localStorage.getItem('backup')))
+
+// 用量统计
+onEvent(e => { if (e.type === 'usage') costMeter.add(e.usage) })
+console.log(sdk.usage)  // 累计
+
+// 审计
+createChatSdk({
+  onAudit: (entry) => auditLog.append(entry),  // 无需 debug:true
+  // ...
+})
+```
 
 ## 8. 高级:自定义中间件
 

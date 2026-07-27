@@ -288,6 +288,7 @@ const sdk = createChatSdk({
   - Vue reactivity (bind with reactive) — template/watch auto-react, no manual notify needed
   - `onEvent` and reactivity can coexist: reactivity for UI refresh, `onEvent` for audit/analytics/cross-system sync
 - **Runtime swap**: `sdk.setData(config)` / `sdk.getData()` (replaces old add/remove/listDataSlots)
+- **Runtime skill swap**: `sdk.setSkills(skills)` (same-name skill overwrites; clears the skill full-text cache, the skill index section of the system prompt re-renders next round, and the next `load_skill` re-fetches the latest full text incl. vfs doc) / `sdk.invalidateSkillCache(name?)` (proactively invalidate the cache when a dynamic skill's content changes; omit `name` to clear all, pass `name` to clear one)
 
 #### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
 
@@ -395,6 +396,8 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 | `round_start` | Each model call round start | `round` |
 | `subagent` | Subagent tool progress | `taskId`/`label`/`kind`/`name`/... |
 | `done` | Round reply complete (stream mode) | `content` |
+| `usage` | After each LLM call (if provider returns usage) | `round` / `usage` (round prompt/completion/total_tokens) / `cumulative` (cumulative) |
+| `session_restored` | After storage restores a session snapshot (mount auto-resume / `switchSession` to an existing session) | `sessionId` / `rounds` (restored message count) |
 | `error` | Model call / tool throws | `message` |
 
 > ⚠️ `approval_request` is NOT forwarded (UI already handles it, to avoid double `resolve`).
@@ -443,6 +446,37 @@ off2()
 ```
 
 `onEvent` and `hook` are complementary: the former is a single constructor-time callback, the latter runtime multi-listener; both can coexist. Event types and filtering rules as above (`approval_request` not forwarded; stream events only in stream mode).
+
+### 6.10 Convenience API (export / import / usage / audit)
+
+Beyond event subscription, the SDK instance exposes a few convenience APIs covering backup/migration, usage stats, and audit tracing:
+
+| API | Purpose | Notes |
+|---|---|---|
+| `sdk.exportData()` | Returns a **deep copy** of the main data `bind` (JSON-serialized) | For backup/migration; mutating the return value does not affect the original bind; returns `null` if dataOps is off or no data |
+| `sdk.importData(json, opts?)` | Replace `bind` entirely (in-place restore, preserves reactive ref) | Schema-validated by default, returns `{ok:false,error}` if invalid; `opts.validate:false` skips validation; `opts.emit:false` suppresses `data_change` |
+| `sdk.setSkills(skills)` | Runtime swap the entire skill list (same-name overwrites) | Takes effect immediately: the skill index section of the system prompt re-renders next round; clears the skill full-text cache & in-round loaded set, so the next `load_skill` re-fetches the latest full text (incl. vfs doc); requires skills enabled (default on) |
+| `sdk.invalidateSkillCache(name?)` | Invalidate the skill full-text cache (proactive) | Omit `name` to clear all, pass `name` to clear one; use when a dynamic skill's content changes; the next `load_skill` re-runs `getContent`/`readSkillDoc`; requires skills enabled (default on) |
+| `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` | Accumulated per LLM call; all 0 when no calls; per-round detail emitted via `onEvent('usage')` |
+| `onAudit(entry)` option | Structured audit callback for data writes (independent of `debug`) | Fires on every `set`/`edit`/`delete`/`restore` with `{op, jsonPath, opDetail, timestamp, success, error?}`; for compliance audit / operation tracing |
+
+```ts
+// Backup + restore
+const backup = sdk.exportData()
+localStorage.setItem('backup', JSON.stringify(backup))
+// ...restore after an issue
+sdk.importData(JSON.parse(localStorage.getItem('backup')))
+
+// Usage stats
+onEvent(e => { if (e.type === 'usage') costMeter.add(e.usage) })
+console.log(sdk.usage)  // cumulative
+
+// Audit
+createChatSdk({
+  onAudit: (entry) => auditLog.append(entry),  // no debug:true needed
+  // ...
+})
+```
 
 ## 7. Custom middleware
 

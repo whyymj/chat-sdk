@@ -34,10 +34,17 @@ function normalize(path: string): string {
   return path.replace(/^\/+/, '').replace(/\/+/g, '/')
 }
 
+/** 内容寻址 hash(djb2 变体):相同内容 → 相同文件名,避免反复外存同一内容占 vfs 空间 */
+function contentHash(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+
 /**
  * 处理工具结果:超阈值则外存 vfs 或按放行上限放行,否则原样。
  * 三态:
- *  - content > 阈值 且 vfs 可用 → 写 vfs,返回「预览 + vfs_read 引用」(完整可回读,不截断)
+ *  - content > 阈值 且 vfs 可用 → 写 vfs(内容寻址:相同内容复用同一文件,只更新 updatedAt),返回「预览 + vfs_read 引用」(完整可回读,不截断)
  *  - content > 阈值 但 vfs 不可用 → 按放行上限:≤ 上限完整放行(信任大上下文,避免丢信息),> 上限才截断兜底
  *  - content ≤ 阈值 → 原样返回
  * 返回最终写入 ToolMessage 的 content 字符串。
@@ -46,10 +53,10 @@ export function offloadLargeResult(content: string, ctx: OffloadCtx): string {
   const threshold = ctx.threshold ?? DEFAULT_OFFLOAD_THRESHOLD
   if (content.length <= threshold) return content
 
-  // vfs 可用 → 外存,返回预览 + vfs_read 引用
+  // vfs 可用 → 外存(内容寻址去重),返回预览 + vfs_read 引用
   if (ctx.vfsAvailable && ctx.files) {
-    const id = Math.random().toString(36).slice(2, 10)
-    const relPath = `large_results/${ctx.toolName}-${id}.txt`
+    // 内容寻址:相同内容 → 相同文件名,复用已有文件(只更新 updatedAt),不反复占 vfs 空间
+    const relPath = `large_results/${ctx.toolName}-${contentHash(content)}.txt`
     const path = normalize(relPath)
     ctx.files[path] = { content, updatedAt: Date.now() }
     const head = content.slice(0, 1000)
