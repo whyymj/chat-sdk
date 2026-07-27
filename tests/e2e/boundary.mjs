@@ -44,5 +44,20 @@ export async function run() {
     assert(inspectOk, 'unmount 后 inspect() 仍可调(返回静态信息)')
   }
 
+  console.log('[e2e:boundary] hide/show:不卸载保留 agent,hide 后 mount 直接 show 不重建')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-hide-show', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    // headless 无 DOM,hide/show 不操作 DOM 但应不抛错;模拟 drawer 关闭保留 agent 的语义
+    let threw = false
+    try { sdk.hide(); sdk.show(); } catch { threw = true }
+    assert(!threw, 'hide()/show() 不抛错(headless 无 DOM 安全)')
+    // hide 后再 mount 应幂等(已挂载则 show,不重建)
+    let threw2 = false
+    try { await sdk.mount() } catch { threw2 = true }
+    assert(!threw2, 'hide 后再 mount 幂等安全(已挂载则 show 不重建)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

@@ -228,12 +228,83 @@ function getSchemaTopKeys(schema: ZodType): string[] | null {
   }
 }
 
-/** jsonPath 顶层段是否在白名单内(白名单 null 表示全开放) */
-function isPathAllowed(jsonPath: string, allowKeys: string[] | null): boolean {
-  if (!allowKeys) return true
-  if (!jsonPath) return true  // 整体路径由调用方按 set-merge 语义处理
-  const top = jsonPath.split('.')[0]
-  return allowKeys.includes(top)
+/** jsonPath 逐段是否都在 schema 声明字段内(白名单 null 表示全开放;支持嵌套对象/数组元素逐级校验,防子路径绕过顶层白名单) */
+function isPathAllowed(jsonPath: string, schema: ZodType | null, allowKeys: string[] | null): boolean {
+  if (!allowKeys) return true  // 非 ZodObject schema,全开放(向后兼容)
+  if (!jsonPath) return true   // 整体路径由调用方按 set-merge 语义处理
+  let s: any = unwrapSchema(schema)
+  for (const seg of jsonPath.split('.')) {
+    if (!s) return false
+    s = unwrapSchema(s)
+    if (s && s.shape && typeof s.shape === 'object') {
+      const shape = typeof s.shape === 'function' ? s.shape() : s.shape
+      if (!(seg in shape)) return false
+      s = shape[seg]
+    } else if (s && (s._def?.type || s.element)) {
+      // ZodArray:seg 是索引,跳过;取元素 schema 继续逐级
+      s = s.element ?? s._def?.type
+    } else {
+      return false
+    }
+  }
+  return true
+}
+
+/** 解包 zod 可选/默认值/捕获/懒加载包装,返回核心 schema */
+function unwrapSchema(schema: any): any {
+  let s = schema
+  for (let i = 0; i < 8 && s && s._def; i++) {
+    if (s._def.innerType) { s = s._def.innerType; continue }
+    if (s._def.schema) { s = s._def.schema; continue }      // ZodLazy(zod v4:_def.schema)
+    if (s._def.getter) { s = s._def.getter(); continue }     // ZodLazy fallback:_def.getter()
+    break
+  }
+  return s
+}
+
+/** 按 jsonPath 逐级定位子 schema(支持 ZodObject.shape / ZodArray.element;遇联合/record/lazy 返回 null) */
+function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | null {
+  if (!jsonPath) return schema
+  let s: any = unwrapSchema(schema)
+  const segs = jsonPath.split('.')
+  for (const seg of segs) {
+    if (!s) return null
+    s = unwrapSchema(s)
+    if (s && s.shape && typeof s.shape === 'object') {
+      // ZodObject:取 shape[seg](seg 是字段名)
+      const shape = typeof s.shape === 'function' ? s.shape() : s.shape
+      s = shape[seg]
+    } else if (s && (s._def?.type || s.element)) {
+      // ZodArray:seg 应是索引,跳过;取元素 schema
+      s = s.element ?? s._def?.type
+    } else {
+      return null
+    }
+  }
+  return s ?? null
+}
+
+/** 按 schema 投影对象(只保留 schema 声明字段,递归处理嵌套对象/数组元素;非 ZodObject 原样返回) */
+function projectBySchemaDeep(obj: unknown, schema: ZodType | null): unknown {
+  if (obj == null || typeof obj !== 'object' || !schema) return obj
+  const s = unwrapSchema(schema)
+  if (!s || !s.shape) {
+    // 非 ZodObject(如数组/联合/record):若是数组,递归投影元素
+    if (Array.isArray(obj) && (s?._def?.type || s?.element)) {
+      const elemSchema = s.element ?? s._def?.type
+      return obj.map((o) => projectBySchemaDeep(o, elemSchema))
+    }
+    return obj
+  }
+  const shape = typeof s.shape === 'function' ? s.shape() : s.shape
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(obj as Record<string, unknown>)) {
+    if (k in shape) {
+      const childVal = (obj as Record<string, unknown>)[k]
+      out[k] = projectBySchemaDeep(childVal, shape[k])
+    }
+  }
+  return out
 }
 
 /** 按 schema 顶层 key 投影 bind(只保留白名单字段,其余隐藏) */
@@ -394,7 +465,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const getData = tool(
     async ({ jsonPath }) => {
       const jp = jsonPath || ''
-      if (!isPathAllowed(jp, allowKeys)) {
+      if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `get_data @ "${jp}" 不在 schema 声明字段内(仅 schema 声明的 key 可读)`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
       let val = jp ? getByPath(bindRef, jp) : bindRef
@@ -432,6 +503,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (allowKeys) {
           // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
           safeMerge(bindRef as Record<string, any>, res.data)
+          // 修复:写回 interceptors.write 补充的(或用户显式传入的)不可见字段 —— schema.safeParse 会 strip 未声明字段,safeMerge 也不会写入,导致补充无效。此处从原始 parsed 中取不在 allowKeys 的字段写回 bind(信任集成方拦截器/用户显式传值)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const setKeys = new Set(allowKeys)
+            for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
+              if (!setKeys.has(k)) (bindRef as Record<string, any>)[k] = v
+            }
+          }
         } else {
           restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
         }
@@ -457,7 +535,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (isUnsafePath(jp)) {
         return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常的属性路径,如 components.0.text(数组索引用数字)' })
       }
-      if (!isPathAllowed(jp, allowKeys)) {
+      if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `edit_data @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写;若需操作该字段,集成方需在 schema 中声明它' })
       }
       const effHash = expectedHash || (autoLock ? lastReadHash : undefined)
@@ -503,7 +581,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ jsonPath, expectedHash }) => {
       if (!jsonPath) return toolError({ code: 'MISSING_VALUE', message: 'delete_data 需要 jsonPath 指定要删的子路径(主数据整体不可删,用 set_data 整体替换)', hint: '如 jsonPath:"components.0" 删数组首项' })
       if (isUnsafePath(jsonPath)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jsonPath}" 含非法段`, hint: '使用正常属性路径' })
-      if (!isPathAllowed(jsonPath, allowKeys)) {
+      if (!isPathAllowed(jsonPath, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `delete_data @ "${jsonPath}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可删' })
       }
       const effHash = expectedHash || (autoLock ? lastReadHash : undefined)
@@ -645,7 +723,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
             const p = ps[i]
             const jp = p.jsonPath || ''
             if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径' })
-            if (!isPathAllowed(jp, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
+            if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
             const op = p.op as EditOp
             let pVal: unknown
             if (op !== 'remove') {
@@ -702,12 +780,16 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const readSlot = tool(
     async ({ jsonPath, fields, depth }) => {
       const jp = jsonPath || ''
-      if (!isPathAllowed(jp, allowKeys)) {
+      if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
       let target = jp ? getByPath(bindRef, jp) : bindRef
-      // 整体读时按 schema 顶层 key 投影(隐藏未声明字段)
+      // 投影隐藏未声明字段:整体读按顶层白名单;子路径读按该位置的子 schema 递归投影(防 child 不可见字段泄露)
       if (!jp) target = projectBySchema(target, allowKeys)
+      else if (allowKeys) {
+        const subSchema = getSchemaAtPath(schema, jp)
+        if (subSchema) target = projectBySchemaDeep(target, subSchema)
+      }
       let resolved = target
       if (opts.interceptors?.read) {
         try { resolved = opts.interceptors.read(resolved) } catch (e) {
@@ -773,7 +855,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (intent === 'delete') {
         if (!patch?.jsonPath) return toolError({ code: 'MISSING_VALUE', message: 'delete 需要 patch.jsonPath 指定要删的子路径(主数据整体不可删,用 write(value) 整体替换)', hint: '如 patch:{jsonPath:"components.0"}, del:true' })
         if (isUnsafePath(patch.jsonPath)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${patch.jsonPath}" 含非法段`, hint: '使用正常属性路径' })
-        if (!isPathAllowed(patch.jsonPath, allowKeys)) {
+        if (!isPathAllowed(patch.jsonPath, schema, allowKeys)) {
           return toolError({ code: 'PATH_DENIED', message: `write delete @ "${patch.jsonPath}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可删' })
         }
         const conflict = await handleConflict('delete', effHash)
@@ -800,7 +882,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const p = list[i]
           const jp = p.jsonPath || ''
           if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径,如 components.0.text' })
-          if (!isPathAllowed(jp, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
+          if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
           const op = p.op
           let pVal: unknown
           if (op !== 'remove') {
@@ -839,6 +921,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (allowKeys) {
           // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
           safeMerge(bindRef as Record<string, any>, res.data)
+          // 修复:写回 interceptors.write 补充的(或用户显式传入的)不可见字段 —— schema.safeParse 会 strip 未声明字段,safeMerge 也不会写入,导致补充无效。此处从原始 parsed 中取不在 allowKeys 的字段写回 bind(信任集成方拦截器/用户显式传值)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const setKeys = new Set(allowKeys)
+            for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
+              if (!setKeys.has(k)) (bindRef as Record<string, any>)[k] = v
+            }
+          }
         } else {
           restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
         }

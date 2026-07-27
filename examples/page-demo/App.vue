@@ -13,6 +13,7 @@ import type { Middleware } from '../../src/core/harness/middleware'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
+import EditableBanner from '../_shared/EditableBanner.vue'
 import { initialPage, pageSchema, pageBuilderSkillContent } from './pageSchema'
 
 const cfg = useAgentConfig()
@@ -105,7 +106,9 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
-      <PageRenderer :key="tick" :page="pageObj" />
+      <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
+        <PageRenderer :key="tick" :page="pageObj" />
+      </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>
   </div>
@@ -121,8 +124,8 @@ onUnmounted(() => agent?.unmount())
 .pane-left {
   flex: 1;
   overflow: auto;
-  background: #f5f7fa;
-  padding: 24px;
+  background: #ffffff;
+  padding: 20px;
 }
 .pane-right {
   width: 50%;

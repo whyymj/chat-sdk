@@ -99,7 +99,7 @@ Default `toolMode:'simple'` exposes high-level `read`/`write` + advanced query/s
 | `query_data` / `search_data` | JSONPath query / full-text search | simple/advanced |
 | `eval_script` | Sandboxed script on data (query/transform; transform supports `{patches:[...]}` incremental mode) | simple/advanced |
 
-**Key rule**: `write`/`set`/`edit`/`delete` only affect **schema-declared** top-level fields (ZodObject auto-whitelist; undeclared fields hidden/denied). Invalid schema → structured error, no write. `write`/`edit` writes in-place (preserves Vue reactive refs). `write` auto-tracks hash from `read` for optimistic lock (no manual `expectedHash` needed). Whole-set / `set_data` / `eval` transform become **merge** semantics in whitelist mode (only updates declared fields, undeclared fields preserved — prevents accidental deletion).
+**Key rule**: `write`/`set`/`edit`/`delete` only affect **schema-declared** fields (ZodObject auto-whitelist; undeclared fields hidden/denied). Sub-path reads are recursively projected by the sub-schema at that location (e.g. `read components.0` hides child undeclared fields). `jsonPath` is segment-by-segment validated against schema. Invalid schema → structured error, no write. `write`/`edit` writes in-place (preserves Vue reactive refs). `write` auto-tracks hash from `read` for optimistic lock (no manual `expectedHash` needed). Whole-set / `set_data` / `eval` transform become **merge** semantics in whitelist mode (only updates declared fields, undeclared fields preserved — prevents accidental deletion); `interceptors.write`-supplied invisible fields (not in schema) are written back to bind after schema+merge (not stripped).
 
 ### write / jsonPath edit operations
 

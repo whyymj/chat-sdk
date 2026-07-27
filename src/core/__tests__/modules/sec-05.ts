@@ -90,7 +90,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       defineSkill({ name: 'dyn', description: 'v1', getContent: () => { getContentCalls++; return 'V1 ' + getContentCalls } }),
     ])
     const ctrl = (mw as any).controller as SkillsController
-    assert(ctrl && typeof ctrl.set === 'function' && typeof ctrl.get === 'function' && typeof ctrl.invalidateCache === 'function', 'controller 暴露 set/get/invalidateCache')
+    assert(ctrl && typeof ctrl.set === 'function' && typeof ctrl.get === 'function' && typeof ctrl.invalidateCache === 'function' && typeof ctrl.getContent === 'function', 'controller 暴露 set/get/invalidateCache/getContent')
     assert(ctrl.get().length === 1 && ctrl.get()[0].description === 'v1', 'controller.get 返回初始 skill')
     const ls = mw.tools!.find((x) => x.name === 'load_skill')!
     let r = await invoke(ls, { name: 'dyn' })
@@ -133,5 +133,32 @@ export async function run(ctx: TestCtx): Promise<void> {
     await invoke(ls, { name: 'a' })
     r = await invoke(ls, { name: 'b' })
     assert(/B2/.test(r) && c1Calls === 3 && c2Calls === 2, 'invalidateCache() 全清 → a/b 都重新 getContent(a=3 次,b=2 次)')
+  }
+
+  console.log('\n[skills controller.getContent → 读取 skill 全文(缓存优先)]')
+  {
+    let calls = 0
+    const mw = createSkillsMiddleware([
+      defineSkill({ name: 'doc', description: '文档', getContent: () => { calls++; return `DOC ${calls}` } }),
+    ])
+    const ctrl = (mw as any).controller as SkillsController
+    // 首次 getContent → 调一次 getContent,缓存
+    let c = await ctrl.getContent('doc')
+    assert(c === 'DOC 1' && calls === 1, 'getContent 首次 → 调 getContent 一次,返回内容并缓存')
+    // 再次 → 命中缓存,不调 getContent
+    c = await ctrl.getContent('doc')
+    assert(c === 'DOC 1' && calls === 1, 'getContent 再次 → 命中缓存,getContent 不再调,返回首次内容')
+    // 不存在的 skill → null
+    c = await ctrl.getContent('nope')
+    assert(c === null, 'getContent 不存在的 skill → 返回 null')
+    // setSkills 替换后缓存清空 → 重新 getContent 调一次
+    let calls2 = 0
+    ctrl.set([defineSkill({ name: 'doc', description: 'v2', getContent: () => { calls2++; return `DOC2 ${calls2}` } })])
+    c = await ctrl.getContent('doc')
+    assert(c === 'DOC2 1' && calls2 === 1, 'setSkills 同名替换 → 清缓存,getContent 重新调一次取新内容')
+    // invalidateCache 后 → 重新 getContent 调一次
+    ctrl.invalidateCache('doc')
+    c = await ctrl.getContent('doc')
+    assert(c === 'DOC2 2' && calls2 === 2, 'invalidateCache(doc) → getContent 重新调一次取最新')
   }
 }

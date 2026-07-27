@@ -265,3 +265,34 @@ sdk.inspect().skills  // reflects runtime swap (reads controller.get())
 
 **何时用**:多阶段业务流程(各阶段 skill 文档不同)、运行时按权限/角色加载不同 skill、skill 文档热更新(vfs doc 内容变化需主动失效缓存)。skills 关闭(`capabilities.skills:false`)时 `setSkills`/`invalidateSkillCache` 输出 warn 并 no-op,不抛错。
 
+## 12. Multi-agent parallel + exclusive switch (drawer hide/show)
+
+Multiple independent agents on one page (each `createChatSdk` + distinct `id`, each its own `data`/history/tools), running their own generation tasks in parallel; exclusive chatbox switching via `drawer` + `hide()`/`show()` — `hide` the old (keeps agent/history/in-flight generation), `show` the new (history resumes), no unmount, no lost conversation.
+
+```ts
+const boxA = document.createElement('div'); document.body.appendChild(boxA)
+const boxB = document.createElement('div'); document.body.appendChild(boxB)
+const boxC = document.createElement('div'); document.body.appendChild(boxC)
+
+const agents = [
+  createChatSdk({ id: 'agent-page',  container: boxA, drawer: true, storage: 'memory', llm: LLM, data: { schema: pageSchema,  bind: pageObj  }, systemPrompt: '页面构建助手…' }),
+  createChatSdk({ id: 'agent-copy',  container: boxB, drawer: true, storage: 'memory', llm: LLM, data: { schema: copySchema,  bind: copyObj  }, systemPrompt: '文案优化助手…' }),
+  createChatSdk({ id: 'agent-stats', container: boxC, drawer: true, storage: 'memory', llm: LLM, data: { schema: statsSchema, bind: statsObj }, systemPrompt: '数据分析助手…' }),
+]
+await Promise.all(agents.map(a => a.mount()))  // three independent agents ready in parallel
+agents.slice(1).forEach(a => a.hide())         // show only the first initially
+
+let active = 0
+function switchTo(i: number) {
+  agents[active].hide(); active = i; agents[i].show()  // exclusive switch, each history preserved
+}
+```
+
+**要点**:
+- 不同 `id` 隔离:各自独立 agent 实例/历史/工具/storage,互不串扰
+- 各管各 `data` 对象无冲突;多 agent 操作同一 `data` 需协调(乐观锁 `expectedHash` 或按 `jsonPath` 分区)
+- `hide()` 不卸载 vueApp/不 release agent,保留聊天历史与正在进行的生成进程;`show()` 恢复可见
+- 切换按钮若在抽屉遮罩下,需提高 `z-index`(高于遮罩 `9998` + ChatDialog `9999`)确保可点
+
+完整示例:`examples/multi-agent-demo/`。
+

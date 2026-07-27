@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
 import { copyText } from '../utils/clipboard'
@@ -9,6 +9,10 @@ const props = withDefaults(defineProps<{
   visible: boolean
   /** 获取 agent 详细信息(「Agent 信息」tab 展示) */
   getInfo?: () => AgentInfo
+  /** Agent 信息刷新 tick(setSkills/setData 后 ++);watch 后重新拉 getInfo() 实时反映动态 skill/data */
+  infoTick?: Ref<number>
+  /** 读取 skill 全文(展开 skill 时调,优先缓存);返回 null 表示无内容或读取失败 */
+  getSkillContent?: (name: string) => Promise<string | null>
 }>(), {
   logs: () => [],
 })
@@ -82,13 +86,43 @@ function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 
 const tab = ref<'logs' | 'flow' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
-function switchTab(t: 'logs' | 'flow' | 'info') {
-  tab.value = t
-  // 切到「Agent 信息」时实时拉取(含动态 todos)
-  if (t === 'info' && props.getInfo) {
+// skill 全文展开状态:name → { loading, content, error }
+const skillExpanded = ref<Record<string, { loading: boolean; content: string | null; error?: string }>>({})
+async function toggleSkill(name: string) {
+  const cur = skillExpanded.value[name]
+  if (cur) {
+    // 已展开 → 收起
+    delete skillExpanded.value[name]
+    skillExpanded.value = { ...skillExpanded.value }
+    return
+  }
+  // 展开:若无 getSkillContent,提示不可用
+  if (!props.getSkillContent) {
+    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content: null, error: '当前 SDK 未注入 getSkillContent,无法查看 skill 全文' } }
+    return
+  }
+  skillExpanded.value = { ...skillExpanded.value, [name]: { loading: true, content: null } }
+  try {
+    const content = await props.getSkillContent(name)
+    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content, error: content == null ? 'skill 无内容或读取失败' : undefined } }
+  } catch (e: any) {
+    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content: null, error: String(e?.message || e) } }
+  }
+}
+function refreshInfo() {
+  if (props.getInfo) {
     try { agentInfo.value = props.getInfo() } catch { agentInfo.value = null }
   }
 }
+function switchTab(t: 'logs' | 'flow' | 'info') {
+  tab.value = t
+  // 切到「Agent 信息」时实时拉取(含动态 todos)
+  if (t === 'info') refreshInfo()
+}
+// infoTick 变化(setSkills/setData 后 ++):抽屉可见且停在 info tab 时实时刷新,反映动态 skill/data
+watch(() => props.infoTick?.value, () => {
+  if (props.visible && tab.value === 'info') refreshInfo()
+})
 const statusMeta: Record<string, { label: string; color: string }> = {
   pending: { label: '待办', color: '#9ca3af' },
   in_progress: { label: '进行中', color: '#d97706' },
@@ -336,10 +370,18 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
 
                 <div v-if="agentInfo.skills.length" class="info-section">
-                  <div class="info-title">📘 技能 ({{ agentInfo.skills.length }})</div>
+                  <div class="info-title">📘 技能 ({{ agentInfo.skills.length }})<span class="info-hint">点击展开查看全文</span></div>
                   <div v-for="s in agentInfo.skills" :key="s.name" class="info-item">
-                    <div class="info-name">{{ s.name }}</div>
+                    <div class="info-name skill-toggle" @click="toggleSkill(s.name)">
+                      <span class="skill-arrow" :class="{ open: !!skillExpanded[s.name] }">▶</span>
+                      {{ s.name }}
+                    </div>
                     <div class="info-desc">{{ s.description }}</div>
+                    <div v-if="skillExpanded[s.name]" class="skill-content">
+                      <div v-if="skillExpanded[s.name].loading" class="skill-loading">加载中…</div>
+                      <div v-else-if="skillExpanded[s.name].error" class="skill-error">{{ skillExpanded[s.name].error }}</div>
+                      <pre v-else-if="skillExpanded[s.name].content" class="skill-pre">{{ skillExpanded[s.name].content }}</pre>
+                    </div>
                   </div>
                 </div>
 
@@ -442,6 +484,15 @@ function flowNodeDetail(lg: DebugLog): string {
 .info-name { font-size: 12px; font-weight: 600; color: #1f2937; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .info-desc { font-size: 11px; color: #6b7280; line-height: 1.5; margin-top: 2px; }
 .info-desc.muted { color: #9ca3af; }
+.info-hint { font-size: 10px; color: #9ca3af; font-weight: 400; margin-left: 6px; }
+.skill-toggle { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.skill-toggle:hover { color: var(--cs-primary, #1f4d3a); }
+.skill-arrow { font-size: 8px; color: #9ca3af; transition: transform 0.15s ease; display: inline-block; }
+.skill-arrow.open { transform: rotate(90deg); }
+.skill-content { margin-top: 6px; }
+.skill-loading { font-size: 11px; color: #6b7280; padding: 6px 8px; }
+.skill-error { font-size: 11px; color: #dc2626; padding: 6px 8px; }
+.skill-pre { font-size: 11px; line-height: 1.6; color: #374151; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; margin: 0; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .src-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10px; font-weight: 600; vertical-align: middle; }
 .src-tag.builtin { background: #f3f4f6; color: #6b7280; }
 .src-tag.mcp { background: #f3e8ff; color: #7c3aed; }

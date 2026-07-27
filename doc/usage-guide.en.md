@@ -253,6 +253,38 @@ createChatSdk({
   - `input`: preprocess user message at send entry (rewrite/audit)
   - `output`: postprocess before agent returns (rewrite final reply)
 
+#### Schema as whitelist (only declared fields exposed) + interceptor-supplied invisible fields
+
+When `data.schema` is a `z.object(...)` (or its optional/default/lazy wrapper), the SDK auto-enables **whitelist mode**: only schema-declared fields are exposed to the LLM; undeclared fields are invisible and non-readable/writable. This fits the "bind is a large JSON but only some fields should be agent-operable" scenario — declare operable fields in schema, the rest (internal state, sensitive data, redundant caches) are auto-hidden, no extra config needed.
+
+- **Read**: `read` whole-object is projected by top-level schema; **sub-path reads are also recursively projected by the sub-schema at that location** (e.g. `read components.0` is projected by the element schema of `components`, hiding undeclared sub-fields). Reading an undeclared (sub)path returns `PATH_DENIED`.
+- **Write**: `set`/`write(set)` whole-object uses **merge semantics** — only schema-declared fields are updated, un-passed fields are preserved (anti-accidental-delete); `edit`/`write(patch)` sub-path increments are path-segment-checked against schema declarations.
+- **Interceptor-supplied invisible fields**: fields in the `interceptors.write` return payload that are **not in schema** (e.g. auto-generated `id`/`_createdAt`/internal state) are **written back to bind** after schema validation + merge (trusting integrator interceptor / explicit user value), not stripped by schema. Typical use: agent `append`s a new item, interceptor auto-supplies `id`/`createdAt` fields you don't want to expose to the LLM:
+
+```ts
+createChatSdk({
+  data: {
+    // schema declares only agent-operable fields (no _createdAt → invisible to agent)
+    schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }),
+    bind: app,
+  },
+  interceptors: {
+    write: (payload, current) => {
+      // when agent pushes a new item, auto-supply _createdAt (not in schema, invisible to agent, but persisted)
+      if (payload && Array.isArray((payload as any).items)) {
+        const now = Date.now()
+        ;(payload as any).items = (payload as any).items.map((it: any) =>
+          it._createdAt ? it : { ...it, _createdAt: now }
+        )
+      }
+      return payload
+    },
+  },
+})
+```
+
+> Note: whitelist mode only enables for `z.object`; `z.any()`/`z.record()`/`z.discriminatedUnion()` etc. non-object schemas don't enable it (fully open, backward-compatible). A `passthrough()` object still enables whitelist (only declared fields are visible to LLM; extra fields are persisted on write but hidden on read) — if you want extra fields visible to LLM, declare them in schema explicitly.
+
 #### `data` single main-object config (recommended, declarative)
 
 `data` is the single entry for data config — combining schema declaration + object direct-bind + auto field-hint injection:
@@ -604,7 +636,35 @@ Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill a
 | 7 | Server-side Node.js | `ui:false` + `storage:'memory'` + `capabilities:{dataOps:false,fetch:false}`; drive via `sdk.send` |
 | 8 | Multi-agent on one page | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
 | 9 | MCP integration | `mcp:[{transport,url}]` remote tools; `@modelcontextprotocol/sdk` optional peerDep |
+| 10 | Multi-agent parallel + exclusive switch | multiple `createChatSdk` (distinct `id`, each its own `data`) + `drawer:true`; switch via `hide()`/`show()` (keeps each history/in-flight generation, no unmount) |
 
-Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation).
+Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation), `examples/animation-demo` (animations + hide/show), `examples/multi-agent-demo` (multi-agent parallel + exclusive switch).
+
+### Multi-agent parallel + exclusive switch
+
+A single page can host multiple independent agents (each `createChatSdk` + distinct `id` for isolation), each managing its own `data`/history/tools, running their own generation tasks in parallel; exclusive chatbox switching uses `drawer` + `hide()`/`show()` — `hide` the old one (keeps agent/history/in-flight generation), `show` the new one (history resumes), no unmount, no lost conversation:
+
+```ts
+const agents = [
+  createChatSdk({ id: 'agent-a', container: boxA, drawer: true, data: { schema: schemaA, bind: objA }, ... }),
+  createChatSdk({ id: 'agent-b', container: boxB, drawer: true, data: { schema: schemaB, bind: objB }, ... }),
+  createChatSdk({ id: 'agent-c', container: boxC, drawer: true, data: { schema: schemaC, bind: objC }, ... }),
+]
+await Promise.all(agents.map(a => a.mount()))  // three independent agents ready in parallel
+agents.slice(1).forEach(a => a.hide())         // show only the first initially
+
+let active = 0
+function switchTo(i: number) {
+  agents[active].hide(); active = i; agents[i].show()  // exclusive switch, each history preserved
+}
+```
+
+**Key points**:
+- Distinct `id` for isolation: each independent agent instance/history/tools/storage, no cross-talk
+- Each managing its own `data` object has no conflict; multiple agents operating on the same `data` need coordination (optimistic lock `expectedHash` or `jsonPath` partitioning)
+- `hide()` does not unmount vueApp / does not release agent — keeps chat history and in-flight generation; `show()` resumes visibility
+- If switch buttons sit under the drawer mask, raise their `z-index` (above mask `9998` + ChatDialog `9999`) to stay clickable
+
+Full example: `examples/multi-agent-demo/`.
 
 **Advanced extensibility examples** (custom tools / skills / subagents / MCP) in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/advanced.md`: copy-paste code for `defineTool` (error handling + coexisting with dataOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha).

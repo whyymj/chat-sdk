@@ -14,6 +14,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
+import EditableBanner from '../_shared/EditableBanner.vue'
 import TreeRenderer from './TreeRenderer.vue'
 import { PageInfoSchema, initialPageInfo, type PageInfo } from './treeData'
 
@@ -126,10 +127,12 @@ onUnmounted(() => agent?.unmount())
         Agent 经 <code>write</code> 的 <strong>patch jsonPath 逐级定位</strong>深层节点增删改 ——
         bind 为普通对象,改动经 <code>onEvent('data_change')</code> 触发 <strong>:key 重渲染</strong>。
       </p>
-      <div class="tree-wrap" :data-theme="pageInfo.theme || 'light'">
-        <h3 class="page-title">{{ pageInfo.title }}</h3>
-        <TreeRenderer :key="tick" :nodes="pageInfo.sections" :selected-id="selectedId" @select="onSelect" />
-      </div>
+      <EditableBanner title="AI 可编辑树" hint="Agent 经 write 按 jsonPath 改此区">
+        <div class="tree-wrap" :data-theme="pageInfo.theme || 'light'">
+          <h3 class="page-title">{{ pageInfo.title }}</h3>
+          <TreeRenderer :key="tick" :nodes="pageInfo.sections" :selected-id="selectedId" @select="onSelect" />
+        </div>
+      </EditableBanner>
 
       <!-- ✋ 人工介入:点击树节点选中后,直接手动编辑该区块(与 Agent 共享同一 window.Editor.PageInfo) -->
       <div v-if="selected" class="manual-panel">
@@ -181,7 +184,7 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
+.pane-left { flex: 1; overflow: auto; background: #ffffff; padding: 28px 32px; }
 .pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 

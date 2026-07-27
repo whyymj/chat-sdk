@@ -432,6 +432,10 @@ export interface ChatSdkOptions {
   streaming?: boolean;
   title?: string;
   placeholder?: string;
+  /** Drawer mode: ChatDialog slides in from the right + mask + close button (replaces the collapse arrow); clicking mask/close triggers unmount (with exit animation). Default false (inline, fills container). */
+  drawer?: boolean;
+  /** Drawer mode close callback: called when mask/close button clicked (default calls unmount with exit animation). Pass this to sync external mount state. */
+  onClose?: () => void;
 }
 
 export interface ChatSdk {
@@ -439,6 +443,10 @@ export interface ChatSdk {
   /** 响应式消息数组(headless 模式自建 UI 读) */
   messages: AgentMessage[];
   unmount(): void;
+  /** 抽屉模式隐藏:加 cs-hidden class,不卸载 vueApp/不 release agent —— 保留聊天历史与正在进行的生成进程;再 mount() 直接 show 恢复 */
+  hide(): void;
+  /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
+  show(): void;
   send(message: string): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;

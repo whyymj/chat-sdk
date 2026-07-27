@@ -89,5 +89,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     // passthrough:节点可有未声明字段(extra/style)
     r = await invoke(t['edit_data'], { op: 'merge', jsonPath: 'components.1', value: '{"extra":"ok","style":{"color":"red"}}' })
     assert(pageObj.components[1].extra === 'ok' && pageObj.components[1].style?.color === 'red', 'edit: passthrough 保留未声明的额外字段')
+
+    // 修复 1:read 子路径应按子 schema 递归投影,隐藏 child 不可见字段(components.1 有 extra,read 应不含 extra)
+    r = await invoke(t['read'], { jsonPath: 'components.1' })
+    assert(!/"extra"/.test(r), '修复1: read 子路径隐藏 child 未声明字段(extra 不泄露给 LLM)')
+    // 但 schema 声明字段仍可见
+    assert(/"id":\s*5/.test(r), '修复1: read 子路径保留 schema 声明字段(id 可见)')
+
+    // 修复 1:read 更深子路径 components.0.children.0 也按子 schema 投影
+    r = await invoke(t['read'], { jsonPath: 'components.0.children.0' })
+    assert(/"id":\s*2/.test(r) && !/"extra"/.test(r), '修复1: read 深层子路径也按子 schema 投影隐藏未声明字段')
+
+    // 修复 1:isPathAllowed 逐段检查 —— 读非 schema 声明的深层字段被拒
+    r = await invoke(t['read'], { jsonPath: 'components.1.extra' })
+    assert(/PATH_DENIED/.test(r), '修复1: read 非 schema 声明的深层字段 → PATH_DENIED(逐段校验)')
   }
 }

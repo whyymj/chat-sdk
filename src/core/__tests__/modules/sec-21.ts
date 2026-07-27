@@ -248,6 +248,22 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t7['write'], { value: 'b', patch: { op: 'append', jsonPath: 'items' } })
     assert(page7.items.length === 2 && page7.items[1] === 'B', 'write edit 模式拦截器 → 收到 value 并转换后落地(原 bug:edit 模式拦截器失效)')
 
+    // 修复 2:set 整对象 + interceptors.write 补充不可见字段 → 补充字段写回 bind(原 bug:schema strip + safeMerge 丢失补充)
+    const pageSupp: any = { title: 'old', _internal: 'keep' }
+    const toolsSupp = createDataOps(
+      { schema: z.object({ title: z.string() }), bind: pageSupp, description: 'p-supp' },
+      { interceptors: { write: (payload) => ({ ...(payload as any), _internal: 'auto-supplied' }) } },
+    )
+    const tSupp = byName(toolsSupp)
+    r = await invoke(tSupp['write'], { value: { title: 'new' } })
+    assert(pageSupp.title === 'new' && pageSupp._internal === 'auto-supplied', '修复2: write(set) 整对象 + 拦截器补充不可见字段 → 补充字段写回 bind(不丢)')
+    // set_data 同样行为(用户显式传不可见字段也写回,白名单 merge 语义防误删但不阻显式传值)
+    const pageSupp2: any = { title: 'old', _internal: 'keep' }
+    const toolsSupp2 = createDataOps({ schema: z.object({ title: z.string() }), bind: pageSupp2, description: 'p-supp2' })
+    const tSupp2 = byName(toolsSupp2)
+    r = await invoke(tSupp2['set_data'], { value: { title: 'new2', _internal: 'user-supplied' } })
+    assert(pageSupp2.title === 'new2' && pageSupp2._internal === 'user-supplied', '修复2: set_data 整对象显式传不可见字段 → 写回 bind(白名单 merge 防误删,显式传值生效)')
+
     // 字符串 value parse 一致性(统一启发式)
     const page8: any = { count: 0, list: [] as any[] }
     const tools8 = createDataOps({ schema: z.object({ count: z.number(), list: z.array(z.any()) }), bind: page8, description: 'p8' })

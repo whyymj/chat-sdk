@@ -282,6 +282,38 @@ createChatSdk({
   - `input`:send 入口预处理 user message(可改写/审计)
   - `output`:agent 返回前 postprocess(可改写最终回复)
 
+#### schema 即白名单(只暴露声明字段)+ 拦截器补充不可见字段
+
+当 `data.schema` 是 `z.object(...)`(或其可选/默认/懒加载包装)时,SDK 自动启用**白名单模式**:只暴露 schema 声明的字段给 LLM,未声明字段对 LLM 不可见、不可读写。这适合「bind 是大 JSON,但只希望 agent 操作其中部分字段」的场景——集成方把可操作字段写进 schema,其余字段(内部状态、敏感数据、冗余缓存)自动隐藏,无需额外配置。
+
+- **读**:`read` 整体读按顶层 schema 投影;**子路径读也按该位置的子 schema 递归投影**(如 `read components.0` 会按 `components` 的元素 schema 投影,隐藏子对象未声明字段)。读未声明的(子)路径返回 `PATH_DENIED`。
+- **写**:`set`/`write(set)` 整对象用 **merge 语义**——只更新 schema 声明字段,未传的字段保留不动(防误删);`edit`/`write(patch)` 增量改子路径同理,逐段校验路径必须在 schema 声明内。
+- **拦截器补充不可见字段**:`interceptors.write` 返回的 payload 中,若含**不在 schema 声明内**的字段(如自动生成的 `id`/`_createdAt`/内部状态),SDK 会在 schema 校验 + merge 之后**写回 bind**(信任集成方拦截器/用户显式传值),不会因 schema strip 丢失。典型用法:agent `append` 一个新组件,拦截器自动补 `id`/`createdAt` 等不想暴露给 LLM 的内部字段:
+
+```ts
+createChatSdk({
+  data: {
+    // schema 只声明 agent 可操作字段(不声明 _createdAt → 对 agent 不可见)
+    schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }),
+    bind: app,
+  },
+  interceptors: {
+    write: (payload, current) => {
+      // agent push 新 item 时,自动补 _createdAt(不在 schema,对 agent 不可见,但落地保留)
+      if (payload && Array.isArray((payload as any).items)) {
+        const now = Date.now()
+        ;(payload as any).items = (payload as any).items.map((it: any) =>
+          it._createdAt ? it : { ...it, _createdAt: now }
+        )
+      }
+      return payload
+    },
+  },
+})
+```
+
+> 注:白名单模式仅对 `z.object` 启用;`z.any()`/`z.record()`/`z.discriminatedUnion()` 等非 object schema 不启用(全开放,向后兼容)。`passthrough()` 的 object 仍启用白名单(声明字段才对 LLM 可见,额外字段写入保留但读时隐藏)——若希望额外字段也对 LLM 可见,需在 schema 显式声明。
+
 ### `data` 单主对象配置
 
 `data` 是唯一的数据配置入口,集声明 schema + 直连对象 + 自动注入字段说明于一体:
@@ -1192,7 +1224,35 @@ await agent.send('加一个提交按钮')
 | 7 | 服务端 Node.js | `ui:false`+`storage:'memory'`+`capabilities:{dataOps:false,fetch:false}`;`sdk.send` 驱动 |
 | 8 | 同页多 agent | 同 `id`+`shareContext:true`→多对话框共享同一 `AgentCore` |
 | 9 | MCP 集成 | `mcp:[{transport,url}]` 远程工具;`@modelcontextprotocol/sdk` 可选 peerDep |
+| 10 | 多 Agent 并行 + 互斥切换 | 多个 `createChatSdk`(不同 `id` 各管各 `data`)+ `drawer:true`;切换调 `hide()`/`show()`(保留各自历史/生成进程,不卸载) |
 
-各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)。
+各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)、`examples/animation-demo`(动画 + hide/show)、`examples/multi-agent-demo`(多 Agent 并行 + 互斥切换)。
+
+### 多 Agent 并行 + 互斥切换
+
+同一页面挂多个独立 Agent(各自 `createChatSdk` + 不同 `id` 隔离),各管各 `data`/历史/工具,可并行跑各自生成任务;聊天框互斥切换用 `drawer` + `hide()`/`show()`——切换时 `hide` 旧的(保留 agent/历史/生成进程)、`show` 新的(历史恢复),不卸载不丢对话:
+
+```ts
+const agents = [
+  createChatSdk({ id: 'agent-a', container: boxA, drawer: true, data: { schema: schemaA, bind: objA }, ... }),
+  createChatSdk({ id: 'agent-b', container: boxB, drawer: true, data: { schema: schemaB, bind: objB }, ... }),
+  createChatSdk({ id: 'agent-c', container: boxC, drawer: true, data: { schema: schemaC, bind: objC }, ... }),
+]
+await Promise.all(agents.map(a => a.mount()))  // 三个独立 agent 并行就绪
+agents.slice(1).forEach(a => a.hide())         // 初始只显示第一个
+
+let active = 0
+function switchTo(i: number) {
+  agents[active].hide(); active = i; agents[i].show()  // 互斥切换,历史各自保留
+}
+```
+
+**要点**:
+- 不同 `id` 隔离:各自独立 agent 实例/历史/工具/storage,互不串扰
+- 各管各 `data` 对象无冲突;多 agent 操作同一 `data` 需协调(乐观锁 `expectedHash` 或按 `jsonPath` 分区)
+- `hide()` 不卸载 vueApp/不 release agent,保留聊天历史与正在进行的生成进程;`show()` 恢复可见
+- 切换按钮若在抽屉遮罩下,需提高 `z-index`(高于遮罩 `9998` + ChatDialog `9999`)确保可点
+
+完整示例:`examples/multi-agent-demo/`。
 
 **进阶扩展详细例子**(自定义 tool / skills / subagents / MCP)见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/advanced.md`:含 `defineTool`(错误处理 + 与 dataOps 共存)、`defineSkill`(内联内容 + 远程 doc)、子 agent(ad-hoc `spawn_agent`/`spawn_agents` + 预声明 `subagents`→`use_<id>`)、MCP(http/sse/websocket + 鉴权 + dev 坑)的可复制代码。

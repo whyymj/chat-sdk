@@ -24,7 +24,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 | Constraint | Mechanism | Effect |
 |---|---|---|
-| **Scope control** | Declared schema fields (`data`) — only declared top-level keys are writable; schema shape auto-whitelist (top-level keys limit visible + writable; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
+| **Scope control** | Declared schema fields (`data`) — only declared keys are writable; schema shape auto-whitelist (top-level + sub-path recursively projected by sub-schema; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion; `interceptors.write`-supplied invisible fields persisted) | AI touching undeclared fields → `PATH_DENIED` |
 | **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
 | **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
@@ -182,6 +182,8 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `mcp` | `McpServerConfig[]` | Remote MCP servers (http/sse/websocket) |
 | | `middleware` | `Middleware[]` | Custom middleware (appended to built-in stack) |
 | | `streaming` / `title` / `placeholder` / `debug` | — | UI/debug |
+| | `drawer` | `boolean` · default `false` | Drawer mode: ChatDialog slides in from right + mask + close button (replaces collapse arrow); clicking mask/close defaults to `hide` (keeps agent/history/in-flight generation; `mount`/`show` resumes). Pass `onClose` to customize |
+| | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
 
 ### Extension points
 
@@ -385,6 +387,7 @@ createChatSdk({
 // sdk.setSkills(skills)         // runtime swap the entire skill list (same-name overwrites; clears cache, index re-renders next round)
 // sdk.invalidateSkillCache(name?)  // invalidate skill full-text cache (proactive; omit name to clear all)
 // sdk.usage                     // cumulative token usage {prompt_tokens, completion_tokens, total_tokens}
+// sdk.hide() / sdk.show()      // drawer mode hide/show (keeps agent/history/in-flight generation; mount after hide resumes via show, no rebuild)
 ```
 
 ## Examples
@@ -400,8 +403,27 @@ After `npm run dev`, visit the corresponding page:
 | planner-demo | `/examples/planner-demo/` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
 | subagent-demo | `/examples/subagent-demo/` | Subagent parallel orchestration |
 | mcp-demo | `/examples/mcp-demo/` | MCP remote tools (needs `npm run mcp:mock`) |
+| animation-demo | `/examples/animation-demo/` | ChatDialog enter/collapse/unmount animations + inline/drawer + hide/show |
+| multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
+
+### Multi-agent parallel + exclusive switch
+
+A single page can host multiple independent agents (each `createChatSdk` + distinct `id` for isolation), each managing its own `data`/history/tools, running their own generation tasks **in parallel**; **exclusive** chatbox switching uses `drawer` + `hide()`/`show()` — `hide` the old one (keeps agent/history/in-flight generation), `show` the new one (history resumes), no unmount, no lost conversation:
+
+```ts
+const agents = [agentA, agentB, agentC]  // each createChatSdk({ id, drawer: true, data, ... })
+await Promise.all(agents.map(a => a.mount()))  // ready in parallel
+agents.slice(1).forEach(a => a.hide())         // show only the first initially
+
+let active = 0
+function switchTo(i: number) {
+  agents[active].hide(); active = i; agents[i].show()  // exclusive switch, each history preserved
+}
+```
+
+> Multiple agents operating on the same `data` need coordination (optimistic lock `expectedHash` or `jsonPath` partitioning); each managing its own `data` object has no conflict (recommended). Full example: `examples/multi-agent-demo/`.
 
 ## Documentation
 
@@ -417,8 +439,8 @@ Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 ## Self-tests
 
 ```bash
-npm test            # 450 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 149 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / error scenes)
+npm test            # 461 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 151 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

@@ -11,6 +11,7 @@ import { createChatSdk, defineSkill, type ChatSdk } from '../../src/core'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
+import EditableBanner from '../_shared/EditableBanner.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
 console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
@@ -44,6 +45,20 @@ onMounted(() => {
     appendReliableWriteRules: true,
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     data: { schema: pageSchema, bind: pageObj },
+    // interceptors.write:agent push 新组件时自动补 id(若未设)—— agent 无需关心 id 生成,拦截器兜底
+    // (演示拦截器补充能力:即使 agent 只传 { type:'heading', props:{...} },落地时也有稳定 id 供锚点/调试)
+    interceptors: {
+      write: (payload) => {
+        if (payload && Array.isArray((payload as any).components)) {
+          let i = 0
+          ;(payload as any).components = (payload as any).components.map((c: any) => {
+            if (!c.id) c.id = `cmp-${Date.now()}-${i++}`
+            return c
+          })
+        }
+        return payload
+      },
+    },
     skills: [
       defineSkill({
         name: 'complex-builder',
@@ -65,7 +80,9 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
-      <PageRenderer />
+      <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
+        <PageRenderer />
+      </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>
   </div>
@@ -81,8 +98,8 @@ onUnmounted(() => agent?.unmount())
 .pane-left {
   flex: 1;
   overflow: auto;
-  background: #f5f7fa;
-  padding: 24px;
+  background: #ffffff;
+  padding: 20px;
 }
 .pane-right {
   width: 50%;

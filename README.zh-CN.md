@@ -24,7 +24,7 @@
 
 | 约束 | 机制 | 作用 |
 |---|---|---|
-| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值;schema 形状自动白名单(顶层 key 限制可见 + 可写,未声明字段隐藏/拒改/整体 set 转 merge 防误删) | AI 传非法值 → 拒绝;非声明字段 → `PATH_DENIED` |
+| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值;schema 形状自动白名单(顶层 + 子路径按子 schema 递归投影,未声明字段隐藏/拒改/整体 set 转 merge 防误删;`interceptors.write` 补充的不可见字段落地保留) | AI 传非法值 → 拒绝;非声明字段 → `PATH_DENIED` |
 | **合法性校验** | zod schema —— `write`/`set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
 | **增量操作** | `write` 的 `patch`/`patches`(批量,原子回滚)或 advanced `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部;一次改多处用 `patches` |
 | **大对象检索** | `read` 支持 `fields`(字段裁剪)+ `depth`(深度截断)减体积;`query_data`(JSONPath)/`search_data`(文本)/`eval_script`(沙箱 JS) | 大 JSON 高效检索 + 局部定位 |
@@ -182,6 +182,8 @@ ChatDialog, MessageContent, CodePreview, useChat
 | | `mcp` | `McpServerConfig[]` | 远程 MCP server（http/sse/websocket） |
 | | `middleware` | `Middleware[]` | 自定义中间件（拼到内置栈末尾） |
 | | `streaming` / `title` / `placeholder` / `debug` | — | UI/调试 |
+| | `drawer` | `boolean` · 默认 `false` | 抽屉模式:ChatDialog 从右滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点遮罩/关闭按钮默认 `hide`(保留 agent/历史/生成进程,再 `mount`/`show` 恢复),传 `onClose` 自定义 |
+| | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
 
 ### 扩展点
 
@@ -330,6 +332,7 @@ createChatSdk({
 // sdk.setSkills(skills)         // 运行时替换整个 skill 列表(同名覆盖;清缓存,下轮索引重渲染)
 // sdk.invalidateSkillCache(name?)  // 清 skill 全文缓存(动态 skill 内容变化时主动失效)
 // sdk.usage                     // 累计 token 用量 {prompt_tokens, completion_tokens, total_tokens}
+// sdk.hide() / sdk.show()      // 抽屉模式隐藏/显示(保留 agent/历史/生成进程;hide 后再 mount 直接 show 不重建)
 ```
 
 ## 示例
@@ -345,8 +348,27 @@ createChatSdk({
 | planner-demo | `/examples/planner-demo/` | 规划-反思-执行（高温创意 planner + 低温 reflector） |
 | subagent-demo | `/examples/subagent-demo/` | 子 agent 并行编排 |
 | mcp-demo | `/examples/mcp-demo/` | MCP 远程工具（需 `npm run mcp:mock`） |
+| animation-demo | `/examples/animation-demo/` | ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show |
+| multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
+
+### 多 Agent 并行 + 互斥切换
+
+同一页面可挂多个独立 Agent（各自 `createChatSdk` + 不同 `id` 隔离），各管各 `data`/历史/工具，可**并行**跑各自生成任务；聊天框**互斥切换**用 `drawer` + `hide()`/`show()`——切换时 `hide` 旧的（保留 agent/历史/生成进程）、`show` 新的（历史恢复），不卸载不丢对话：
+
+```ts
+const agents = [agentA, agentB, agentC]  // 各自 createChatSdk({ id, drawer: true, data, ... })
+await Promise.all(agents.map(a => a.mount()))  // 并行就绪
+agents.slice(1).forEach(a => a.hide())         // 初始只显示第一个
+
+let active = 0
+function switchTo(i: number) {
+  agents[active].hide(); active = i; agents[i].show()  // 互斥切换，历史各自保留
+}
+```
+
+> 多 agent 操作同一 `data` 需协调（乐观锁 `expectedHash` 或按 `jsonPath` 分区）；各管各 `data` 对象则无冲突（推荐）。完整示例见 `examples/multi-agent-demo/`。
 
 ## 文档
 
@@ -362,8 +384,8 @@ createChatSdk({
 ## 自测
 
 ```bash
-npm test            # 450 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 149 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 461 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 151 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

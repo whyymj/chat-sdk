@@ -226,6 +226,10 @@ export interface ChatSdkOptions {
   /** 对话框 UI 文案 */
   title?: string
   placeholder?: string
+  /** 抽屉模式:ChatDialog 从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮触发 unmount(带退出动画)。默认 false(inline 占满 container) */
+  drawer?: boolean
+  /** 抽屉模式关闭回调:点击遮罩/关闭按钮时调用(默认调 unmount 带退出动画)。集成方需同步外部挂载状态时传此选项覆盖默认行为 */
+  onClose?: () => void
 }
 
 /**
@@ -366,6 +370,8 @@ interface AgentCore {
   dataOpsController: DataOpsController | null
   /** skills 控制器(运行时 setSkills/invalidateSkillCache;skills 关闭 → null) */
   skillsController: import('../harness/skills').SkillsController | null
+  /** Agent 信息刷新 tick(setSkills/setData 后 ++);经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取,实时反映动态 skill/data */
+  infoTick: Ref<number>
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
   pendingConflict: Ref<PendingConflict | null>
   /** 当前主数据配置(反映运行时替换;供 inspect/verify/getData 读最新状态) */
@@ -518,6 +524,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
   const pendingConflict = ref<PendingConflict | null>(null)
+  // Agent 信息刷新 tick:setSkills/setData 等运行时变更后 ++,经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取(实时反映动态 skill/data)
+  const infoTick = ref(0)
   let conflictSeq = 0
   function setPendingConflict(info: ConflictInfo): Promise<ConflictResolution> {
     return new Promise((resolve) => {
@@ -818,6 +826,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     checkpoint: checkpointMgr,
     dataOpsController,
     skillsController: skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null,
+    infoTick,
     pendingConflict,
     liveData,
     usage,
@@ -1096,11 +1105,17 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
 
   // ===== 每实例:渲染 + 事件监听(不共享)=====
   let vueApp: VueApp | null = null
+  let mountEl: HTMLElement | null = null
   let flushHandler: (() => void) | null = null
   let visHandler: (() => void) | null = null
 
   async function mount(): Promise<void> {
     await core.initDone
+    // 已挂载且隐藏中(抽屉模式 hide 后再 mount):直接 show,不重建 vueApp,保留 agent/历史/生成进程
+    if (vueApp) {
+      show()
+      return
+    }
     // headless:不渲染 UI,只 init agent + 装 flush 兜底(集成方用 messages/send 自建 UI)
     if (ui === false) {
       if (core.store) {
@@ -1119,6 +1134,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     const el =
       typeof options.container === 'string' ? document.querySelector(options.container) : options.container
     if (!el) throw new Error(`createChatSdk: 挂载点未找到(${options.container})`)
+    mountEl = el as HTMLElement
     const debugLogsRef = core.agent!.debugLogs
     const Wrapper = defineComponent({
       setup() {
@@ -1157,6 +1173,10 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             },
             pendingConflict: core.pendingConflict.value,
             onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
+            infoTick: core.infoTick,  // 响应式 tick:setSkills/setData 后 ++,DebugDrawer watch 后重新拉 getInfo() 实时刷新 Agent 信息
+            getSkillContent: core.skillsController ? (name: string) => core.skillsController!.getContent(name) : undefined,  // DebugDrawer 展开 skill 时调,取 skill 全文(优先缓存)
+            drawer: options.drawer === true,
+            onClose: options.onClose ?? (options.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
           })
       },
     })
@@ -1184,14 +1204,54 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     if (visHandler && typeof document !== 'undefined') document.removeEventListener('visibilitychange', visHandler)
     flushHandler = null
     visHandler = null
+    // 退出动画:给根 .chat-dialog 加 cs-leaving class 触发淡出+缩放,动画结束再卸载 DOM
+    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
+    if (vueApp && dialogEl) {
+      dialogEl.classList.add('cs-leaving')
+      // 抽屉模式:遮罩同步淡出
+      const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
+      if (maskEl) maskEl.classList.add('cs-leaving')
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        vueApp?.unmount()
+        vueApp = null
+        mountEl = null
+        core.release() // 引用计数--;shareContext 归零才真销毁
+      }
+      dialogEl.addEventListener('transitionend', finish, { once: true })
+      setTimeout(finish, 320) // 兜底:防 transitionend 不触发(transition: all 0.3s ease)
+      return
+    }
     vueApp?.unmount()
     vueApp = null
+    mountEl = null
     core.release() // 引用计数--;shareContext 归零才真销毁
+  }
+
+  /** 抽屉模式隐藏:加 cs-hidden class(opacity:0 + visibility:hidden),不卸载 vueApp/不 release agent —— 保留聊天历史与正在进行的生成进程;再 mount() 直接 show 恢复 */
+  function hide(): void {
+    if (!vueApp) return
+    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
+    const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
+    if (dialogEl) dialogEl.classList.add('cs-hidden')
+    if (maskEl) maskEl.classList.add('cs-hidden')
+  }
+  /** 抽屉模式显示:移除 cs-hidden class,恢复可见(配合 hide 使用;首次挂载用 mount) */
+  function show(): void {
+    if (!vueApp) return
+    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
+    const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
+    if (dialogEl) dialogEl.classList.remove('cs-hidden')
+    if (maskEl) maskEl.classList.remove('cs-hidden')
   }
 
   return {
     mount,
     unmount,
+    hide,
+    show,
     send: core.send,
     switchSession: core.switchSession,
     stream: core.stream,
@@ -1213,6 +1273,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return
       }
       core.dataOpsController.set(config)
+      core.infoTick.value++  // 触发 DebugDrawer 的 Agent 信息重新拉取(实时反映 data 变更)
     },
     /** 读取当前主数据配置;dataOps 关闭时返回 undefined */
     getData: () => core.liveData(),
@@ -1224,6 +1285,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return
       }
       ctrl.set(skills)
+      core.infoTick.value++  // 触发 DebugDrawer 的 Agent 信息重新拉取(实时反映 skills 变更)
     },
     /** 清 skill 全文缓存(动态 skill 内容变化时主动失效);不传清全部,传 name 清指定 */
     invalidateSkillCache: (name?: string) => {

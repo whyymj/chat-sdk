@@ -36,12 +36,22 @@ const props = withDefaults(defineProps<{
   pendingConflict?: PendingConflict | null
   /** 冲突解决回调:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict */
   onResolveConflict?: (action: ConflictResolution['action']) => void
+  /** Agent 信息刷新 tick(setSkills/setData 后 ++);传给 DebugDrawer 触发 agentInfo 重新拉取,实时反映动态 skill/data */
+  infoTick?: Ref<number>
+  /** 读取 skill 全文(DebugDrawer 展开 skill 时调,优先缓存);返回 null 表示无内容或读取失败 */
+  getSkillContent?: (name: string) => Promise<string | null>
+  /** 抽屉模式:从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮 emit 'close',由集成方(sdk)调 unmount */
+  drawer?: boolean
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
   showAvatar: true,
   showTyping: true,
 })
+
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
 
 const { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
   fetchResponse: props.fetchResponse,
@@ -202,7 +212,8 @@ const copiedMsg = ref(false)
 </script>
 
 <template>
-  <div class="chat-dialog" :class="{ collapsed: !isExpanded }">
+  <div v-if="drawer" class="chat-mask" @click="emit('close')"></div>
+  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer }">
     <!-- 头部 -->
     <div class="chat-header">
       <div class="header-left">
@@ -230,7 +241,12 @@ const copiedMsg = ref(false)
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
-        <button class="action-btn" @click="isExpanded = !isExpanded">
+        <button v-if="drawer" class="action-btn" title="关闭" @click="emit('close')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"></path>
+          </svg>
+        </button>
+        <button v-else class="action-btn" @click="isExpanded = !isExpanded">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path v-if="isExpanded" d="M18 15l-6-6-6 6"></path>
             <path v-else d="M6 9l6 6 6-6"></path>
@@ -240,6 +256,7 @@ const copiedMsg = ref(false)
     </div>
 
     <!-- 消息列表 -->
+    <Transition name="cs-slide">
     <div v-show="isExpanded" class="chat-body" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
       <div v-if="!hasMessages" class="empty-state">
         <div class="empty-icon">💬</div>
@@ -336,6 +353,7 @@ const copiedMsg = ref(false)
         <button v-if="canUndo" class="undo-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="handleUndo">↩ 回退</button>
       </div>
     </div>
+    </Transition>
 
     <!-- 人工确认:工具调用前需用户允许/拒绝(approval 中间件挂起) / LLM 主动征询(humanConfirm 工具挂起) -->
     <div v-if="pendingApproval" class="approval-bar">
@@ -403,6 +421,7 @@ const copiedMsg = ref(false)
     </div>
 
     <!-- 输入区域 -->
+    <Transition name="cs-slide">
     <div v-show="isExpanded" class="chat-footer">
       <span v-if="props.getInfo" class="cap-badge" title="能力概览(MCP / 工具数)">
         🔌{{ summary.mcp }} · 🔧{{ summary.tools }}
@@ -431,13 +450,34 @@ const copiedMsg = ref(false)
         </svg>
       </button>
     </div>
+    </Transition>
 
     <!-- 调试抽屉 -->
-    <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="props.getInfo" />
+    <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="props.getInfo" :info-tick="props.infoTick" :get-skill-content="props.getSkillContent" />
   </div>
 </template>
 
 <style scoped>
+/* 抽屉模式:遮罩 + 从右滑入的固定面板 */
+.chat-mask {
+  position: fixed; inset: 0; z-index: 9998;
+  background: rgba(0, 0, 0, 0.45);
+  animation: cs-mask-in 0.28s ease;
+}
+@keyframes cs-mask-in { from { opacity: 0; } to { opacity: 1; } }
+.chat-dialog.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 420px; max-width: 92vw; height: 100vh;
+  z-index: 9999;
+  border-radius: 0;
+  animation: cs-drawer-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes cs-drawer-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-mask { animation: none; }
+  .chat-dialog.drawer { animation: none; }
+}
+
 .chat-dialog {
   /* 主题变量(集成方可覆盖;默认中性主题,去 AI 风格化渐变)。在祖先元素或 :root 覆盖 --cs-* 即可换主题 */
   --cs-primary: #1f4d3a;
@@ -454,8 +494,29 @@ const copiedMsg = ref(false)
   background: var(--cs-bg);
   overflow: hidden;
   transition: all 0.3s ease;
+  /* 默认抽屉入场动画:挂载时从右轻微滑入 + 淡入(与卸载 cs-leaving 退出对称)。animation 仅首帧播放一次,之后 transform 由 transition 控制 */
+  animation: cs-drawer-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes cs-drawer-in {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-dialog { animation: none; }
 }
 .chat-dialog.collapsed { height: 52px; }
+
+/* 收起/展开过渡:chat-body 与 chat-footer 淡入淡出 + 轻微平移 */
+.cs-slide-enter-active, .cs-slide-leave-active { transition: opacity 0.22s ease, transform 0.22s ease; }
+.cs-slide-enter-from, .cs-slide-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* 卸载退出过渡:sdk.unmount() 在根元素加 cs-leaving class,触发淡出 + 缩放,动画结束再卸载 DOM */
+.chat-dialog.cs-leaving { opacity: 0; transform: scale(0.96) translateY(8px); pointer-events: none; }
+/* 抽屉模式卸载:向右滑出而非缩小 */
+.chat-dialog.drawer.cs-leaving { transform: translateX(100%); }
+.chat-mask.cs-leaving { opacity: 0; }
+/* 抽屉模式隐藏(sdk.hide()):不卸载,保留 agent/历史/生成进程;opacity+visibility 保留 transition,再 show 恢复 */
+.chat-dialog.cs-hidden, .chat-mask.cs-hidden { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.2s ease, visibility 0s 0.2s; }
 
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;

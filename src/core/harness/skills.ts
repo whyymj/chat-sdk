@@ -106,6 +106,8 @@ export interface SkillsController {
   get(): SkillSpec[]
   /** 清指定 skill 的全文缓存(不传清全部);下次 load_skill 重新 getContent/readSkillDoc。用于动态 skill 内容变化时主动失效 */
   invalidateCache(name?: string): void
+  /** 读取 skill 全文(优先 contentCache;未缓存则调 s.getContent/readSkillDoc 取并缓存;供 DebugDrawer 等外部查看 skill 主内容) */
+  getContent(name: string): Promise<string | null>
 }
 
 export function createSkillsMiddleware(
@@ -131,6 +133,23 @@ export function createSkillsMiddleware(
     invalidateCache(name) {
       if (name) contentCache.delete(name)
       else contentCache.clear()
+    },
+    async getContent(name) {
+      const s = skillMap.get(name)
+      if (!s) return null
+      let content = contentCache.get(name)
+      if (content != null) return content
+      if (s.doc) {
+        const r = await readSkillDoc(s.doc, opts?.readVfs)
+        if (!r.ok) return null
+        content = r.content
+      } else if (s.getContent) {
+        content = await s.getContent()
+      } else {
+        return null
+      }
+      contentCache.set(name, content)
+      return content
     },
   }
 

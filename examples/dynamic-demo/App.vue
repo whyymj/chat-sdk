@@ -1,19 +1,21 @@
 <script setup lang="ts">
 /**
- * 动态组件示例 —— 演示「懒加载、结构各异的组件」如何用单主数据 + edit_data 增量管理。
+ * 动态组件示例 —— 演示「懒加载、结构各异的组件」如何用单主数据 + edit_data 增量管理 + setSkills 动态注入组件说明。
  *
  * 演示能力:
  *  ① 组件懒加载:点击「加载」按钮动态新增不同类型组件(banner/card/stat/chart),结构各异
- *  ② 单主数据:window.app.components 是动态组件容器(record),schema 宽松(z.record),组件结构各异由 systemPrompt 描述
+ *  ② 单主数据:window.app.components 是动态组件容器(record),schema 宽松(z.record),组件结构各异由 skill 描述
  *  ③ 集成方代码直接改 bind:组件挂载/卸载由集成方代码直接改 appObj.components(普通对象),agent 可读可改
  *  ④ agent 增量改:agent 用 edit_data 改 components.<id>.<field>(jsonPath 相对主数据根)
- *  ⑤ 刷新:bind 用普通对象(非 reactive),agent 改后由 onEvent('data_change') 触发 tick 重渲染
+ *  ⑤ setSkills 动态组件说明:每种组件类型对应一个 skill(load_skill comp-<type> 取字段说明),loadComp/unloadComp 后按已加载类型集合 sdk.setSkills 动态注入/移除,agent 操作前按需 load_skill
+ *  ⑥ 刷新:bind 用普通对象(非 reactive),agent 改后由 onEvent('data_change') 触发 tick 重渲染
  *
  * 运行:npm run dev → 访问 /examples/dynamic-demo/
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { createChatSdk, z, type ChatSdk } from '../../src/core'
+import { createChatSdk, defineSkill, z, type ChatSdk, type SkillSpec } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
+import EditableBanner from '../_shared/EditableBanner.vue'
 import { compTypeDescriptions, compTypeLabels, createComp, type AnyComp, type CompType } from './componentSchemas'
 
 // 主数据:动态组件容器(普通对象,非 reactive);集成方自己挂 window.app 供页面读取
@@ -38,7 +40,43 @@ function refreshRegistered() {
   registeredIds.value = Object.keys(components)
 }
 
-// 加载一个组件 → 集成方代码直接改主数据(普通对象,agent 可读可改);tick++ 触发列表重渲染
+// 每种组件类型对应一个 skill:描述该类型组件的字段结构 + 操作指引(操作某类型组件前 load_skill 获取)
+// loadComp/unloadComp 后按「当前已加载组件的类型集合」sdk.setSkills 动态注入对应 skill,卸载类型后自动移除
+const compSkills: Record<CompType, SkillSpec> = {
+  banner: defineSkill({
+    name: 'comp-banner',
+    description: 'Banner 横幅组件的字段说明与操作指引(操作 banner-* 组件前加载)',
+    getContent: () => compTypeDescriptions.banner + '\n\njsonPath 示例:components.<id>.title / components.<id>.bg / components.<id>.color',
+  }),
+  card: defineSkill({
+    name: 'comp-card',
+    description: 'Card 商品卡组件的字段说明与操作指引(操作 card-* 组件前加载)',
+    getContent: () => compTypeDescriptions.card + '\n\njsonPath 示例:components.<id>.title / components.<id>.price / components.<id>.tag',
+  }),
+  stat: defineSkill({
+    name: 'comp-stat',
+    description: 'Stat 指标组件的字段说明与操作指引(操作 stat-* 组件前加载)',
+    getContent: () => compTypeDescriptions.stat + '\n\njsonPath 示例:components.<id>.label / components.<id>.value / components.<id>.unit',
+  }),
+  chart: defineSkill({
+    name: 'comp-chart',
+    description: 'Chart 图表组件的字段说明与操作指引(操作 chart-* 组件前加载)',
+    getContent: () => compTypeDescriptions.chart + '\n\njsonPath 示例:components.<id>.chartType / components.<id>.data',
+  }),
+}
+
+// 按当前已加载组件的类型集合,动态替换 skill 列表(同名覆盖;清缓存,下轮 system prompt 索引重渲染)
+function syncSkills() {
+  if (!agent) return
+  const loadedTypes = new Set<CompType>()
+  for (const id of loadedIds.value) {
+    const t = id.split('-')[0] as CompType
+    if (t in compSkills) loadedTypes.add(t)
+  }
+  agent.setSkills([...loadedTypes].map((t) => compSkills[t]))
+}
+
+// 加载一个组件 → 集成方代码直接改主数据(普通对象,agent 可读可改);tick++ 触发列表重渲染;syncSkills 动态注入该类型组件说明
 let seq = 0
 function loadComp(type: CompType) {
   const id = `${type}-${++seq}`
@@ -47,14 +85,16 @@ function loadComp(type: CompType) {
   loadedIds.value.push(id)
   refreshRegistered()
   tick.value++
+  syncSkills()
 }
 
-// 卸载一个组件 → 直接从主数据移除;tick++ 触发列表重渲染
+// 卸载一个组件 → 直接从主数据移除;tick++ 触发列表重渲染;syncSkills 动态移除该类型组件说明(若该类型已无组件)
 function unloadComp(id: string) {
   delete components[id]
   loadedIds.value = loadedIds.value.filter((x) => x !== id)
   refreshRegistered()
   tick.value++
+  syncSkills()
 }
 
 // loadedList 依赖 tick(普通对象改属性不触发 computed,需 tick 驱动重算)
@@ -83,8 +123,8 @@ onMounted(() => {
     },
     systemPrompt: [
       '你是页面组件助手。主数据(挂 window.app)的 components 是动态组件容器,按组件 id 为键存对象。',
-      '每个组件有自己的 type(banner/card/stat/chart),结构各异;组件由集成方代码动态增删,实时变化,操作前先 read 查看当前存在的组件 id。',
-      '各组件 schema 不同:banner{title,bg,color}/ card{title,price,tag?}/ stat{label,value,unit?}/ chart{chartType,data[]}。',
+      '组件由集成方代码动态增删,实时变化;操作前先 read 查看当前存在的组件 id。',
+      '各组件有自己的 type(banner/card/stat/chart),字段结构各异;操作某类型组件前,先 load_skill comp-<type> 获取该类型字段说明(如操作 banner-1 前 load_skill comp-banner)。',
       '改某组件时 jsonPath 相对主数据根(如改 banner-1 标题:jsonPath="components.banner-1.title")。',
     ].join('\n'),
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
@@ -112,7 +152,8 @@ onUnmounted(() => agent?.unmount())
       <h2>🧩 动态组件(window.app.components)</h2>
       <p class="hint">
         组件<strong>懒加载</strong>:点击下方按钮动态新增不同类型组件(结构各异)。<br />
-        集成方代码直接改主数据 <code>appObj.components</code>(普通对象)→ AI 经 <code>edit_data</code> 按 jsonPath 改子属性,改动经 <code>onEvent('data_change')</code> 触发 tick 重渲染。
+        集成方代码直接改主数据 <code>appObj.components</code>(普通对象)→ AI 经 <code>edit_data</code> 按 jsonPath 改子属性,改动经 <code>onEvent('data_change')</code> 触发 tick 重渲染。<br />
+        <strong>setSkills 动态说明</strong>:加载/卸载组件时按已加载类型集合 <code>sdk.setSkills</code> 动态注入对应 <code>comp-&lt;type&gt;</code> skill,AI 操作前 <code>load_skill</code> 取该类型字段说明。
       </p>
 
       <div class="load-bar">
@@ -122,17 +163,19 @@ onUnmounted(() => agent?.unmount())
       </div>
 
       <h3>已加载组件({{ loadedIds.length }})</h3>
-      <div v-if="!loadedIds.length" class="empty">暂未加载组件。点击上方按钮加载,再让 AI 操作。</div>
-      <ul v-else class="comp-list">
-        <li v-for="{ id, comp } in loadedList" :key="id" class="comp-item">
-          <div class="comp-head">
-            <span class="comp-type">{{ compTypeLabels[comp.type] }}</span>
-            <span class="comp-id">#{{ id }}</span>
-            <button class="btn-unload" @click="unloadComp(id)">卸载</button>
-          </div>
-          <pre class="comp-json">{{ JSON.stringify(comp, null, 2) }}</pre>
-        </li>
-      </ul>
+      <EditableBanner title="AI 可编辑数据" hint="Agent 经 write 按 jsonPath 改此区">
+        <div v-if="!loadedIds.length" class="empty">暂未加载组件。点击上方按钮加载,再让 AI 操作。</div>
+        <ul v-else class="comp-list">
+          <li v-for="{ id, comp } in loadedList" :key="id" class="comp-item">
+            <div class="comp-head">
+              <span class="comp-type">{{ compTypeLabels[comp.type] }}</span>
+              <span class="comp-id">#{{ id }}</span>
+              <button class="btn-unload" @click="unloadComp(id)">卸载</button>
+            </div>
+            <pre class="comp-json">{{ JSON.stringify(comp, null, 2) }}</pre>
+          </li>
+        </ul>
+      </EditableBanner>
 
       <h3>当前主数据 components keys({{ registeredIds.length }})</h3>
       <p class="hint small">来自 <code>Object.keys(appObj.components)</code>,反映动态增删的实时状态:</p>
@@ -153,7 +196,7 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
+.pane-left { flex: 1; overflow: auto; background: #ffffff; padding: 28px 32px; }
 .pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 
