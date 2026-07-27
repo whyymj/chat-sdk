@@ -262,6 +262,8 @@ mv skills/page-agent-sdk-integrate ~/.claude/skills/
 
 安装后重启 AI 工具；当你说「把 page-agent-sdk 加到我的页面」等时 skill 自动触发。
 
+> **不想装 skill?** 用随包附带的通用对接提示词模板复制给对接项目的 AI：见 `node_modules/page-agent-sdk/skills/page-agent-sdk-integrate/references/integration-prompt.md`（按场景填空 `[...]` 即可）。特定场景示例见仓库 `doc/集成提示词-Vue2-低代码页面-抽屉.md`。
+
 > 另有 `page-agent-sdk-release`（维护者发布工作流）skill 仅保留在仓库 `.claude/skills/` 供项目维护者自用，**不**通过 npm 包公开分发。
 
 ## 架构

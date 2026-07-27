@@ -280,7 +280,7 @@ createChatSdk({
 
 | Skill | 位置 | 公开范围 | 触发场景 |
 |---|---|---|---|
-| `page-agent-sdk-integrate` | `skills/`(含入 npm 包 `files`) | ✅ **公开分发**(使用者 `npm i` 即可得) | 集成 SDK 进网页(选引入方式/声明 data+schema/配 llm/挂载/订阅事件/headless/排坑) |
+| `page-agent-sdk-integrate` | `skills/`(含入 npm 包 `files`) | ✅ **公开分发**(使用者 `npm i` 即可得) | 集成 SDK 进网页(选引入方式/声明 data+schema/配 llm/挂载/订阅事件/headless/排坑);含 `references/integration-prompt.md` 通用对接提示词模板(不装 skill 时复制给对接项目 AI) |
 | `page-agent-sdk-release` | `.claude/skills/`(不进 npm 包) | 🔒 **维护者自用**(仅仓库内) | 发布新版本(bump→build→test→推 gitee/github→npm publish→验证) |
 
 - **integrate** 面向集成方:使用者 `cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-integrate ~/.claude/skills/` 或从 github 下载安装

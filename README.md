@@ -317,6 +317,8 @@ mv skills/page-agent-sdk-integrate ~/.claude/skills/
 
 After install, restart your AI tool; the skill auto-triggers when you ask things like "add page-agent-sdk to my page".
 
+> **Don't want to install the skill?** Copy the bundled generic integration prompt template to the target project's AI: see `node_modules/page-agent-sdk/skills/page-agent-sdk-integrate/references/integration-prompt.md` (fill in `[...]` per your scenario). For a specific scenario example, see the repo's `doc/集成提示词-Vue2-低代码页面-抽屉.md`.
+
 > A second skill `page-agent-sdk-release` (release workflow for maintainers) is kept in the repo's `.claude/skills/` for project maintainers only and is **not** distributed via the npm package.
 
 ## Architecture
