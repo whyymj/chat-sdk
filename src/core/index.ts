@@ -8,7 +8,7 @@
 export { z } from 'zod'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig } from './sdk/createChatSdk'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
 export { presets, systemPromptHelpers, extractSchemaHint } from './presets'
@@ -47,6 +47,8 @@ export { createVfs } from './backends/vfs'
 // 持久化存储(IndexedDB + 多 agent 隔离 + 全局配额/LRU 淘汰)
 export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
+export { createSkillStore } from './backends/skillStore'
+export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep } from './types'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
@@ -58,4 +60,5 @@ export { copyText } from './utils/clipboard'
 export { default as ChatDialog } from './components/ChatDialog.vue'
 export { default as MessageContent } from './components/MessageContent.vue'
 export { default as CodePreview } from './components/CodePreview.vue'
+export { default as SkillPanel } from './components/SkillPanel.vue'
 export { useChat } from './composables/useChat'

@@ -173,8 +173,10 @@ createChatSdk({
   summaryTemperature: 0.3,      // 摘要 LLM 温度(默认 0.3)
   summaryMaxTokens: 1024,        // 摘要 LLM 输出上限(默认 1024)
   summaryTimeoutMs: 15000,       // 摘要 LLM 超时(默认 15s,超时回退索引摘要)
-  title: 'AI 助手',             // 对话框标题
-  placeholder: '输入消息...',   // 输入框占位
+  dialog: {                      // 对话框 UI 归组配置
+    title: 'AI 助手',             // 对话框标题
+    placeholder: '输入消息...',   // 输入框占位
+  },
   debug: false,                 // 调试日志
 }).mount()
 ```
@@ -350,6 +352,7 @@ const sdk = createChatSdk({
   - `onEvent` 与响应式可并用:响应式管 UI 刷新,`onEvent` 管审计/埋点/跨系统联动
 - **运行时替换主数据**:`sdk.setData(config)` / `sdk.getData()`(替代旧 add/remove/listDataSlots)
 - **运行时替换 skill**:`sdk.setSkills(skills)`(同名 skill 覆盖更新;清 skill 全文缓存,下轮 system prompt 索引重渲染,下次 `load_skill` 取最新全文含 vfs doc)/ `sdk.invalidateSkillCache(name?)`(动态 skill 内容变化时主动失效缓存,不传清全部,传 name 清指定)
+- **用户创建 skill(运行时 + 独立持久化)**:`sdk.addSkill(skill)`(用户在聊天界面内创建/编辑/删除自定义 skill,自动加入 agent,持久化由**独立 SkillStore**管理——默认 indexedDB,与 `storage` 选项分离,即使 `storage:false` 也持久化,跨刷新自动恢复;同名覆盖)/ `sdk.removeSkill(name)`(仅删用户创建的,不删集成方 `skills` 选项传入的 initialSkills)/ `sdk.listUserSkills()`(列出用户创建的 skill 名,UI 面板刷新用)/ `sdk.getUserSkill(name)`(读取用户创建的 skill 详情,SkillPanel 编辑时调)。内置 `ChatDialog` 头部有「Skill 管理」按钮打开 `SkillPanel` 组件,支持创建/编辑(点击已创建 skill 加载到表单)/删除;集成方也可单独 `import { SkillPanel }` 自建 UI。需开启 `capabilities.skills`(默认开)。**跨页面/跨 agent 复用**:手动指定 `skillStorage: { id: 'shared-skills' }`,多个 `createChatSdk` 实例(不同 agentId)用同一 id 即可共享同一套用户 skill;不传 `id` 则默认按 `agent::{agentId}` 隔离(每 agent 独立 skill 集)。`skillStorage: false` 关闭持久化(仅当前会话内存有效,刷新丢失)。
 
 - **大 JSON 增量改**:改数组元素某字段用 `write({ value:180, patch:{ op:'set', jsonPath:'components.0.price' } })` 增量 patch,只发改动、不重传整个数组。改大对象/数组优先用 patch,避免整体重传被 max_tokens 截断致 JSON 不完整。
 - **树形/递归 children 结构**:节点含 `children` 自引用时,用 zod `z.lazy(() => TreeNode)` 声明递归 schema,`.passthrough()` 让节点可带未声明字段:
@@ -833,6 +836,12 @@ off2()
 | `sdk.importData(json, opts?)` | 整体替换 `bind`(就地还原,保留 reactive 引用) | 默认经 `schema` 校验,不合法返回 `{ok:false,error}`;`opts.validate:false` 跳过校验;`opts.emit:false` 不发 `data_change` |
 | `sdk.setSkills(skills)` | 运行时替换整个 skill 列表(同名覆盖) | 立即生效:下轮 system prompt 索引重渲染;清 skill 全文缓存与本轮已加载记录,下次 `load_skill` 取最新全文(含 vfs doc);需开启 skills(默认开) |
 | `sdk.invalidateSkillCache(name?)` | 清 skill 全文缓存(主动失效) | 不传 `name` 清全部,传 `name` 清指定;动态 skill 内容变化时用;下次 `load_skill` 重新 `getContent`/`readSkillDoc`;需开启 skills(默认开) |
+| `sdk.addSkill(skill)` | 用户创建 skill(运行时 + 独立持久化) | `skill: { name, description, prompt \| getContent \| doc }`;自动加入 agent,持久化由**独立 SkillStore**管理(默认 indexedDB,与 `storage` 分离,即使 `storage:false` 也持久化,跨刷新恢复);同名覆盖;需开启 skills(默认开)+ `skillStorage` 非 `false` 才持久化 |
+| `sdk.removeSkill(name)` | 删除用户创建的 skill | 仅删用户创建的(`addSkill` 加的),不删集成方 `skills` 选项传入的;从 SkillStore 移除;返回 `boolean`(是否删除成功);需开启 skills |
+| `sdk.listUserSkills()` | 列出用户创建的 skill 名 | 返回 `string[]`(仅用户创建的,不含 initialSkills);UI 面板刷新用 |
+| `sdk.getUserSkill(name)` | 读取用户创建的 skill 详情 | 返回 `{ name, description, content }` 或 `undefined`(不存在时);SkillPanel 编辑时调 |
+| `skillStorage` 选项 | 用户 skill 独立持久化配置 | 默认 `{ backend: 'indexed' }`(与 `storage` 分离);`false` 关闭(仅当前会话);`id` 手动指定同一 id → 跨页面/跨 agent 复用同一套用户 skill;不传 `id` 默认按 `agent::{agentId}` 隔离 |
+| `SkillPanel` 组件 | 用户创建/编辑/删除 skill 的 UI 面板 | 内置 `ChatDialog` 头部「Skill 管理」按钮已集成(支持创建/编辑/删除);集成方也可 `import { SkillPanel } from 'page-agent-sdk'` 单独用于自建 UI |
 | `sdk.usage` | 累计 token 用量 `{prompt_tokens, completion_tokens, total_tokens}` | 每轮 LLM 调用累加;无调用时全 0;单轮明细经 `onEvent('usage')` 外发 |
 | `onAudit(entry)` 选项 | 数据写操作结构化审计回调(独立于 `debug`) | 每次 `set`/`edit`/`delete`/`restore` 经此回调外发 `{op, jsonPath, opDetail, timestamp, success, error?}`;合规审计/操作追溯 |
 
@@ -1224,19 +1233,19 @@ await agent.send('加一个提交按钮')
 | 7 | 服务端 Node.js | `ui:false`+`storage:'memory'`+`capabilities:{dataOps:false,fetch:false}`;`sdk.send` 驱动 |
 | 8 | 同页多 agent | 同 `id`+`shareContext:true`→多对话框共享同一 `AgentCore` |
 | 9 | MCP 集成 | `mcp:[{transport,url}]` 远程工具;`@modelcontextprotocol/sdk` 可选 peerDep |
-| 10 | 多 Agent 并行 + 互斥切换 | 多个 `createChatSdk`(不同 `id` 各管各 `data`)+ `drawer:true`;切换调 `hide()`/`show()`(保留各自历史/生成进程,不卸载) |
+| 10 | 多 Agent 并行 + 互斥切换 | 多个 `createChatSdk`(不同 `id` 各管各 `data`)+ `dialog.drawer:true`;切换调 `hide()`/`show()`(保留各自历史/生成进程,不卸载) |
 
 各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)、`examples/animation-demo`(动画 + hide/show)、`examples/multi-agent-demo`(多 Agent 并行 + 互斥切换)。
 
 ### 多 Agent 并行 + 互斥切换
 
-同一页面挂多个独立 Agent(各自 `createChatSdk` + 不同 `id` 隔离),各管各 `data`/历史/工具,可并行跑各自生成任务;聊天框互斥切换用 `drawer` + `hide()`/`show()`——切换时 `hide` 旧的(保留 agent/历史/生成进程)、`show` 新的(历史恢复),不卸载不丢对话:
+同一页面挂多个独立 Agent(各自 `createChatSdk` + 不同 `id` 隔离),各管各 `data`/历史/工具,可并行跑各自生成任务;聊天框互斥切换用 `dialog.drawer` + `hide()`/`show()`——切换时 `hide` 旧的(保留 agent/历史/生成进程)、`show` 新的(历史恢复),不卸载不丢对话:
 
 ```ts
 const agents = [
-  createChatSdk({ id: 'agent-a', container: boxA, drawer: true, data: { schema: schemaA, bind: objA }, ... }),
-  createChatSdk({ id: 'agent-b', container: boxB, drawer: true, data: { schema: schemaB, bind: objB }, ... }),
-  createChatSdk({ id: 'agent-c', container: boxC, drawer: true, data: { schema: schemaC, bind: objC }, ... }),
+  createChatSdk({ id: 'agent-a', container: boxA, dialog: { drawer: true }, data: { schema: schemaA, bind: objA }, ... }),
+  createChatSdk({ id: 'agent-b', container: boxB, dialog: { drawer: true }, data: { schema: schemaB, bind: objB }, ... }),
+  createChatSdk({ id: 'agent-c', container: boxC, dialog: { drawer: true }, data: { schema: schemaC, bind: objC }, ... }),
 ]
 await Promise.all(agents.map(a => a.mount()))  // 三个独立 agent 并行就绪
 agents.slice(1).forEach(a => a.hide())         // 初始只显示第一个
@@ -1254,5 +1263,31 @@ function switchTo(i: number) {
 - 切换按钮若在抽屉遮罩下,需提高 `z-index`(高于遮罩 `9998` + ChatDialog `9999`)确保可点
 
 完整示例:`examples/multi-agent-demo/`。
+
+### 抽屉模式宽度 + 默认隐藏(点击按钮才出现聊天框)
+
+抽屉模式(`dialog.drawer: true`)下,可自定义聊天框宽度,并支持「mount 后默认隐藏,点击按钮才显示」的场景:
+
+```ts
+const sdk = createChatSdk({
+  id: 'my-agent', container: '#box',
+  dialog: {
+    drawer: true,             // 抽屉模式
+    drawerWidth: 500,          // 宽度 500px(也可传 '500px' / '40vw' / '50%' 等 CSS 字符串);默认 420
+    drawerHidden: true,        // mount 后默认隐藏,需 sdk.show() 才显示
+  },
+  llm, data: { schema, bind },
+})
+await sdk.mount()            // 挂载但不可见(drawerHidden 生效)
+
+// 点击按钮 → 显示聊天框
+document.querySelector('#open-chat-btn')!.addEventListener('click', () => sdk.show())
+// 聊天框关闭按钮/遮罩点击 → 默认调 hide()(保留 agent/历史/生成进程),再次 show() 恢复
+```
+
+**要点**:
+- `dialog.drawerWidth`:纯数字按 `px` 处理;字符串原样透传(支持 `vw`/`%` 等响应式单位);仅 `drawer: true` 生效,inline 模式宽度由 `container` 决定
+- `dialog.drawerHidden`:`mount` 后立即调 `hide()`(加 `cs-hidden` class,不可见但 vueApp/agent 已就绪);首次 `show()` 移除隐藏 class,后续 `hide()`/`show()` 切换可见性
+- 关闭按钮/遮罩点击默认调 `hide()`(抽屉模式);传 `dialog.onClose` 可自定义关闭行为
 
 **进阶扩展详细例子**(自定义 tool / skills / subagents / MCP)见随包 Agent Skill 的 `skills/page-agent-sdk-integrate/references/advanced.md`:含 `defineTool`(错误处理 + 与 dataOps 共存)、`defineSkill`(内联内容 + 远程 doc)、子 agent(ad-hoc `spawn_agent`/`spawn_agents` + 预声明 `subagents`→`use_<id>`)、MCP(http/sse/websocket + 鉴权 + dev 坑)的可复制代码。

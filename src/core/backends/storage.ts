@@ -4,6 +4,7 @@
  * 三层 key:v:1::{dbName}::{agentId}::{sessionId}::{kind}
  *   kind ∈ {messages, vfs, todos, memory, __meta__}
  *   每会话恰好 5 条记录;删整会话 = clearPrefix("...::{sessionId}::"),游标逐条精确删。
+ *   注:用户创建的 skill 不在此快照内,由独立 SkillStore(`backends/skillStore.ts`)持久化。
  *
  * 架构(可注入后端,为可测 + 零成本降级):
  *   SessionStore(纯编排:key 编码 / 字节估算 / debounce / 配额 meta / 单会话软上限 / LRU 选择)
@@ -47,6 +48,16 @@ export interface SessionSnapshot {
   vfs: Record<string, VfsFile>
   todos: Todo[]
   memory: string
+}
+
+/** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)
+ *
+ * @deprecated 已迁移至独立 SkillStore(`backends/skillStore.ts`),与聊天历史分离;
+ *   此处保留仅为类型兼容,不再写入 SessionSnapshot。 */
+export interface PersistedSkill {
+  name: string
+  description: string
+  content: string
 }
 
 /** 后端类型:indexed(默认,大容量)/ session(sessionStorage,刷新保留关页清)/ local(localStorage,跨页持久)/ memory(纯内存,降级用) */

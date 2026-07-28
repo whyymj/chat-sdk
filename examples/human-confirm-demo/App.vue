@@ -73,8 +73,10 @@ onMounted(() => {
     // approval 一行同时开启两侧:被动(write 前弹允许/拒绝)+ 主动(request_human_confirmation 默认随附)
     approval: { tools: ['write'] },
     debug: true,
-    title: '人工确认 · AI 主动征询',
-    placeholder: '试试:帮我设计个界面风格;换个感觉,给几个方案我挑',
+    dialog: {
+      title: '人工确认 · AI 主动征询',
+      placeholder: '试试:帮我设计个界面风格;换个感觉,给几个方案我挑',
+    },
     // 非 reactive bind:监听 data_change 触发 tick,:key 强制预览重渲染
     onEvent(e) {
       if ((e as any).type === 'data_change') tick.value++

@@ -93,8 +93,10 @@ onMounted(() => {
       if (e.type === 'data_change') tick.value++
     },
     debug: true,
-    title: '页面构建 Agent',
-    placeholder: '试试:加一个"提交"按钮 / 主题改成 dark / 删掉列表 …',
+    dialog: {
+      title: '页面构建 Agent',
+      placeholder: '试试:加一个"提交"按钮 / 主题改成 dark / 删掉列表 …',
+    },
   })
   agent.mount()
 })

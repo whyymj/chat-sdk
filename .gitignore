@@ -28,3 +28,7 @@ dist/
 # 本地 npm 包测试 demo(纯本地,不公开,不进 git)
 demo/npm-local/
 
+# 个人笔记/待办(仅存 Gitee,不进 GitHub)
+doc/问题.md
+doc/待确认问题.md
+

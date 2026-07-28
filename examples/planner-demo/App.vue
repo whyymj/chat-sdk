@@ -92,8 +92,10 @@ onMounted(() => {
     // 写操作落地前弹确认(approval 同时默认开启主动征询 humanConfirm)
     approval: { tools: ['write'] },
     debug: true,
-    title: '规划-反思-执行',
-    placeholder: '试试:帮我设计夏日主题风格;给页面换个有创意的感觉',
+    dialog: {
+      title: '规划-反思-执行',
+      placeholder: '试试:帮我设计夏日主题风格;给页面换个有创意的感觉',
+    },
     // 非 reactive bind:监听 data_change 触发 tick,:key 强制预览重渲染
     onEvent(e) {
       if ((e as any).type === 'data_change') tick.value++

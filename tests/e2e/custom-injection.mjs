@@ -1,5 +1,5 @@
 // 自定义注入:tools(source=user) / middleware / skills + memory / 配置项可传 / llm 配置
-import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool, defineSkill } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool, defineSkill, makeStore } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
@@ -212,6 +212,118 @@ export async function run() {
     try { sdk.setSkills([{ name: 'x', description: 'x', getContent: () => 'x' }]) } catch { threw = true }
     assert(!threw, 'skills 关闭时 setSkills → warn 不抛错')
     assert(sdk.inspect().skills.length === 0, 'skills 关闭时 setSkills → inspect 仍为空(no-op)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] addSkill/removeSkill/listUserSkills/getUserSkill → 用户创建 skill 增删改 + 独立持久化恢复')
+  {
+    if (!globalThis.sessionStorage) globalThis.sessionStorage = makeStore()
+    if (!globalThis.localStorage) globalThis.localStorage = makeStore()
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-addskill', storage: 'session', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skills: [{ name: 'init-skill', description: '集成方初始', getContent: () => 'INIT' }],
+      // skill 独立持久化(与 storage 分离):用 session 后端便于 Node 测试环境验证持久化
+      skillStorage: { backend: 'session', id: 'e2e-shared-skills' },
+    })
+    await sdk.mount()
+    assert(typeof sdk.addSkill === 'function' && typeof sdk.removeSkill === 'function' && typeof sdk.listUserSkills === 'function' && typeof sdk.getUserSkill === 'function', 'sdk 暴露 addSkill/removeSkill/listUserSkills/getUserSkill')
+    // 初始:listUserSkills 为空(不含集成方 initialSkills)
+    assert(sdk.listUserSkills().length === 0, 'listUserSkills 初始为空(不含集成方 initialSkills)')
+    // addSkill → inspect 反映合并(initialSkills + userSkills)
+    sdk.addSkill({ name: 'user-1', description: '用户创建 1', getContent: () => 'U1' })
+    assert(sdk.inspect().skills.length === 2 && sdk.inspect().skills.some((s) => s.name === 'user-1'), 'addSkill → inspect().skills 含 initialSkills + userSkills')
+    assert(sdk.listUserSkills().length === 1 && sdk.listUserSkills()[0] === 'user-1', 'addSkill → listUserSkills 含用户创建的')
+    // getUserSkill → 返回详情
+    const detail = sdk.getUserSkill('user-1')
+    assert(detail && detail.name === 'user-1' && detail.description === '用户创建 1' && detail.content === 'U1', 'getUserSkill → 返回 {name, description, content}')
+    assert(sdk.getUserSkill('nope') === undefined, 'getUserSkill 不存在 → undefined')
+    // 同名覆盖(编辑)
+    sdk.addSkill({ name: 'user-1', description: '用户创建 1-改', getContent: () => 'U1-v2' })
+    assert(sdk.listUserSkills().length === 1, 'addSkill 同名 → 覆盖不新增')
+    assert(sdk.inspect().skills.find((s) => s.name === 'user-1').description === '用户创建 1-改', 'addSkill 同名 → 描述更新')
+    assert(sdk.getUserSkill('user-1').content === 'U1-v2', 'addSkill 同名 → content 更新(getUserSkill 验证)')
+    // removeSkill → 仅删用户创建的,不删集成方 initialSkills
+    const removed = sdk.removeSkill('user-1')
+    assert(removed === true && sdk.listUserSkills().length === 0, 'removeSkill 用户 skill → 返回 true,列表清空')
+    assert(sdk.inspect().skills.length === 1 && sdk.inspect().skills[0].name === 'init-skill', 'removeSkill 不删集成方 initialSkills')
+    assert(sdk.getUserSkill('user-1') === undefined, 'removeSkill 后 getUserSkill → undefined')
+    // removeSkill 不存在的 → false
+    assert(sdk.removeSkill('nope') === false, 'removeSkill 不存在的 → 返回 false')
+    // 持久化:addSkill 后新建同 skillStorage.id 实例 → 恢复 userSkills(独立于 storage 选项)
+    sdk.addSkill({ name: 'persist-skill', description: '持久化测试', getContent: () => 'PERSIST' })
+    await new Promise((r) => setTimeout(r, 50))  // 等 skillStore.put 落盘
+    sdk.unmount()
+    // 新建实例:不同 agentId 但同 skillStorage.id → 复用同一套用户 skill(跨页面复用场景)
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-addskill-OTHER-AGENT', storage: false, llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skills: [{ name: 'init-skill', description: '集成方初始', getContent: () => 'INIT' }],
+      skillStorage: { backend: 'session', id: 'e2e-shared-skills' },
+    })
+    await sdk2.mount()
+    assert(sdk2.listUserSkills().length === 1 && sdk2.listUserSkills()[0] === 'persist-skill', '持久化恢复 → 不同 agentId 同 skillStorage.id 实例 listUserSkills 含 persist-skill(跨页面复用)')
+    assert(sdk2.inspect().skills.length === 2 && sdk2.inspect().skills.some((s) => s.name === 'persist-skill'), '持久化恢复 → inspect().skills 含 initialSkills + 恢复的 userSkills')
+    assert(sdk2.getUserSkill('persist-skill').content === 'PERSIST', '持久化恢复 → getUserSkill 返回 content')
+    sdk2.unmount()
+  }
+
+  console.log('[e2e:custom-injection] addSkill skillStorage:false → 不持久化(仅当前会话)')
+  {
+    if (!globalThis.sessionStorage) globalThis.sessionStorage = makeStore()
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-skill-no-store', storage: false, llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skillStorage: false,
+    })
+    await sdk.mount()
+    sdk.addSkill({ name: 'ephemeral', description: '不持久化', getContent: () => 'EPHE' })
+    assert(sdk.listUserSkills().length === 1, 'skillStorage:false 时 addSkill 仍生效(当前会话)')
+    sdk.unmount()
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-skill-no-store', storage: false, llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skillStorage: false,
+    })
+    await sdk2.mount()
+    assert(sdk2.listUserSkills().length === 0, 'skillStorage:false → 新实例不恢复(未持久化)')
+    sdk2.unmount()
+  }
+
+  console.log('[e2e:custom-injection] addSkill 默认(无 storage 也持久化)→ SkillStore 独立于 storage')
+  {
+    if (!globalThis.sessionStorage) globalThis.sessionStorage = makeStore()
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-skill-default', storage: false, llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skillStorage: { backend: 'session', id: 'e2e-default-persist' },
+    })
+    await sdk.mount()
+    sdk.addSkill({ name: 'no-storage-skill', description: 'storage 关闭也持久化', getContent: () => 'NOSTORE' })
+    await new Promise((r) => setTimeout(r, 50))
+    sdk.unmount()
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-skill-default', storage: false, llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true },
+      skillStorage: { backend: 'session', id: 'e2e-default-persist' },
+    })
+    await sdk2.mount()
+    assert(sdk2.listUserSkills().length === 1 && sdk2.listUserSkills()[0] === 'no-storage-skill', 'storage:false + skillStorage 开启 → skill 仍持久化(独立于 storage)')
+    sdk2.unmount()
+  }
+
+  console.log('[e2e:custom-injection] addSkill skills 关闭 → warn 不抛错')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-addskill-off', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: false },
+    })
+    await sdk.mount()
+    let threw = false
+    try { sdk.addSkill({ name: 'x', description: 'x', getContent: () => 'x' }) } catch { threw = true }
+    assert(!threw, 'skills 关闭时 addSkill → warn 不抛错')
+    assert(sdk.removeSkill('x') === false, 'skills 关闭时 removeSkill → 返回 false')
+    assert(sdk.listUserSkills().length === 0, 'skills 关闭时 listUserSkills → 空数组')
     sdk.unmount()
   }
 

@@ -55,7 +55,7 @@ const current = computed(() => LINKS.find((l) => l.match(path)))
   position: fixed;
   top: 12px;
   left: 12px;
-  z-index: 9999;
+  z-index: 10002;
   font-size: 12px;
   line-height: 1;
   user-select: none;

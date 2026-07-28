@@ -33,8 +33,10 @@ onMounted(() => {
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     debug: true,
-    title: 'MCP 集成示例',
-    placeholder: '试试:北京天气 / 搜索 AI / 算 12*8',
+    dialog: {
+      title: 'MCP 集成示例',
+      placeholder: '试试:北京天气 / 搜索 AI / 算 12*8',
+    },
   })
   agent.mount()
 })

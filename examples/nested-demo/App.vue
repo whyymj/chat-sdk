@@ -104,8 +104,10 @@ onMounted(() => {
     // 会话级 checkpoint:每轮自动存档,流程异常/改坏页面时可一键回退到上次正常态(↩ 回退按钮 + LLM 的 restore_last_checkpoint 工具)
     checkpoint: true,
     debug: true,
-    title: '嵌套页面编辑',
-    placeholder: '试试:主标题改成红色;给商品列表加一张「新品」卡;删掉商品卡 2',
+    dialog: {
+      title: '嵌套页面编辑',
+      placeholder: '试试:主标题改成红色;给商品列表加一张「新品」卡;删掉商品卡 2',
+    },
     // 非 reactive bind:监听 data_change 触发 tick,:key 强制树重渲染读最新 pageInfo
     onEvent(e) {
       if (e.type === 'data_change') tick.value++

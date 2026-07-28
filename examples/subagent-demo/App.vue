@@ -57,8 +57,10 @@ onMounted(() => {
       },
     ],
     debug: true,
-    title: '子 Agent 并行调研',
-    placeholder: '试试:对比 A/B/C 三个方案,推荐哪个?',
+    dialog: {
+      title: '子 Agent 并行调研',
+      placeholder: '试试:对比 A/B/C 三个方案,推荐哪个?',
+    },
   })
   agent.mount()
 })

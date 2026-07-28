@@ -58,8 +58,10 @@ onMounted(() => {
       search, // 业务自定义工具
     ],
     debug: true,
-    title: '工具分离 · 手动注入',
-    placeholder: '试试:搜一下 SSR,把要点记到笔记里',
+    dialog: {
+      title: '工具分离 · 手动注入',
+      placeholder: '试试:搜一下 SSR,把要点记到笔记里',
+    },
   })
   agent.mount()
 })

@@ -75,11 +75,13 @@ onMounted(async () => {
       appendReliableWriteRules: true,
       data: { schema: schemas[s.id], bind: s.data },   // 各管各 data,无冲突
       skills: skills[s.id],
-      drawer: true,             // 抽屉模式:从右滑入 + 遮罩 + 关闭按钮
-      title: `${s.icon} ${s.label} Agent`,
-      placeholder: `我是「${s.label}」Agent,${s.desc}…`,
       debug: true,
-      onClose: () => agents.value[i]?.hide(),   // 关闭按钮 → hide(保留历史/生成进程,不卸载)
+      dialog: {
+        drawer: true,             // 抽屉模式:从右滑入 + 遮罩 + 关闭按钮
+        title: `${s.icon} ${s.label} Agent`,
+        placeholder: `我是「${s.label}」Agent,${s.desc}…`,
+        onClose: () => agents.value[i]?.hide(),   // 关闭按钮 → hide(保留历史/生成进程,不卸载)
+      },
     })
     await sdk.mount()
     agents.value[i] = sdk

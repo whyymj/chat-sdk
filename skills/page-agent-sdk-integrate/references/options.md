@@ -10,7 +10,6 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | `systemPrompt` | `string` | built-in default (JSON-operation assistant + reliable write rules) | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). If omitted, a built-in default is used (JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`); passing your own fully overrides it. |
 | `appendReliableWriteRules` | `boolean` | `true` | When `true` (default) and a custom `systemPrompt` is set, auto-append `systemPromptHelpers.reliableWriteRules` to it with a `---` separator (clearly distinguishes user content from SDK-appended write rules; avoids forgetting the write rules). Set `false` to disable. No effect when `systemPrompt` is omitted (default prompt already includes them). |
 | `id` | `string` | random + warn | Stable agent id for multi-agent isolation & persistence. **Must pass a stable value** if you use `storage` or run multiple agents on one page. |
-| `title` / `placeholder` | `string` | — | Dialog title / input placeholder (cosmetic). |
 
 ## UI & mounting
 
@@ -19,6 +18,19 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | `container` | `string \| HTMLElement` | — | Where the built-in dialog mounts. Required when `ui !== false`. |
 | `ui` | `boolean \| 'default'` | `true` | `false` = headless (no built-in dialog; you build UI from `sdk.messages` + `sdk.send`). `'default'` = built-in `ChatDialog`. |
 | `streaming` | `boolean` | `true` | Stream tokens live. `false` = wait for full reply. Headless `sdk.send` always uses invoke (no stream events, but data/message/error still fire). |
+| `dialog` | `DialogConfig` | — | Grouped dialog UI config (recommended form). See `DialogConfig` fields below. |
+
+### `DialogConfig` fields
+
+| Field | Type | Default | Purpose / when |
+|---|---|---|---|
+| `title` | `string` | — | Dialog title (cosmetic). |
+| `placeholder` | `string` | — | Input placeholder (cosmetic). |
+| `drawer` | `boolean` | `false` | Drawer mode: ChatDialog slides in from the right + mask + close button (replaces the collapse arrow). Default `false` (inline, fills container). |
+| `drawerWidth` | `number \| string` | `420` | Drawer mode width (pixels or CSS string, e.g. `500` / `'500px'` / `'40vw'`). Only effective when `drawer: true`. Inline mode width is determined by `container`. |
+| `drawerHidden` | `boolean` | `false` | Drawer mode hidden by default (not shown after `mount`; requires `sdk.show()` to display): for "click button to show chatbox" scenarios. Only effective when `drawer: true`. |
+| `inputRows` | `number` | `2` | Input box rows (visible height). `1` = single row; `2` = 2-row initial height, auto-expands up to max-height:100px; `>2` = taller initial height. |
+| `onClose` | `() => void` | — | Drawer mode close callback (called when mask/close button clicked). Default: `hide()` in drawer mode (keeps agent/history/in-flight generation), `unmount()` otherwise. Pass this to sync external mount state. |
 
 ## Data operation (the core)
 
@@ -39,6 +51,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 |---|---|---|---|
 | `tools` | `Tool[]` | `[]` | Custom tools beyond built-ins. Use `defineTool({ name, description, schema, handler })`. |
 | `skills` | `SkillSpec[]` | `[]` | Progressive-disclosure skills (`defineSkill({ name, description, prompt }`) loaded on demand by the agent. |
+| `skillStorage` | `SkillStoreConfig \| false` | `{ backend: 'indexed' }` | **User-created skill independent persistence** (separate from `storage`). Default indexedDB (persists even when `storage: false`); `false` disables persistence (current session only). `id` manually specifies the same id to share skills across pages/agents; omit for per-agent isolation. |
 | `memory` | `string` | — | AGENTS.md-style persistent instructions injected into every prompt (project conventions, hard rules). |
 | `middleware` | `Middleware[]` | `[]` | Custom middleware appended after built-ins. 8 hooks: `beforeAgent`/`wrapModelCall`/`beforeModel`/`afterModel`/`wrapToolCall`/`afterAgent`/`beforeReturn` + `augmentPrompt`/`compressInput`/`tools`. For interception, instrumentation, prompt enhancement. |
 
@@ -124,13 +137,28 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 
 Runtime subscription via `sdk.hook(handler) => () => void` (multi-listener, cancellable) — see [api.md](api.md).
 
-## Convenience APIs (export / import / usage)
+## Convenience APIs (export / import / usage / user skills)
 
 | API | Purpose | Notes |
 |---|---|---|
 | `sdk.exportData()` | Deep copy of main data `bind` (backup/migration) | Returns `null` if dataOps off / no data; mutating return does not affect original bind |
 | `sdk.importData(json, opts?)` | Replace `bind` entirely (in-place, preserves reactive ref) | Schema-validated by default → `{ok:false,error}` if invalid; `opts.validate:false` skips; `opts.emit:false` suppresses `data_change` |
 | `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` | Accumulated per LLM call; per-round detail via `onEvent('usage')` |
+| `sdk.addSkill(skill)` | Add a user-created skill at runtime | `skill: { name, description, prompt \| getContent \| doc }`. Auto-merges into the skill list, **persists via independent SkillStore** (default indexedDB, separate from `storage` option — even `storage:false` persists skills), and takes effect next round. Same-name overwrites. Requires `capabilities.skills` (default on) + `skillStorage` not `false` for persistence. |
+| `sdk.removeSkill(name)` | Remove a user-created skill by name | Only removes user-created skills (not the ones passed via `skills` option at init). Removes from SkillStore. No-op if not found. |
+| `sdk.listUserSkills()` | List names of user-created skills | Returns `string[]` (only user-created, not init-time skills). Useful for UI panels. |
+| `sdk.getUserSkill(name)` | Read a user-created skill's detail | Returns `{ name, description, content }` or `undefined` if not found. Used by SkillPanel for editing. |
+
+**User-created skills** are skills added at runtime via `sdk.addSkill` (or via the built-in `SkillPanel` UI component). They are persisted via an **independent SkillStore** (default indexedDB), **separate from the `storage` option** — even when `storage: false` (session persistence off), user skills still persist across refreshes. To **share the same set of user skills across pages/agents**, manually specify the same `skillStorage.id`:
+
+```ts
+// Page A
+createChatSdk({ id: 'agent-a', skillStorage: { id: 'shared-skills' }, ... })
+// Page B (different agent, same skill set)
+createChatSdk({ id: 'agent-b', skillStorage: { id: 'shared-skills' }, ... })
+```
+
+Without `skillStorage.id`, skills default to per-agent isolation (`agent::{agentId}`). The built-in `ChatDialog` exposes a "Skill Management" button (header) that opens `SkillPanel` — supports create, **edit** (click a skill to load into the form), and delete. Integrators can also `import { SkillPanel }` directly for custom UIs.
 
 ## vfs (in-memory workspace)
 

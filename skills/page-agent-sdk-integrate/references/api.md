@@ -21,6 +21,10 @@
 | `usage` | `TokenUsage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` (accumulated per LLM call). |
 | `restoreLastCheckpoint()` | `() => boolean` | Restore last good checkpoint (needs `checkpoint` enabled). |
 | `listCheckpoints()` | `() => CheckpointMeta[]` | List available checkpoints. |
+| `addSkill(skill)` | `(skill: { name, description, prompt \| getContent \| doc }) => void` | Add a user-created skill at runtime. Auto-merges into the skill list, persists via **independent SkillStore** (default indexedDB, separate from `storage` option), takes effect next round. Same-name overwrites. Requires `capabilities.skills` (default on) + `skillStorage` not `false` for persistence. |
+| `removeSkill(name)` | `(name: string) => void` | Remove a user-created skill by name (only user-created, not init-time skills). Removes from SkillStore. No-op if not found. |
+| `listUserSkills()` | `() => string[]` | List names of user-created skills (not init-time skills). Useful for UI panels. |
+| `getUserSkill(name)` | `(name: string) => { name, description, content } \| undefined` | Read a user-created skill's detail (for SkillPanel edit). Returns `undefined` if not found. |
 
 ## defineTool (custom tools)
 

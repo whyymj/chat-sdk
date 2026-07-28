@@ -28,6 +28,7 @@ import {
   createMemoryBackend,
   createSessionStore,
 } from '../../backends/storage'
+import { createSkillStore } from '../../backends/skillStore'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
@@ -278,5 +279,63 @@ export async function run(ctx: TestCtx): Promise<void> {
     await s10.flush()
     const snap10 = await s10.load('weblocal', sid10)
     assert(snap10?.memory === 'hello-local', 'backend:local → localStorage save/load round-trip')
+  }
+
+  // ============ SkillStore(独立于 SessionSnapshot 的 skill 持久化)============
+  console.log('\n[skillStore]')
+  {
+    // mock sessionStorage(便于验证持久化 + 跨 storeId 复用)
+    const mockStorage2 = () => {
+      const m = new Map<string, string>()
+      return {
+        get length() { return m.size },
+        key: (i: number) => Array.from(m.keys())[i] ?? null,
+        getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+        setItem: (k: string, v: string) => { m.set(k, v) },
+        removeItem: (k: string) => { m.delete(k) },
+        clear: () => { m.clear() },
+      }
+    }
+    ;(globalThis as any).sessionStorage = mockStorage2()
+
+    // 基本增删改查
+    const ss = createSkillStore({ backend: 'session', id: 'test-skills' })
+    await ss.ready
+    assert((await ss.list()).length === 0, 'SkillStore list 初始为空')
+    await ss.put({ name: 's1', description: 'desc1', content: 'content1' })
+    assert((await ss.list()).length === 1, 'SkillStore put → list 长度 +1')
+    const got = await ss.get('s1')
+    assert(got?.description === 'desc1' && got?.content === 'content1', 'SkillStore get → 返回详情')
+    // 同名覆盖(upsert)
+    await ss.put({ name: 's1', description: 'desc1-改', content: 'content1-v2' })
+    assert((await ss.list()).length === 1, 'SkillStore put 同名 → 覆盖不新增')
+    assert((await ss.get('s1'))?.description === 'desc1-改', 'SkillStore put 同名 → 描述更新')
+    // remove
+    assert((await ss.remove('s1')) === true, 'SkillStore remove 存在的 → true')
+    assert((await ss.remove('nope')) === false, 'SkillStore remove 不存在 → false')
+    assert((await ss.list()).length === 0, 'SkillStore remove 后 list 为空')
+
+    // 跨 storeId 隔离 + 同 storeId 复用
+    await ss.put({ name: 'shared', description: '共享', content: 'SHARED' })
+    const ss2 = createSkillStore({ backend: 'session', id: 'other-skills' })
+    await ss2.ready
+    assert((await ss2.list()).length === 0, 'SkillStore 不同 id → 隔离(空)')
+    const ss3 = createSkillStore({ backend: 'session', id: 'test-skills' })
+    await ss3.ready
+    const list3 = await ss3.list()
+    assert(list3.length === 1 && list3[0].name === 'shared', 'SkillStore 同 id → 复用同一套(跨实例/跨页面)')
+
+    // clear 清空当前 id
+    await ss3.clear()
+    assert((await ss3.list()).length === 0, 'SkillStore clear → 清空当前 id 下全部')
+
+    // 降级:无 indexedDB → ready=false(内存,非持久)
+    const ssMem = createSkillStore({ backend: 'indexed', id: 'fallback' })
+    const okMem = await ssMem.ready
+    assert(okMem === false, 'SkillStore 无 indexedDB → 降级 memory(ready=false)')
+
+    // backend:memory → 显式内存(ready=false)
+    const ssExplicit = createSkillStore({ backend: 'memory', id: 'explicit' })
+    assert((await ssExplicit.ready) === false, 'SkillStore backend:memory → ready=false(非持久)')
   }
 }

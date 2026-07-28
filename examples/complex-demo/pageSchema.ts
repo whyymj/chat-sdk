@@ -261,5 +261,5 @@ children 是组件数组,可任意嵌套(支持多层),用 jsonPath 增量操作
 - 调样式用根级 style 对象(如 { color: "red" }),不要写 CSS 字符串
 - 改业务字段用 props 子对象(如 write({ path, value, patch:{ op:'set', jsonPath:'props.text' } }))
 - 校验失败会返回具体错误,按提示修正 type/字段后重试
-- **id 无需手动传**:append 新组件时若不传 id,集成方拦截器会自动补充 `cmp-<时间戳>-<序号>`,你只需关注 type/props/style
+- **id 无需手动传**:append 新组件时若不传 id,集成方拦截器会自动补充 \`cmp-<时间戳>-<序号>\`,你只需关注 type/props/style
 `

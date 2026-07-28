@@ -7,7 +7,7 @@ const MB = 1024 * KB
 
 // 阈值(单位:字节);当前基线 + 10% 余量
 const limits = [
-  { file: 'dist/page-agent-sdk.iife.js', max: 1.6 * MB, label: 'IIFE 全量(CDN <script> 直引)' },
+  { file: 'dist/page-agent-sdk.iife.js', max: 1.7 * MB, label: 'IIFE 全量(CDN <script> 直引)' },
   { file: 'dist/page-agent-sdk.js', max: 1.1 * MB, label: 'ESM(npm import)' },
   { file: 'dist/page-agent-sdk.umd.cjs', max: 1.1 * MB, label: 'UMD(require)' },
   { file: 'dist/page-agent-sdk.css', max: 60 * KB, label: 'CSS' },

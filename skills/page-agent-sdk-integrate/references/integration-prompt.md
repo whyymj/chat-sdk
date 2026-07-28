@@ -81,8 +81,12 @@ const sdk = createChatSdk({
     model: 'deepseek-chat',
     temperature: 0.3,                          // low temp recommended for large JSON ops
   },
-  // [UI form: built-in dialog (default) / drawer mode (drawer:true) / headless (ui:false)]
-  drawer: true,                                // drawer mode: right slide-in + mask; close defaults to hide() preserving history
+  // [UI form: built-in dialog (default) / drawer mode (dialog.drawer:true) / headless (ui:false)]
+  dialog: {
+    drawer: true,                                // drawer mode: right slide-in + mask; close defaults to hide() preserving history
+    title: '[Business] Agent',
+    placeholder: 'Try: [example operation]',
+  },
   // systemPrompt: describe business + data structure; reliableWriteRules auto-appended with '---' separator (default true)
   systemPrompt: 'You are a [business] assistant. Main data = { title, items[] }. To edit, change title or items (add/remove/edit items, adjust fields); [page/UI] updates live. See load_skill("[skill-name]") for fields.',
   appendReliableWriteRules: true,              // default true, auto-appends reliable write rules (read-before-write, fields per describe, retry on validation error, prefer incremental patch)
@@ -97,8 +101,6 @@ const sdk = createChatSdk({
     }),
   ],
   debug: true,
-  title: '[Business] Agent',
-  placeholder: 'Try: [example operation]',
   // onEvent: for non-reactive bind or new-property cases, use data_change to trigger re-render
   onEvent(e) {
     if (e.type === 'data_change') {
@@ -172,6 +174,6 @@ Per your business scenario, fill in `systemPrompt` / `skills` / `data.schema`:
 - **CMS batch ops**: `eval_script` loops; `search_data` filter; `write` patch targeted edits
 - **Ops config console**: `approval:{tools:['write']}` human-confirm; `capabilities.verify:true` write-back read; `checkpoint`
 - **AI-native assistant**: `capabilities:{dataOps:false,fetch:false}` + custom `tools` (your product API)
-- **Multi-agent on one page**: same `id` + `shareContext:true` → multiple dialogs share one `AgentCore`; or independent `id`s + `drawer:true` + `hide`/`show` for exclusive switching
+- **Multi-agent on one page**: same `id` + `shareContext:true` → multiple dialogs share one `AgentCore`; or independent `id`s + `dialog.drawer:true` + `hide`/`show` for exclusive switching
 - **MCP integration**: `mcp:[{transport,url}]` remote tool servers; `@modelcontextprotocol/sdk` optional peerDep
 - **Dynamic/lazy-loaded schema**: `sdk.setData({ schema, bind })` on component mount to swap main data; tools pick up immediately, no rebuild

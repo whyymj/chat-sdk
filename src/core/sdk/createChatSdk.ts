@@ -50,6 +50,7 @@ import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
+import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../utils/rounds'
@@ -104,6 +105,14 @@ export interface ChatSdkOptions {
   tools?: StructuredToolInterface[]
   /** 声明式 skill(渐进式披露) */
   skills?: SkillSpec[]
+  /**
+   * 用户创建 skill 的独立持久化存储(与 `storage` 选项分离)。
+   * - 默认:`{ backend: 'indexed' }`(即使 `storage:false` 也持久化;浏览器不可用降级内存)
+   * - `id`:**手动指定同一 id 即可跨页面/跨 agent 复用同一套用户 skill**;不传则默认按 `agentId` 隔离
+   * - `false`:关闭 skill 持久化(仅当前会话内存有效,刷新丢失)
+   * - `backend`:'indexed'(默认)/ 'local' / 'session' / 'memory'
+   */
+  skillStorage?: SkillStoreConfig | false
   /** AGENTS.md 风格持久指令(加载时优先于持久化的 memory) */
   memory?: string
   /** 主数据对象(单对象;schema 校验 + bind 直连,工具直接读写 bind,不挂 window) */
@@ -223,11 +232,24 @@ export interface ChatSdkOptions {
   onEvent?: SdkEventHandler
   /** 流式输出(默认 true 逐字流式);false 时等整段回复再显示(底层仍 stream 聚合) */
   streaming?: boolean
-  /** 对话框 UI 文案 */
+  /** 对话框 UI 配置(title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose 归组) */
+  dialog?: DialogConfig
+}
+
+/** 对话框 UI 配置(归组写法,推荐) */
+export interface DialogConfig {
+  /** 对话框标题 */
   title?: string
+  /** 输入框 placeholder */
   placeholder?: string
   /** 抽屉模式:ChatDialog 从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮触发 unmount(带退出动画)。默认 false(inline 占满 container) */
   drawer?: boolean
+  /** 抽屉模式宽度(像素或 CSS 字符串,如 500 / '500px' / '40vw');默认 420px。仅 drawer:true 生效。inline 模式宽度由 container 决定 */
+  drawerWidth?: number | string
+  /** 抽屉模式默认隐藏(mount 后不显示,需 sdk.show() 才显示):适合「点击按钮才出现聊天框」场景。默认 false(mount 立即显示)。仅 drawer:true 生效 */
+  drawerHidden?: boolean
+  /** 输入框行数(可见高度);默认 2(2 行初始高度,自动扩展至 max-height:100px)。设 1 则单行;设 >2 则更高 */
+  inputRows?: number
   /** 抽屉模式关闭回调:点击遮罩/关闭按钮时调用(默认调 unmount 带退出动画)。集成方需同步外部挂载状态时传此选项覆盖默认行为 */
   onClose?: () => void
 }
@@ -291,6 +313,20 @@ export interface ChatSdk {
    */
   setSkills(skills: SkillSpec[]): void
   /**
+   * 添加用户创建的 skill(持久化,跨刷新恢复;同名覆盖)。触发 controller 合并 initialSkills + userSkills + infoTick 刷新。
+   * 需开启 skills(默认开);关闭时 warn 并忽略
+   */
+  addSkill(skill: SkillSpec): void
+  /**
+   * 删除用户创建的 skill(仅删用户创建的,不删集成方 initialSkills)。返回是否删除成功。
+   * 需开启 skills(默认开);关闭时 warn 并返回 false
+   */
+  removeSkill(name: string): boolean
+  /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
+  listUserSkills(): string[]
+  /** 读取用户创建的 skill 详情(返回 {name, description, content};不存在返回 undefined) */
+  getUserSkill(name: string): { name: string; description: string; content: string } | undefined
+  /**
    * 清 skill 全文缓存(动态 skill 内容变化时主动失效)。不传 name 清全部;传 name 清指定。
    * 下次 load_skill 重新 getContent/readSkillDoc 取最新。需开启 skills(默认开)
    */
@@ -321,6 +357,13 @@ function resolveStorage(storage: StorageBackendType | StorageConfig | false | un
   if (typeof storage === 'string') return createSessionStore({ backend: storage })
   if (storage.enabled === false) return null
   return createSessionStore(storage)
+}
+
+/**
+ * 解析对话框配置:从 options.dialog 读取归组配置(扁平写法已移除)。
+ */
+function resolveDialogConfig(opts: ChatSdkOptions): DialogConfig {
+  return opts.dialog ?? {}
 }
 
 /** 判定 llm 选项是模型实例(BaseChatModel)还是配置对象(LLMConfig) */
@@ -385,6 +428,14 @@ interface AgentCore {
   send(message: string): Promise<string>
   switchSession(sessionId?: string): Promise<string>
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
+  /** 添加用户创建的 skill(持久化 + 入 controller;同名覆盖) */
+  addSkill(skill: SkillSpec): void
+  /** 删除用户创建的 skill(仅删用户创建的);返回是否删除成功 */
+  removeSkill(name: string): boolean
+  /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
+  listUserSkills(): string[]
+  /** 读取用户创建的 skill 详情(返回 {name, description, content};不存在返回 undefined) */
+  getUserSkill(name: string): { name: string; description: string; content: string } | undefined
   /** 实例 unmount 时调;引用计数归零才真销毁(store.dispose + 移出注册表) */
   release(): void
   /** 冲突解决:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict,工具继续 */
@@ -760,6 +811,57 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   }
 
   let skillsMw: ReturnType<typeof createSkillsMiddleware> | undefined
+  // 用户在 ChatDialog 创建的 skill(独立持久化;与集成方 initialSkills 合并后给 controller,同名 userSkills 覆盖)
+  let userSkills: SkillSpec[] = []
+  /** SkillSpec ↔ PersistedSkill 转换:持久化时把 getContent 闭包的 content 提取为字符串;恢复时还原为 getContent */
+  const toPersistedSkill = (s: SkillSpec): PersistedSkill => ({
+    name: s.name,
+    description: s.description,
+    // 用户创建的 skill 用 getContent 存 content;doc 类 skill 由集成方代码控制,不持久化
+    content: typeof s.getContent === 'function' ? (s.getContent() as string) : '',
+  })
+  const toSkillSpec = (p: PersistedSkill): SkillSpec => ({
+    name: p.name,
+    description: p.description,
+    getContent: () => p.content,
+  })
+
+  // ===== Skill 独立持久化(与 storage 选项分离;默认 indexedDB,可手动指定 id 跨页复用)=====
+  const skillStore: SkillStore | null =
+    options.skillStorage === false ? null : createSkillStore({
+      ...(typeof options.skillStorage === 'object' ? options.skillStorage : {}),
+      id: options.skillStorage && typeof options.skillStorage === 'object' && options.skillStorage.id
+        ? options.skillStorage.id
+        : `agent::${agentId}`,
+    })
+
+  /** 合并 initialSkills + userSkills(同名 userSkills 覆盖)→ controller.set;持久化 userSkills 到 SkillStore */
+  const syncUserSkills = () => {
+    const ctrl = skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null
+    if (ctrl) {
+      const initial = (options.skills || []).filter((s) => !userSkills.some((u) => u.name === s.name))
+      ctrl.set([...initial, ...userSkills])
+    }
+    core.infoTick.value++
+  }
+  /** 从 SkillStore 加载用户 skill 到内存 + controller(挂载时调) */
+  const loadUserSkillsFromStore = async () => {
+    if (!skillStore) return
+    try {
+      const persisted = await skillStore.list()
+      if (persisted.length) {
+        userSkills = persisted.map(toSkillSpec)
+        const ctrl = skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null
+        if (ctrl) {
+          const initial = (options.skills || []).filter((s) => !userSkills.some((u) => u.name === s.name))
+          ctrl.set([...initial, ...userSkills])
+        }
+        core.infoTick.value++
+      }
+    } catch {
+      /* skillStore 读取失败静默(降级内存,当前会话仍可用) */
+    }
+  }
   const middlewares = [
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
@@ -832,13 +934,46 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     usage,
     emit,
 
-    /** 持久化恢复:灌入 messages / vfs / todos / memory(hydrate 不触发 vfs save) */
+    /** 持久化恢复:灌入 messages / vfs / todos / memory / userSkills(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
       if (snap.messages?.length) messages.push(...snap.messages)
       if (snap.vfs && vfsStore.hydrate) vfsStore.hydrate(snap.vfs)
       if (snap.todos?.length) todosMw.reset(snap.todos)
       // memory:options.memory 优先(非空覆盖),否则用持久化的
       if (snap.memory && !options.memory) memoryMw.reset(snap.memory)
+      // 注:用户创建的 skill 不再随 SessionSnapshot 持久化,由独立 SkillStore 管理(见 loadUserSkillsFromStore)
+    },
+
+    /** 添加用户创建的 skill(持久化到 SkillStore + 入 controller;同名覆盖) */
+    addSkill(skill: SkillSpec): void {
+      const idx = userSkills.findIndex((s) => s.name === skill.name)
+      if (idx >= 0) userSkills[idx] = skill
+      else userSkills.push(skill)
+      syncUserSkills()
+      if (skillStore) void skillStore.put(toPersistedSkill(skill))
+    },
+    /** 删除用户创建的 skill(仅删用户创建的;从 SkillStore 移除);返回是否删除成功 */
+    removeSkill(name: string): boolean {
+      const idx = userSkills.findIndex((s) => s.name === name)
+      if (idx < 0) return false
+      userSkills.splice(idx, 1)
+      syncUserSkills()
+      if (skillStore) void skillStore.remove(name)
+      return true
+    },
+    /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
+    listUserSkills(): string[] {
+      return userSkills.map((s) => s.name)
+    },
+    /** 读取用户创建的 skill 详情(SkillPanel 编辑时调) */
+    getUserSkill(name: string): { name: string; description: string; content: string } | undefined {
+      const s = userSkills.find((u) => u.name === name)
+      if (!s) return undefined
+      return {
+        name: s.name,
+        description: s.description,
+        content: typeof s.getContent === 'function' ? (s.getContent() as string) : '',
+      }
     },
 
     /** 一轮结束后:裁内存历史(防 OOM)+ 安排持久化(debounced)。落盘等待由 onPersist/send 显式 await flush 保证 */
@@ -927,6 +1062,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           void store.flush()
           store.dispose()
         }
+        if (skillStore) skillStore.dispose()
         const closers = core.mcpClosers.splice(0)
         if (closers.length) void Promise.allSettled(closers.map((c) => c()))
         sharedCores.delete(agentId)
@@ -1003,6 +1139,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     if (options.memory) void store.save(agentId, core.sessionId, { memory: options.memory })
   }
 
+  /** Skill 独立加载:从 SkillStore 恢复用户创建的 skill(与 storage 选项分离,即使 storage:false 也持久化) */
+  async function loadUserSkills(): Promise<void> {
+    await loadUserSkillsFromStore()
+  }
+
   /**
    * 内存对话轮数上限:超限把最旧轮次压缩为一条摘要 system 消息(原地 splice,保持共享响应式引用)。
    * storage:false 也生效 —— 纯内存历史累积的 OOM 兜底。
@@ -1030,6 +1171,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 初始化:解析会话 + 恢复 + 构造 agent(异步,不阻塞 buildCore 返回)
   core.initDone = (async (): Promise<void> => {
     await resolveAndLoad()
+    // Skill 独立加载(与 storage 选项分离;即使 storage:false 也从 SkillStore 恢复)
+    await loadUserSkills()
     // MCP:连所有 server(故障隔离),工具注入 allTools(createAgent 前 —— 构造后 bindTools 固化)
     if (options.mcp?.length) {
       const results = await Promise.allSettled(options.mcp.map((c) => connectMcp(c)))
@@ -1106,6 +1249,9 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   // ===== 每实例:渲染 + 事件监听(不共享)=====
   let vueApp: VueApp | null = null
   let mountEl: HTMLElement | null = null
+
+  // 对话框 UI 配置(归组写法;mount 渲染 ChatDialog 时读取)
+  const dialogCfg = resolveDialogConfig(options)
   let flushHandler: (() => void) | null = null
   let visHandler: (() => void) | null = null
 
@@ -1149,8 +1295,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
               }
               return core.agent!.invoke(msgs, signal)
             },
-            title: options.title,
-            placeholder: options.placeholder,
+            title: dialogCfg.title,
+            placeholder: dialogCfg.placeholder,
             debugLogs: debugLogsRef.value,
             initialMessages: core.messages,
             getInfo: () => core.getInfo(),
@@ -1175,13 +1321,25 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
             infoTick: core.infoTick,  // 响应式 tick:setSkills/setData 后 ++,DebugDrawer watch 后重新拉 getInfo() 实时刷新 Agent 信息
             getSkillContent: core.skillsController ? (name: string) => core.skillsController!.getContent(name) : undefined,  // DebugDrawer 展开 skill 时调,取 skill 全文(优先缓存)
-            drawer: options.drawer === true,
-            onClose: options.onClose ?? (options.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
+            onAddSkill: core.skillsController ? (skill: import('../harness/skills').SkillSpec) => core.addSkill(skill) : undefined,  // ChatDialog 创建 skill 面板提交时调
+            onRemoveSkill: core.skillsController ? (name: string) => core.removeSkill(name) : undefined,  // ChatDialog 删除用户 skill 时调
+            getUserSkillNames: core.skillsController ? () => core.listUserSkills() : undefined,  // ChatDialog 列出用户创建的 skill 名(刷新面板)
+            onGetSkill: core.skillsController ? (name: string) => core.getUserSkill(name) : undefined,  // ChatDialog 编辑 skill 时读取详情
+            drawer: dialogCfg.drawer === true,
+            drawerWidth: dialogCfg.drawerWidth,
+            drawerHidden: dialogCfg.drawerHidden === true,
+            inputRows: dialogCfg.inputRows,
+            onClose: dialogCfg.onClose ?? (dialogCfg.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
           })
       },
     })
     vueApp = createApp(Wrapper)
     vueApp.mount(el)
+
+    // 抽屉模式默认隐藏:mount 后不显示,需 sdk.show() 才出现(「点击按钮才出现聊天框」场景)
+    if (dialogCfg.drawer === true && dialogCfg.drawerHidden === true) {
+      hide()
+    }
 
     // 刷新/切页兜底 flush(防丢 debounce 内的待写)
     if (core.store) {
@@ -1287,6 +1445,26 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       ctrl.set(skills)
       core.infoTick.value++  // 触发 DebugDrawer 的 Agent 信息重新拉取(实时反映 skills 变更)
     },
+    /** 添加用户创建的 skill(持久化,跨刷新恢复;同名覆盖);触发 controller 合并 + infoTick 刷新 */
+    addSkill: (skill: SkillSpec) => {
+      if (!core.skillsController) {
+        console.warn('[page-agent-sdk] addSkill 忽略:skills 已关闭(capabilities.skills:false)')
+        return
+      }
+      core.addSkill(skill)
+    },
+    /** 删除用户创建的 skill(仅删用户创建的,不删集成方 initialSkills);返回是否删除成功 */
+    removeSkill: (name: string): boolean => {
+      if (!core.skillsController) {
+        console.warn('[page-agent-sdk] removeSkill 忽略:skills 已关闭(capabilities.skills:false)')
+        return false
+      }
+      return core.removeSkill(name)
+    },
+    /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
+    listUserSkills: (): string[] => core.listUserSkills(),
+    /** 读取用户创建的 skill 详情(SkillPanel 编辑时调) */
+    getUserSkill: (name: string) => core.getUserSkill(name),
     /** 清 skill 全文缓存(动态 skill 内容变化时主动失效);不传清全部,传 name 清指定 */
     invalidateSkillCache: (name?: string) => {
       const ctrl = core.skillsController

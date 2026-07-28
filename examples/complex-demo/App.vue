@@ -67,8 +67,10 @@ onMounted(() => {
       }),
     ],
     debug: true,
-    title: '复杂页面 Agent',
-    placeholder: '试试:加一个商品卡片 / 标题改成红色 / 轮播换成 3 张图 / 商品瀑布流改成 4 列 …',
+    dialog: {
+      title: '复杂页面 Agent',
+      placeholder: '试试:加一个商品卡片 / 标题改成红色 / 轮播换成 3 张图 / 商品瀑布流改成 4 列 …',
+    },
   })
   agent.mount()
 })
@@ -88,11 +90,17 @@ onUnmounted(() => agent?.unmount())
   </div>
 </template>
 
+<style>
+/* 全局重置:消除 body 默认 margin + 防止 100vw/100vh 导致页面级滚动条
+   (100vw 含竖向滚动条宽度 → 横向溢出;body margin + 100vh → 竖向溢出 → 滚动条遮挡聊天输入框) */
+html, body, #app { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+</style>
+
 <style scoped>
 .layout {
   display: flex;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
 }
 .pane-left {
@@ -106,6 +114,8 @@ onUnmounted(() => agent?.unmount())
   flex: 1;
   border-left: 1px solid #e5e7eb;
   background: #fff;
+  /* 防止 pane-right 自身溢出导致滚动条遮挡 chat-footer */
+  overflow: hidden;
 }
 .pane-right > :deep(.chat-dialog) {
   width: 100%;

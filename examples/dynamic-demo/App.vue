@@ -136,8 +136,10 @@ onMounted(() => {
       }
     },
     debug: true,
-    title: '动态组件(单主数据)',
-    placeholder: '先点左侧「加载」加几个组件,再让我改(如:把 banner-1 标题改成「限时特惠」)',
+    dialog: {
+      title: '动态组件(单主数据)',
+      placeholder: '先点左侧「加载」加几个组件,再让我改(如:把 banner-1 标题改成「限时特惠」)',
+    },
   })
   agent.mount()
   refreshRegistered()

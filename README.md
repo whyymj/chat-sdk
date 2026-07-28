@@ -147,7 +147,7 @@ resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
 // storage
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI (reuse when headless)
-ChatDialog, MessageContent, CodePreview, useChat
+ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 // types (omitted): ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataConfig, AgentMessage, StreamEvent …
 ```
 
@@ -181,9 +181,19 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **Robustness/other** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | Model retries / per-round tool concurrency / max rounds |
 | | `mcp` | `McpServerConfig[]` | Remote MCP servers (http/sse/websocket) |
 | | `middleware` | `Middleware[]` | Custom middleware (appended to built-in stack) |
-| | `streaming` / `title` / `placeholder` / `debug` | — | UI/debug |
-| | `drawer` | `boolean` · default `false` | Drawer mode: ChatDialog slides in from right + mask + close button (replaces collapse arrow); clicking mask/close defaults to `hide` (keeps agent/history/in-flight generation; `mount`/`show` resumes). Pass `onClose` to customize |
-| | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
+| | `streaming` / `debug` | — | UI/debug |
+| | `dialog` | `DialogConfig` | Grouped dialog UI config; see `DialogConfig` fields below |
+
+#### `DialogConfig` fields
+
+| Field | Type · default | Purpose |
+|---|---|---|
+| `title` / `placeholder` | `string` | Dialog title / input placeholder (cosmetic) |
+| `drawer` | `boolean` · default `false` | Drawer mode: ChatDialog slides in from right + mask + close button (replaces collapse arrow); clicking mask/close defaults to `hide` (keeps agent/history/in-flight generation; `mount`/`show` resumes). Pass `onClose` to customize |
+| `drawerWidth` | `number \| string` · default `420` | Drawer mode width (pixels or CSS string, e.g. `500` / `'500px'` / `'40vw'`); only effective when `drawer: true`; inline mode width determined by `container` |
+| `drawerHidden` | `boolean` · default `false` | Drawer mode hidden by default (not shown after `mount`; requires `sdk.show()` to display): for "click button to show chatbox" scenarios; only effective when `drawer: true` |
+| `inputRows` | `number` · default `2` | Input box rows (visible height); `1` = single row; `2` = 2-row initial height, auto-expands up to max-height:100px; `>2` = taller initial height |
+| `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
 
 ### Extension points
 
@@ -388,6 +398,11 @@ createChatSdk({
 // sdk.importData(json)          // replace bind in-place (preserves reactive ref; schema-validated by default)
 // sdk.setSkills(skills)         // runtime swap the entire skill list (same-name overwrites; clears cache, index re-renders next round)
 // sdk.invalidateSkillCache(name?)  // invalidate skill full-text cache (proactive; omit name to clear all)
+// sdk.addSkill(skill)          // user-created skill (independent SkillStore, default indexedDB, separate from storage; same-name overwrites; ChatDialog has a built-in Skill panel)
+// sdk.removeSkill(name)        // remove a user-created skill (only user-created, not integrator initialSkills)
+// sdk.listUserSkills()         // list user-created skill names
+// sdk.getUserSkill(name)       // read a user-created skill's detail (for SkillPanel editing)
+// skillStorage: { id: 'shared' }  // manually specify the same id to share the same skill set across pages/agents
 // sdk.usage                     // cumulative token usage {prompt_tokens, completion_tokens, total_tokens}
 // sdk.hide() / sdk.show()      // drawer mode hide/show (keeps agent/history/in-flight generation; mount after hide resumes via show, no rebuild)
 ```
@@ -441,8 +456,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 461 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 151 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 474 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 173 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

@@ -147,7 +147,7 @@ resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
 // 存储
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI(headless 自建 UI 复用)
-ChatDialog, MessageContent, CodePreview, useChat
+ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 // 类型(略):ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataConfig, AgentMessage, StreamEvent …
 ```
 
@@ -181,9 +181,19 @@ ChatDialog, MessageContent, CodePreview, useChat
 | **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | 模型重试 / 同轮工具并发 / 最大轮次 |
 | | `mcp` | `McpServerConfig[]` | 远程 MCP server（http/sse/websocket） |
 | | `middleware` | `Middleware[]` | 自定义中间件（拼到内置栈末尾） |
-| | `streaming` / `title` / `placeholder` / `debug` | — | UI/调试 |
-| | `drawer` | `boolean` · 默认 `false` | 抽屉模式:ChatDialog 从右滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点遮罩/关闭按钮默认 `hide`(保留 agent/历史/生成进程,再 `mount`/`show` 恢复),传 `onClose` 自定义 |
-| | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
+| | `streaming` / `debug` | — | UI/调试 |
+| | `dialog` | `DialogConfig` | 对话框 UI 归组配置;字段见下方 `DialogConfig` |
+
+#### `DialogConfig` 字段
+
+| 字段 | 类型 · 默认 | 用途 |
+|---|---|---|
+| `title` / `placeholder` | `string` | 对话框标题 / 输入框 placeholder(装饰性) |
+| `drawer` | `boolean` · 默认 `false` | 抽屉模式:ChatDialog 从右滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点遮罩/关闭按钮默认 `hide`(保留 agent/历史/生成进程,再 `mount`/`show` 恢复),传 `onClose` 自定义 |
+| `drawerWidth` | `number \| string` · 默认 `420` | 抽屉模式宽度(像素或 CSS 字符串,如 `500` / `'500px'` / `'40vw'`);仅 `drawer:true` 生效;inline 模式宽度由 `container` 决定 |
+| `drawerHidden` | `boolean` · 默认 `false` | 抽屉模式默认隐藏(`mount` 后不显示,需 `sdk.show()` 才出现):适合「点击按钮才出现聊天框」场景;仅 `drawer:true` 生效 |
+| `inputRows` | `number` · 默认 `2` | 输入框行数(可见高度);`1` = 单行;`2` = 2 行初始高度,自动扩展至 max-height:100px;`>2` = 更高初始高度 |
+| `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
 
 ### 扩展点
 
@@ -333,6 +343,11 @@ createChatSdk({
 // sdk.importData(json)          // 整体替换 bind(就地还原保留 reactive 引用,默认经 schema 校验)
 // sdk.setSkills(skills)         // 运行时替换整个 skill 列表(同名覆盖;清缓存,下轮索引重渲染)
 // sdk.invalidateSkillCache(name?)  // 清 skill 全文缓存(动态 skill 内容变化时主动失效)
+// sdk.addSkill(skill)          // 用户创建 skill(独立 SkillStore 持久化,默认 indexedDB,与 storage 分离;同名覆盖;ChatDialog 内置 Skill 管理面板)
+// sdk.removeSkill(name)        // 删除用户创建的 skill(仅删用户创建的,不删集成方 initialSkills)
+// sdk.listUserSkills()         // 列出用户创建的 skill 名
+// sdk.getUserSkill(name)       // 读取用户创建的 skill 详情(SkillPanel 编辑用)
+// skillStorage: { id: 'shared' }  // 手动指定同一 id → 跨页面/跨 agent 复用同一套用户 skill
 // sdk.usage                     // 累计 token 用量 {prompt_tokens, completion_tokens, total_tokens}
 // sdk.hide() / sdk.show()      // 抽屉模式隐藏/显示(保留 agent/历史/生成进程;hide 后再 mount 直接 show 不重建)
 ```
@@ -386,8 +401,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 461 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 151 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 474 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 173 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

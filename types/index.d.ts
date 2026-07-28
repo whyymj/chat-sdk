@@ -137,6 +137,7 @@ export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url:
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
 export declare const MessageContent: DefineComponent<any>;
 export declare const CodePreview: DefineComponent<any>;
+export declare const SkillPanel: DefineComponent<any>;
 export declare function useChat(opts?: any): any;
 
 // ===== 框架无关 SDK(页面内 Agent)=====
@@ -301,6 +302,15 @@ export interface StorageConfig {
   evictionWatermark?: number;
   debounceMs?: number;
 }
+/** Skill 独立持久化存储配置(与 storage 选项分离) */
+export interface SkillStoreConfig {
+  /** 存储 id(命名空间)。手动指定同一 id 即可跨页面/跨 agent 复用同一套用户 skill;不传默认按 agentId 隔离 */
+  id?: string;
+  /** 后端类型,默认 'indexed'(大容量、跨刷新);'local' 跨页持久;'session' 刷新保留关页清;'memory' 纯内存降级 */
+  backend?: StorageBackendType;
+  /** DB 命名空间,默认 'chat-sdk'(与 SessionStore 同库,不同 key 前缀) */
+  dbName?: string;
+}
 export interface SessionMeta {
   agentId: string;
   sessionId: string;
@@ -362,6 +372,8 @@ export interface ChatSdkOptions {
   appendReliableWriteRules?: boolean;
   tools?: any[];
   skills?: SkillSpec[];
+  /** 用户创建 skill 的独立持久化存储(与 storage 选项分离)。默认 `{ backend: 'indexed' }`(即使 storage:false 也持久化);`false` 关闭;`id` 手动指定同一 id 可跨页面/跨 agent 复用 */
+  skillStorage?: SkillStoreConfig | false;
   memory?: string;
   data?: DataConfig;
   permissions?: PermissionRule[];
@@ -430,11 +442,19 @@ export interface ChatSdkOptions {
   onEvent?: SdkEventHandler;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;
+  /** Dialog UI config (title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose grouped) */
+  dialog?: DialogConfig;
+}
+
+/** Dialog UI config (grouped form, recommended) */
+export interface DialogConfig {
   title?: string;
   placeholder?: string;
-  /** Drawer mode: ChatDialog slides in from the right + mask + close button (replaces the collapse arrow); clicking mask/close triggers unmount (with exit animation). Default false (inline, fills container). */
   drawer?: boolean;
-  /** Drawer mode close callback: called when mask/close button clicked (default calls unmount with exit animation). Pass this to sync external mount state. */
+  drawerWidth?: number | string;
+  drawerHidden?: boolean;
+  /** Input box rows (visible height); default 2 (2-row initial height, auto-expands up to max-height:100px). 1 = single row; >2 = taller. */
+  inputRows?: number;
   onClose?: () => void;
 }
 
@@ -467,6 +487,14 @@ export interface ChatSdk {
    * 清空 skill 全文缓存与本轮已加载记录,下次 load_skill 重新取最新全文(含 vfs doc)。需开启 skills(默认开)
    */
   setSkills(skills: SkillSpec[]): void;
+  /** 添加用户创建的 skill(持久化,跨刷新恢复;同名覆盖)。需开启 skills(默认开) */
+  addSkill(skill: SkillSpec): void;
+  /** 删除用户创建的 skill(仅删用户创建的,不删集成方 initialSkills)。返回是否删除成功 */
+  removeSkill(name: string): boolean;
+  /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
+  listUserSkills(): string[];
+  /** 读取用户创建的 skill 详情(返回 {name, description, content};不存在返回 undefined) */
+  getUserSkill(name: string): { name: string; description: string; content: string } | undefined;
   /**
    * 清 skill 全文缓存(动态 skill 内容变化时主动失效)。不传 name 清全部;传 name 清指定。
    * 下次 load_skill 重新 getContent/readSkillDoc 取最新。需开启 skills(默认开)
@@ -545,6 +573,23 @@ export declare function createSessionStore(config?: StorageConfig): SessionStore
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
 export declare function isQuotaError(err: unknown): boolean;
+/** 创建 Skill 独立持久化存储(与 storage 选项分离;默认 indexedDB,可手动指定 id 跨页复用) */
+export declare function createSkillStore(config?: SkillStoreConfig): SkillStore;
+export interface SkillStore {
+  ready: Promise<boolean>;
+  list(): Promise<PersistedSkill[]>;
+  get(name: string): Promise<PersistedSkill | undefined>;
+  put(skill: PersistedSkill): Promise<void>;
+  remove(name: string): Promise<boolean>;
+  clear(): Promise<void>;
+  dispose(): void;
+}
+/** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串) */
+export interface PersistedSkill {
+  name: string;
+  description: string;
+  content: string;
+}
 
 // ============ 大 JSON 查询/搜索/沙箱脚本(dataSlotQuery)============
 export interface JpNode {

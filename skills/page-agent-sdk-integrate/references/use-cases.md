@@ -275,9 +275,9 @@ const boxB = document.createElement('div'); document.body.appendChild(boxB)
 const boxC = document.createElement('div'); document.body.appendChild(boxC)
 
 const agents = [
-  createChatSdk({ id: 'agent-page',  container: boxA, drawer: true, storage: 'memory', llm: LLM, data: { schema: pageSchema,  bind: pageObj  }, systemPrompt: '页面构建助手…' }),
-  createChatSdk({ id: 'agent-copy',  container: boxB, drawer: true, storage: 'memory', llm: LLM, data: { schema: copySchema,  bind: copyObj  }, systemPrompt: '文案优化助手…' }),
-  createChatSdk({ id: 'agent-stats', container: boxC, drawer: true, storage: 'memory', llm: LLM, data: { schema: statsSchema, bind: statsObj }, systemPrompt: '数据分析助手…' }),
+  createChatSdk({ id: 'agent-page',  container: boxA, dialog: { drawer: true }, storage: 'memory', llm: LLM, data: { schema: pageSchema,  bind: pageObj  }, systemPrompt: '页面构建助手…' }),
+  createChatSdk({ id: 'agent-copy',  container: boxB, dialog: { drawer: true }, storage: 'memory', llm: LLM, data: { schema: copySchema,  bind: copyObj  }, systemPrompt: '文案优化助手…' }),
+  createChatSdk({ id: 'agent-stats', container: boxC, dialog: { drawer: true }, storage: 'memory', llm: LLM, data: { schema: statsSchema, bind: statsObj }, systemPrompt: '数据分析助手…' }),
 ]
 await Promise.all(agents.map(a => a.mount()))  // three independent agents ready in parallel
 agents.slice(1).forEach(a => a.hide())         // show only the first initially

@@ -170,7 +170,7 @@ createChatSdk({
   middleware: [...],
 
   // UI/debug
-  streaming: true, title: '...', placeholder: '...', debug: false,
+  streaming: true, dialog: { title: '...', placeholder: '...' }, debug: false,
 }).mount()
 ```
 
@@ -321,6 +321,7 @@ const sdk = createChatSdk({
   - `onEvent` and reactivity can coexist: reactivity for UI refresh, `onEvent` for audit/analytics/cross-system sync
 - **Runtime swap**: `sdk.setData(config)` / `sdk.getData()` (replaces old add/remove/listDataSlots)
 - **Runtime skill swap**: `sdk.setSkills(skills)` (same-name skill overwrites; clears the skill full-text cache, the skill index section of the system prompt re-renders next round, and the next `load_skill` re-fetches the latest full text incl. vfs doc) / `sdk.invalidateSkillCache(name?)` (proactively invalidate the cache when a dynamic skill's content changes; omit `name` to clear all, pass `name` to clear one)
+- **User-created skills (runtime + independent persistence)**: `sdk.addSkill(skill)` (users create/edit/delete custom skills from within the chat UI; auto-added to the agent, persisted via **independent SkillStore** — default indexedDB, separate from the `storage` option, persists even when `storage: false`, auto-restored across refreshes; same-name overwrites) / `sdk.removeSkill(name)` (only removes user-created skills, not the integrator's initialSkills passed via the `skills` option) / `sdk.listUserSkills()` (list user-created skill names, for UI panel refresh) / `sdk.getUserSkill(name)` (read a user-created skill's detail, for SkillPanel editing). The built-in `ChatDialog` has a "Skill Management" button in its header that opens the `SkillPanel` component, supporting create/edit (click a skill to load into the form)/delete; integrators can also `import { SkillPanel } from 'page-agent-sdk'` for custom UIs. Requires `capabilities.skills` (default on). **Cross-page/cross-agent reuse**: manually specify `skillStorage: { id: 'shared-skills' }`, multiple `createChatSdk` instances (different agentIds) with the same id share the same set of user skills; omit `id` for per-agent isolation (`agent::{agentId}`). `skillStorage: false` disables persistence (current session only).
 
 #### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
 
@@ -489,6 +490,12 @@ Beyond event subscription, the SDK instance exposes a few convenience APIs cover
 | `sdk.importData(json, opts?)` | Replace `bind` entirely (in-place restore, preserves reactive ref) | Schema-validated by default, returns `{ok:false,error}` if invalid; `opts.validate:false` skips validation; `opts.emit:false` suppresses `data_change` |
 | `sdk.setSkills(skills)` | Runtime swap the entire skill list (same-name overwrites) | Takes effect immediately: the skill index section of the system prompt re-renders next round; clears the skill full-text cache & in-round loaded set, so the next `load_skill` re-fetches the latest full text (incl. vfs doc); requires skills enabled (default on) |
 | `sdk.invalidateSkillCache(name?)` | Invalidate the skill full-text cache (proactive) | Omit `name` to clear all, pass `name` to clear one; use when a dynamic skill's content changes; the next `load_skill` re-runs `getContent`/`readSkillDoc`; requires skills enabled (default on) |
+| `sdk.addSkill(skill)` | User-created skill (runtime + independent persistence) | `skill: { name, description, prompt \| getContent \| doc }`; auto-added to the agent, persisted via **independent SkillStore** (default indexedDB, separate from `storage`, persists even when `storage: false`, auto-restored across refreshes); same-name overwrites; requires skills enabled (default on) + `skillStorage` not `false` for persistence |
+| `sdk.removeSkill(name)` | Remove a user-created skill | Only removes user-created (added via `addSkill`), not the integrator's initialSkills passed via `skills` option; removes from SkillStore; returns `boolean` (success); requires skills enabled |
+| `sdk.listUserSkills()` | List user-created skill names | Returns `string[]` (only user-created, not initialSkills); for UI panel refresh |
+| `sdk.getUserSkill(name)` | Read a user-created skill's detail | Returns `{ name, description, content }` or `undefined` (when not found); for SkillPanel editing |
+| `skillStorage` option | User skill independent persistence config | Default `{ backend: 'indexed' }` (separate from `storage`); `false` disables (current session only); `id` manually specifies the same id to share skills across pages/agents; omit `id` for per-agent isolation (`agent::{agentId}`) |
+| `SkillPanel` component | UI panel for users to create/edit/delete skills | The built-in `ChatDialog` header "Skill Management" button already integrates it (supports create/edit/delete); integrators can also `import { SkillPanel } from 'page-agent-sdk'` for custom UIs |
 | `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` | Accumulated per LLM call; all 0 when no calls; per-round detail emitted via `onEvent('usage')` |
 | `onAudit(entry)` option | Structured audit callback for data writes (independent of `debug`) | Fires on every `set`/`edit`/`delete`/`restore` with `{op, jsonPath, opDetail, timestamp, success, error?}`; for compliance audit / operation tracing |
 
@@ -636,19 +643,19 @@ Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill a
 | 7 | Server-side Node.js | `ui:false` + `storage:'memory'` + `capabilities:{dataOps:false,fetch:false}`; drive via `sdk.send` |
 | 8 | Multi-agent on one page | same `id` + `shareContext:true` → multiple dialogs share one `AgentCore` |
 | 9 | MCP integration | `mcp:[{transport,url}]` remote tools; `@modelcontextprotocol/sdk` optional peerDep |
-| 10 | Multi-agent parallel + exclusive switch | multiple `createChatSdk` (distinct `id`, each its own `data`) + `drawer:true`; switch via `hide()`/`show()` (keeps each history/in-flight generation, no unmount) |
+| 10 | Multi-agent parallel + exclusive switch | multiple `createChatSdk` (distinct `id`, each its own `data`) + `dialog.drawer:true`; switch via `hide()`/`show()` (keeps each history/in-flight generation, no unmount) |
 
 Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation), `examples/animation-demo` (animations + hide/show), `examples/multi-agent-demo` (multi-agent parallel + exclusive switch).
 
 ### Multi-agent parallel + exclusive switch
 
-A single page can host multiple independent agents (each `createChatSdk` + distinct `id` for isolation), each managing its own `data`/history/tools, running their own generation tasks in parallel; exclusive chatbox switching uses `drawer` + `hide()`/`show()` — `hide` the old one (keeps agent/history/in-flight generation), `show` the new one (history resumes), no unmount, no lost conversation:
+A single page can host multiple independent agents (each `createChatSdk` + distinct `id` for isolation), each managing its own `data`/history/tools, running their own generation tasks in parallel; exclusive chatbox switching uses `dialog.drawer` + `hide()`/`show()` — `hide` the old one (keeps agent/history/in-flight generation), `show` the new one (history resumes), no unmount, no lost conversation:
 
 ```ts
 const agents = [
-  createChatSdk({ id: 'agent-a', container: boxA, drawer: true, data: { schema: schemaA, bind: objA }, ... }),
-  createChatSdk({ id: 'agent-b', container: boxB, drawer: true, data: { schema: schemaB, bind: objB }, ... }),
-  createChatSdk({ id: 'agent-c', container: boxC, drawer: true, data: { schema: schemaC, bind: objC }, ... }),
+  createChatSdk({ id: 'agent-a', container: boxA, dialog: { drawer: true }, data: { schema: schemaA, bind: objA }, ... }),
+  createChatSdk({ id: 'agent-b', container: boxB, dialog: { drawer: true }, data: { schema: schemaB, bind: objB }, ... }),
+  createChatSdk({ id: 'agent-c', container: boxC, dialog: { drawer: true }, data: { schema: schemaC, bind: objC }, ... }),
 ]
 await Promise.all(agents.map(a => a.mount()))  // three independent agents ready in parallel
 agents.slice(1).forEach(a => a.hide())         // show only the first initially
@@ -666,5 +673,31 @@ function switchTo(i: number) {
 - If switch buttons sit under the drawer mask, raise their `z-index` (above mask `9998` + ChatDialog `9999`) to stay clickable
 
 Full example: `examples/multi-agent-demo/`.
+
+### Drawer mode width + hidden by default (click button to show chatbox)
+
+In drawer mode (`dialog.drawer: true`), you can customize the chatbox width and support "hidden by default after mount, shown on button click" scenarios:
+
+```ts
+const sdk = createChatSdk({
+  id: 'my-agent', container: '#box',
+  dialog: {
+    drawer: true,             // drawer mode
+    drawerWidth: 500,          // width 500px (also accepts '500px' / '40vw' / '50%' etc.); default 420
+    drawerHidden: true,        // hidden after mount; requires sdk.show() to display
+  },
+  llm, data: { schema, bind },
+})
+await sdk.mount()            // mounted but invisible (drawerHidden takes effect)
+
+// Click button → show chatbox
+document.querySelector('#open-chat-btn')!.addEventListener('click', () => sdk.show())
+// Close button/mask click → defaults to hide() (keeps agent/history/in-flight generation); show() again resumes
+```
+
+**Key points**:
+- `dialog.drawerWidth`: pure numbers treated as `px`; strings passed through as-is (supports `vw`/`%` etc. responsive units); only effective when `drawer: true`; inline mode width determined by `container`
+- `dialog.drawerHidden`: calls `hide()` immediately after `mount` (adds `cs-hidden` class, invisible but vueApp/agent ready); first `show()` removes the hidden class; subsequent `hide()`/`show()` toggles visibility
+- Close button/mask click defaults to `hide()` in drawer mode; pass `dialog.onClose` to customize close behavior
 
 **Advanced extensibility examples** (custom tools / skills / subagents / MCP) in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/advanced.md`: copy-paste code for `defineTool` (error handling + coexisting with dataOps), `defineSkill` (inline content + remote doc), subagents (ad-hoc `spawn_agent`/`spawn_agents` + pre-declared `subagents` → `use_<id>`), MCP (http/sse/websocket + auth + dev gotcha).

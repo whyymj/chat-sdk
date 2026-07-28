@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import { useChat } from '../composables/useChat'
 import { copyText } from '../utils/clipboard'
 import MessageContent from './MessageContent.vue'
 import DebugDrawer from './DebugDrawer.vue'
+import SkillPanel from './SkillPanel.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
@@ -40,13 +41,28 @@ const props = withDefaults(defineProps<{
   infoTick?: Ref<number>
   /** 读取 skill 全文(DebugDrawer 展开 skill 时调,优先缓存);返回 null 表示无内容或读取失败 */
   getSkillContent?: (name: string) => Promise<string | null>
+  /** ChatDialog 内创建 skill 面板提交时调 → sdk.addSkill(持久化 + 入 agent) */
+  onAddSkill?: (skill: { name: string; description: string; getContent: () => string }) => void
+  /** ChatDialog 内删除用户 skill 时调 → sdk.removeSkill */
+  onRemoveSkill?: (name: string) => boolean
+  /** 列出用户创建的 skill 名(SkillPanel 刷新列表时调) */
+  getUserSkillNames?: () => string[]
+  /** 读取用户创建的 skill 详情(SkillPanel 编辑时调) */
+  onGetSkill?: (name: string) => { name: string; description: string; content: string } | undefined
   /** 抽屉模式:从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮 emit 'close',由集成方(sdk)调 unmount */
   drawer?: boolean
+  /** 抽屉模式宽度(像素或 CSS 字符串,如 500 / '500px' / '40vw');默认 420px。仅 drawer:true 生效 */
+  drawerWidth?: number | string
+  /** 抽屉模式默认隐藏(mount 后不显示,需 sdk.show() 才显示);由 sdk 在 mount 后调 hide() 实现,此 prop 仅用于样式控制(隐藏时禁用滑入动画) */
+  drawerHidden?: boolean
+  /** 输入框行数(可见高度,textarea rows 属性);默认 2(2 行初始高度,自动扩展至 max-height:50vh)。设 1 则单行;设 >2 则更高 */
+  inputRows?: number
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
   showAvatar: true,
   showTyping: true,
+  inputRows: 2,
 })
 
 const emit = defineEmits<{
@@ -122,6 +138,7 @@ function handleUndo() {
 const inputText = ref('')
 const isExpanded = ref(true)
 const debugVisible = ref(false)
+const skillPanelVisible = ref(false)
 /** 记录每条消息思考过程的展开状态(按消息索引) */
 const reasoningExpanded = ref<Record<number, boolean>>({})
 
@@ -209,11 +226,19 @@ function copyTextMsg(text: string) {
   })
 }
 const copiedMsg = ref(false)
+
+/** 抽屉模式宽度样式(像素或 CSS 字符串归一化为 CSS 值) */
+const drawerWidthStyle = computed(() => {
+  if (!props.drawer || props.drawerWidth == null) return null
+  const w = props.drawerWidth
+  // 纯数字 → px;字符串(含 '500px'/'40vw'/'50%')原样透传
+  return typeof w === 'number' ? `${w}px` : w
+})
 </script>
 
 <template>
   <div v-if="drawer" class="chat-mask" @click="emit('close')"></div>
-  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer }">
+  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer }" :style="drawerWidthStyle ? { width: drawerWidthStyle, maxWidth: drawerWidthStyle } : null">
     <!-- 头部 -->
     <div class="chat-header">
       <div class="header-left">
@@ -234,6 +259,17 @@ const copiedMsg = ref(false)
             <path d="M9 18h6"></path>
           </svg>
           <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
+        </button>
+        <button
+          v-if="props.onAddSkill"
+          class="action-btn"
+          :class="{ active: skillPanelVisible }"
+          title="创建 / 管理自定义 Skill"
+          @click="skillPanelVisible = true"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.8 5.7 21l2.3-7.2-6-4.4h7.6z"></path>
+          </svg>
         </button>
         <button class="action-btn" title="清空对话" @click="clearMessages" :disabled="!hasMessages">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -431,7 +467,7 @@ const copiedMsg = ref(false)
         v-model="inputText"
         class="chat-input"
         :placeholder="placeholder"
-        rows="1"
+        :rows="props.inputRows"
         @keydown="handleKeydown"
       ></textarea>
       <button
@@ -454,6 +490,14 @@ const copiedMsg = ref(false)
 
     <!-- 调试抽屉 -->
     <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="props.getInfo" :info-tick="props.infoTick" :get-skill-content="props.getSkillContent" />
+    <SkillPanel
+      :visible="skillPanelVisible"
+      :on-add-skill="props.onAddSkill"
+      :on-remove-skill="props.onRemoveSkill"
+      :get-user-skill-names="props.getUserSkillNames"
+      :on-get-skill="props.onGetSkill"
+      @close="skillPanelVisible = false"
+    />
   </div>
 </template>
 
@@ -523,6 +567,7 @@ const copiedMsg = ref(false)
   padding: 12px 16px;
   background: var(--cs-primary);
   color: #fff; cursor: pointer; user-select: none;
+  flex-shrink: 0;
 }
 .header-left { display: flex; align-items: center; gap: 8px; }
 .header-icon { font-size: 20px; }
@@ -610,11 +655,19 @@ const copiedMsg = ref(false)
 .retry-btn { flex-shrink: 0; padding: 3px 12px; border: none; border-radius: 6px; background: #dc2626; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
 .retry-btn:hover { background: #b91c1c; }
 
-.chat-footer { display: flex; align-items: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #f3f4f6; background: #fafafa; }
+.chat-footer {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 12px 16px;
+  /* 底部安全区:防止输入框底部贴边/被遮挡;移动端 safe-area 适配 */
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #f3f4f6; background: #fafafa;
+  /* footer 不收缩不溢出:textarea 撑高时由 chat-body(flex:1, min-height:0)吸收,避免容器竖向滚动 */
+  flex-shrink: 0;
+}
 .chat-input {
-  flex: 1; resize: none; border: 1px solid #e5e7eb; border-radius: 8px;
+  flex: 1; resize: vertical; border: 1px solid #e5e7eb; border-radius: 8px;
   padding: 9px 12px; font-size: 13px; font-family: inherit; line-height: 1.5;
-  outline: none; transition: border-color 0.2s; max-height: 100px; overflow-y: auto;
+  outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
   overflow-wrap: anywhere; word-break: break-word;
 }
 .chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }

@@ -32,12 +32,14 @@ function buildSdk() {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
-    drawer: mode.value === 'drawer',
-    title: mode.value === 'drawer' ? '抽屉模式' : 'Inline 模式',
-    placeholder: '这是动画演示,可随意输入测试…',
+    dialog: {
+      drawer: mode.value === 'drawer',
+      title: mode.value === 'drawer' ? '抽屉模式' : 'Inline 模式',
+      placeholder: '这是动画演示,可随意输入测试…',
+      // drawer 模式:点遮罩/关闭按钮 → hide(保留 agent/历史/生成进程)+ 同步 hidden 状态
+      onClose: () => { agent?.hide(); hidden.value = true },
+    },
     debug: true,
-    // drawer 模式:点遮罩/关闭按钮 → hide(保留 agent/历史/生成进程)+ 同步 hidden 状态
-    onClose: () => { agent?.hide(); hidden.value = true },
   })
 }
 
@@ -114,7 +116,7 @@ onUnmounted(() => agent?.unmount())
         <button class="btn-primary" :disabled="mounted && !hidden" @click="showAgent">
           {{ hidden ? '▶ 显示聊天框(恢复历史)' : '▶ 挂载聊天框(看入场动画)' }}
         </button>
-        <button class="btn-warn" :disabled="!mounted || hidden || mode !== 'drawer'" @click="hideAgent" :title="mode === 'drawer' ? '' : '仅抽屉模式支持隐藏'">
+        <button class="btn-warn" :disabled="!mounted || hidden" @click="hideAgent" title="隐藏聊天框(保留 agent/历史/生成进程,再 show 恢复)">
           🙈 隐藏(保留历史/生成进程)
         </button>
         <button class="btn-danger" :disabled="!mounted" @click="unmountAgent">
@@ -145,7 +147,7 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
+.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; position: relative; z-index: 10000; }
 .pane-right { flex: 0 0 460px; }
 .pane-right--inline { border-left: 1px solid #e5e7eb; background: #fff; }
 .pane-right--inline > :deep(.chat-dialog) { width: 100%; height: 100%; }

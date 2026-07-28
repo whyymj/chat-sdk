@@ -137,7 +137,11 @@ export default {
         temperature: 0.3,            // 大 JSON 操作建议低温
       },
       // 抽屉模式:右侧滑出 + 遮罩;关闭按钮默认调 hide()(保留历史与生成进程,不卸载)
-      drawer: true,
+      dialog: {
+        drawer: true,
+        title: '页面构建 Agent',
+        placeholder: '试试:加一个按钮 / 标题改成红色 / 容器里加一张卡',
+      },
       // systemPrompt:描述业务 + 数据结构;reliableWriteRules 会用 '---' 分隔线自动追加(默认 true)
       systemPrompt: '你是低代码页面构建助手。主数据 = { title, components[] }(组件数组按顺序拼装页面)。每个组件 = { type, id?, style?, visible?, className?, props:{...业务字段} };容器组件 props.children 可嵌套任意组件。用户要改页面时,改 title 或 components(增删改组件、调 props、调 style、容器内改 children),左侧实时更新。组件类型与各字段详见 load_skill("page-builder")。',
       appendReliableWriteRules: true,   // 默认 true,自动追加可靠写入规则(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch)
@@ -152,8 +156,6 @@ export default {
         }),
       ],
       debug: true,
-      title: '页面构建 Agent',
-      placeholder: '试试:加一个按钮 / 标题改成红色 / 容器里加一张卡',
       // onEvent:Vue2 新增属性不响应 → data_change 时 tick++ 强制 PageRenderer 重建读最新 page
       onEvent: (e) => {
         if (e.type === 'data_change') this.tick++
@@ -234,7 +236,7 @@ export default {
 
 | 选项 | 值 | 说明 |
 |---|---|---|
-| `drawer` | `true` | 抽屉模式:右侧滑出 + 遮罩;关闭按钮默认 `hide()` |
+| `dialog.drawer` | `true` | 抽屉模式:右侧滑出 + 遮罩;关闭按钮默认 `hide()` |
 | `data` | `{ schema, bind, description? }` | 主数据声明(关键);`bind` 直连 Vue2 响应式对象 |
 | `systemPrompt` | 字符串 | 业务描述;`reliableWriteRules` 用 `---` 自动追加 |
 | `appendReliableWriteRules` | `true`(默认) | 自动追加可靠写入规则;设 `false` 关闭 |
