@@ -147,6 +147,40 @@ sdk.getData()  // read current config
 
 **Full runnable demo**: `examples/dynamic-demo/` (`npm run dev` → `/examples/dynamic-demo/`).
 
+## Stage 8 — Production: proxy the LLM (prevent apiKey leakage)
+
+Browser-direct LLM calls expose your `apiKey` in DevTools — anyone can drain your quota. **Production must proxy through your server**: the browser holds only a user token; your server injects the real `apiKey` and forwards. Use `createProxyLlm` to unify dev (direct) and prod (proxy) without restructuring:
+
+```ts
+import { createChatSdk, createProxyLlm } from 'page-agent-sdk'
+
+// Production: proxy mode (safe — real key stays server-side)
+const sdk = createChatSdk({
+  container: '#root',
+  llm: createProxyLlm({
+    mode: 'proxy',
+    baseUrl: '/api/llm',            // your proxy (same-origin avoids CORS)
+    userToken: getUserToken(),       // session token (server validates, swaps in real key)
+    model: 'deepseek-chat',
+    refreshToken: async () => (await (await fetch('/api/refresh')).json()).token, // auto-refresh on 401
+    headers: { 'X-Tenant': 'acme' }, // optional custom headers
+  }),
+  // ...data, systemPrompt...
+}).mount()
+
+// Dev: direct mode (convenient — real key in browser; dev only)
+const sdkDev = createChatSdk({
+  container: '#root',
+  llm: createProxyLlm({
+    mode: 'direct',
+    apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat',
+  }),
+  // ...data, systemPrompt...
+}).mount()
+```
+
+Both modes require an **OpenAI Chat Completions compatible** endpoint (the SDK uses `ChatOpenAI` internally). The proxy must: validate `userToken` → inject real `apiKey` → forward to upstream → stream SSE through → pass `tools`/`tool_calls` through. See `doc/usage-guide*.md` §8.6 for the full guide + a Node.js proxy example, and `examples/proxy-demo/` for a runnable demo (`npm run proxy:mock` + `npm run dev` → `/examples/proxy-demo/`).
+
 ## Next
 
 - All options: see [options.md](options.md)

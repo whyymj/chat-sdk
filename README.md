@@ -137,6 +137,8 @@ The core of letting AI safely edit JSON is a **three-layer decoupled split** —
 ```ts
 // entry & tool construction
 createChatSdk, defineTool, defineSkill, presets, z
+// proxy connection (prevent apiKey leakage: proxy mode / direct mode)
+createProxyLlm
 // harness & middleware (custom orchestration)
 createAgent, createSubagentMiddleware, createSubagentsMiddleware,
 createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
@@ -245,7 +247,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo / proxy-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -300,7 +302,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo / proxy-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -422,6 +424,7 @@ After `npm run dev`, visit the corresponding page:
 | mcp-demo | `/examples/mcp-demo/` | MCP remote tools (needs `npm run mcp:mock`) |
 | animation-demo | `/examples/animation-demo/` | ChatDialog enter/collapse/unmount animations + inline/drawer + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
+| proxy-demo | `/examples/proxy-demo/` | Proxy connection to prevent apiKey leakage (browser holds only userToken, proxy injects real key; includes auto-refresh on expired token; needs `npm run proxy:mock`) |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
@@ -456,7 +459,7 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 474 assertions (tsx, source-level; no LLM dependency)
+npm test            # 483 assertions (tsx, source-level; no LLM dependency)
 npm run test:e2e    # 173 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 

@@ -1,6 +1,21 @@
 import { DefineComponent, Ref } from 'vue';
 export { z } from 'zod';
 
+// 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
+export type ProxyLlmMode = 'proxy' | 'direct';
+export interface ProxyLlmOptions {
+  mode: ProxyLlmMode;
+  baseUrl?: string;
+  userToken?: string;
+  apiKey?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  refreshToken?: () => Promise<string>;
+  headers?: Record<string, string>;
+}
+export declare function createProxyLlm(opts: ProxyLlmOptions): import('@langchain/core/language_models/chat_models').BaseChatModel;
+
 export interface ToolStep {
   name: string;
   args?: any;

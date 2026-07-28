@@ -146,6 +146,7 @@ const sdk = createChatSdk({
 5. **Schema whitelist**: `z.object` auto-enables whitelist (only declared fields exposed); `discriminatedUnion`/`record`/`lazy` non-top-level don't enable (fully open)
 6. **Vue2 new-property non-reactive**: `write` patch `set` on a new field — Vue2 `Object.defineProperty` won't react → `onEvent('data_change')` `tick++`, use `:key="tick"` to force rebuild
 7. **MCP cold-start injects 0 tools**: `vite.config.ts` `optimizeDeps.include` pre-declares SDK sub-paths; keep those entries when forking config, else first MCP page load injects nothing (reload fixes)
+8. **apiKey leakage in production**: browser-direct LLM calls expose `apiKey` in DevTools. Use `createProxyLlm({ mode:'proxy', baseUrl:'/api/llm', userToken })` — browser holds only user token, your server injects the real key. See `references/quickstart.md` Stage 8 + `doc/usage-guide*.md` §8.6.
 
 ## Verification checklist
 
@@ -155,6 +156,8 @@ const sdk = createChatSdk({
 - [ ] [Reactive bind] edits → UI reacts; [non-reactive] `data_change` → re-render
 - [ ] [Drawer mode] close then open (`show()`) → history & in-flight generation preserved
 - [ ] Schema validation failure → structured error, no write
+- [ ] [Production] `createProxyLlm({ mode:'proxy' })` — real apiKey not in browser bundle / network tab
+- [ ] [Production] `createProxyLlm({ mode:'proxy' })` — real apiKey not in browser bundle / network tab
 
 ## References
 
@@ -177,3 +180,4 @@ Per your business scenario, fill in `systemPrompt` / `skills` / `data.schema`:
 - **Multi-agent on one page**: same `id` + `shareContext:true` → multiple dialogs share one `AgentCore`; or independent `id`s + `dialog.drawer:true` + `hide`/`show` for exclusive switching
 - **MCP integration**: `mcp:[{transport,url}]` remote tool servers; `@modelcontextprotocol/sdk` optional peerDep
 - **Dynamic/lazy-loaded schema**: `sdk.setData({ schema, bind })` on component mount to swap main data; tools pick up immediately, no rebuild
+- **Production proxy (prevent apiKey leakage)**: `createProxyLlm({ mode:'proxy', baseUrl:'/api/llm', userToken, refreshToken })` — browser holds only user token, server injects real key + forwards; dev uses `mode:'direct'` with real key. See `examples/proxy-demo/` + `npm run proxy:mock`

@@ -32,7 +32,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,474 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,483 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,143 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 ```
 
@@ -54,12 +54,13 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── sdk/                        # createChatSdk(命令式入口)/ defineTool
 ├── tools/                      # dataOps / fetchDoc / dataSlotQuery
 ├── toolsets.ts                 # 内置工具集预设
-├── backends/{vfs,storage}.ts   # 内存工作区 / 持久化存储
+├── backends/{vfs,storage,skillStore}.ts # 内存工作区 / 持久化存储 / skill 独立持久化
 ├── mcp/client.ts               # MCP client
+├── llm/proxyLlm.ts              # 代理连接模块(防 apiKey 泄露:proxy 代理 / direct 直连)
 ├── composables/                # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 ├── presets.ts / types/index.ts / index.ts
-examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo)
+examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo/animation-demo/multi-agent-demo/proxy-demo)
                                 # 每个 demo 目录自带 index.html(dev 入口)+ main.ts;根目录仅 index.html(主入口→page-demo)
 doc/                            # architecture.md + README.md(索引)
 demo/plain.html                 # 框架无关集成示例
@@ -159,9 +160,9 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),474 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),483 项断言
 ```
-**按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(24 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
+**按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(27 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools / proxyLlm(代理/直连两模式)。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
@@ -192,6 +193,7 @@ npm run dev         # 启动(端口 3000;被占自动换)
 - `human-confirm-demo`(3.0:`data` bind + schema)/ `planner-demo`(3.0:`data` bind + schema + 预声明子 agent)/ `toolsets-demo`(手动 toolset,关 dataOps 自动装配,不用 bind)
 - `animation-demo` 动画演示(ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show 保留历史)
 - `multi-agent-demo` 多 Agent 并行(三独立 agent 不同 id 隔离 + 各管各 data + drawer 互斥切换 hide/show,历史各自保留)
+- `proxy-demo` 代理连接演示(防 apiKey 泄露:浏览器只持 userToken,代理 server 注入真实 key 转发;含 token 过期自动刷新;需 `npm run proxy:mock`)
 - `demo/plain.html` 框架无关 CDN 集成(importmap + esm.sh)
 
 #### 4. 运行时手动验证(依赖 LLM/server)
@@ -218,7 +220,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(474 全过) → `npm run test:e2e`(173 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(483 全过) → `npm run test:e2e`(173 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -310,7 +312,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 474 全过 → `npm run test:e2e` 173 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 483 全过 → `npm run test:e2e` 173 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

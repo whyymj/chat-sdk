@@ -576,6 +576,201 @@ console.log(reply) // AI calls add → "3 + 5 = 8"
 
 > `eval_script` relies on Web Worker (part of dataOps, disable via `capabilities:{dataOps:false}`). MCP remote tools (http/sse/websocket) also work in Node (dynamic import `@modelcontextprotocol/sdk`).
 
+### 8.6 Proxy Connection (prevent apiKey leakage)
+
+Connecting to the LLM API directly from the browser exposes your `apiKey` in frontend code / network requests — anyone can grab it from DevTools and drain your quota. **Production must go through a server-side proxy**: the browser holds only a user token; your server injects the real `apiKey` and forwards to the LLM API.
+
+The SDK provides a `createProxyLlm` factory to unify both access modes, so dev/prod switching needs no code restructuring:
+
+```ts
+import { createChatSdk, createProxyLlm } from 'page-agent-sdk'
+
+// ===== Production: proxy mode (safe) =====
+// Browser holds only userToken; server injects real apiKey and forwards
+const sdk = createChatSdk({
+  container: '#agent',
+  llm: createProxyLlm({
+    mode: 'proxy',
+    baseUrl: '/api/llm',        // your proxy URL (same-origin avoids CORS)
+    userToken: getUserToken(),   // user session token (server validates, swaps in real key)
+    model: 'deepseek-chat',
+    temperature: 0.3,
+    // optional: auto-refresh on 401 (called once, returns new token, retries)
+    refreshToken: async () => (await fetch('/api/refresh')).json().then(r => r.token),
+    // optional: extra headers (e.g. tenant id)
+    headers: { 'X-Tenant': 'acme' },
+  }),
+  // ...other options
+})
+
+// ===== Dev: direct mode (convenient) =====
+// Browser holds the real apiKey; local dev only (would leak in production)
+const sdkDev = createChatSdk({
+  container: '#agent',
+  llm: createProxyLlm({
+    mode: 'direct',
+    apiKey: 'sk-xxx',            // real key (dev only)
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  }),
+  // ...other options
+})
+```
+
+**Mode comparison**:
+
+| | `proxy` (production) | `direct` (dev) |
+|---|---|---|
+| apiKey location | server (invisible to browser) | browser (visible in DevTools) |
+| browser holds | userToken (session) | real apiKey |
+| token refresh | supported (auto-retry on 401) | not needed |
+| custom headers | supported | not needed |
+| use case | production | local dev / intranet tools |
+
+**Server-side proxy essentials** (your backend, not SDK):
+- Receive browser request, validate userToken, inject real `apiKey`, forward to LLM API
+- Handle CORS (same-origin is simplest, or set `Access-Control-Allow-*`)
+- Stream SSE responses through (don't buffer streaming generation)
+- Pass through tool-calling fields (`tools`/`tool_choice`/`tool_calls`)
+- Optional: usage stats, rate limiting, per-user quota
+
+> If `summaryLlm` (the dedicated summarization model) should also go through the proxy, build it with `createProxyLlm({ mode:'proxy', ... })` and pass to the `summaryLlm` option.
+
+#### 8.6.1 Supported interface format
+
+`createProxyLlm` uses `ChatOpenAI` internally, so **both modes require an OpenAI Chat Completions compatible endpoint**. The difference is only where the apiKey lives, not the protocol.
+
+**Request** (browser → proxy):
+
+```
+POST {baseUrl}/chat/completions
+Authorization: Bearer {userToken}      ← proxy mode: user token
+Authorization: Bearer sk-xxx           ← direct mode: real key
+Content-Type: application/json
+
+{
+  "model": "deepseek-chat",
+  "messages": [{ "role": "system", "content": "..." }, ...],
+  "tools": [...],          // tool-calling fields (optional)
+  "tool_choice": "auto",
+  "temperature": 0.3,
+  "max_tokens": 16384,
+  "stream": true           // SSE when streaming
+}
+```
+
+> `ChatOpenAI` auto-appends `/chat/completions` to `baseUrl`, so pass `/api/llm` and the actual request hits `/api/llm/chat/completions`.
+
+**Response** (proxy → browser), must be OpenAI-compatible:
+
+Non-streaming:
+```json
+{
+  "id": "chatcmpl-xxx",
+  "choices": [{ "message": { "role": "assistant", "content": "...", "tool_calls": [...] }, "finish_reason": "stop" }],
+  "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+}
+```
+
+Streaming (SSE):
+```
+data: {"choices":[{"delta":{"content":"hello"}}]}
+data: {"choices":[{"delta":{"tool_calls":[...]}}]}
+data: [DONE]
+```
+
+**401 refresh** (proxy mode only): when the proxy returns `401`, the SDK auto-calls `refreshToken`, gets a new token, and retries the original request once.
+
+**Unsupported formats**: non-OpenAI protocols (e.g. native Claude `/v1/messages`, Gemini `generateContent`) require backend protocol translation, returning OpenAI format to the SDK; custom RPC / GraphQL likewise — translate to OpenAI-compatible responses on the backend.
+
+#### 8.6.2 Proxy server example (Node.js)
+
+The repo ships a mock proxy server (`scripts/proxy-mock-server.ts`); run `npm run proxy:mock` to start it at `http://localhost:3002`:
+
+- `POST /chat/completions` — validates `Authorization: Bearer {userToken}`, injects the real apiKey (read from server-side `.env` `VITE_AI_API_KEY`), forwards to the upstream LLM API (`VITE_AI_BASE_URL`), streams SSE through
+- `POST /api/refresh` — token-refresh demo endpoint, returns a new token
+- Demo token rules: `demo-token-xxx` works / `demo-token-expired` returns 401 to trigger refresh
+
+Minimal viable proxy (production reference, Node.js native `http`):
+
+```ts
+import http from 'node:http'
+
+const REAL_API_KEY = process.env.REAL_API_KEY  // server env var, browser can't see it
+const UPSTREAM = 'https://api.deepseek.com/v1'
+
+http.createServer(async (req, res) => {
+  // CORS (dev cross-origin; production prefers same-origin, remove this)
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
+
+  if (req.url !== '/chat/completions' || req.method !== 'POST') {
+    res.writeHead(404); res.end('not found'); return
+  }
+
+  // 1. validate user token
+  const userToken = req.headers.authorization?.slice(7)
+  if (!userToken || !await verifyUserToken(userToken)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'invalid token' } }))
+    return
+  }
+
+  // 2. read body
+  const body = await new Promise<Buffer>(r => {
+    const c: Buffer[] = []; req.on('data', d => c.push(d)); req.on('end', () => r(Buffer.concat(c)))
+  })
+
+  // 3. inject real apiKey and forward (pass through tools/tool_calls/stream)
+  const upstream = await fetch(`${UPSTREAM}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${REAL_API_KEY}` },
+    body,
+  })
+
+  // 4. stream response through (pipe SSE chunks, don't buffer)
+  res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json' })
+  if (upstream.body) {
+    const reader = upstream.body.getReader()
+    const dec = new TextDecoder()
+    while (true) { const { done, value } = await reader.read(); if (done) break; res.write(dec.decode(value)) }
+  }
+  res.end()
+}).listen(3002, () => console.log('proxy @ 3002'))
+
+async function verifyUserToken(token: string): Promise<boolean> {
+  // plug in your auth: JWT verify / session lookup / user table query …
+  return token.startsWith('demo-token-')
+}
+```
+
+**Production deployment notes**:
+- The real apiKey lives only in server env vars (or a secret manager) — **never** ship to the browser, never commit to git
+- Same-origin deployment (`/api/llm` shares the frontend domain) avoids CORS; cross-origin needs `Access-Control-Allow-*`
+- Stream responses with `pipe` chunk-by-chunk; don't `await res.json()` and buffer (breaks streaming generation)
+- Pass through `tools`/`tool_choice`/`tool_calls` fields (the Agent's tool calling depends on these)
+- Optional: meter usage by userToken, rate-limit, per-user quota, audit logs
+
+#### 8.6.3 Full example page
+
+The repo's `examples/proxy-demo/` provides a complete runnable example:
+
+```bash
+# Terminal 1: start the proxy server (reads the real apiKey from .env)
+npm run proxy:mock
+# → http://localhost:3002, real apiKey stays server-side
+
+# Terminal 2: start dev
+npm run dev
+# → open http://localhost:3000/examples/proxy-demo/
+```
+
+The example page demonstrates:
+- The browser holds only a `userToken` (`demo-token-xxx`); DevTools can't see the real apiKey
+- Switch to `demo-token-expired` → send a message → 401 → the SDK auto-calls `refreshToken` to refresh and retry (the UI shows the refresh count)
+- An extra `X-Tenant` header demonstrates custom-header pass-through
+
 ## 8. Framework-agnostic / CDN
 
 See `demo/plain.html` (importmap + esm.sh providing peer deps). IIFE one-liner:

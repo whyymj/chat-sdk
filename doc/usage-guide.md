@@ -1014,6 +1014,201 @@ console.log(reply) // AI 调 add 工具 → "3 + 5 = 8"
 
 > 注:`eval_script` 依赖 Web Worker,属 dataOps,关掉即不装。MCP 远程工具(http/sse/websocket)在 Node 也可用(动态 import `@modelcontextprotocol/sdk`)。
 
+### 8.6 代理连接(防 apiKey 泄露)
+
+浏览器直连 LLM API 会把 `apiKey` 暴露在前端代码/网络请求中,上线后任何人都能从 DevTools 抓走你的 key 盗刷。**生产环境必须经服务端代理**:浏览器只持用户 token,你的服务端注入真实 `apiKey` 转发到 LLM API。
+
+SDK 提供 `createProxyLlm` 工厂统一管理两种接入模式,dev/prod 切换不改代码结构:
+
+```ts
+import { createChatSdk, createProxyLlm } from 'page-agent-sdk'
+
+// ===== 上线:代理模式(防泄露)=====
+// 浏览器只持 userToken,服务端注入真实 apiKey 转发
+const sdk = createChatSdk({
+  container: '#agent',
+  llm: createProxyLlm({
+    mode: 'proxy',
+    baseUrl: '/api/llm',        // 你的代理地址(同源避免 CORS)
+    userToken: getUserToken(),   // 用户登录态 token(代理验证后换真实 key)
+    model: 'deepseek-chat',
+    temperature: 0.3,
+    // 可选:token 过期自动刷新(401 时调一次,返回新 token 重试)
+    refreshToken: async () => (await fetch('/api/refresh')).json().then(r => r.token),
+    // 可选:附加 headers(如租户标识)
+    headers: { 'X-Tenant': 'acme' },
+  }),
+  // ...其余配置
+})
+
+// ===== 开发:直连模式(便捷)=====
+// 浏览器持真实 apiKey,仅本地开发用(生产会泄露)
+const sdkDev = createChatSdk({
+  container: '#agent',
+  llm: createProxyLlm({
+    mode: 'direct',
+    apiKey: 'sk-xxx',            // 真实 key(仅开发环境)
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  }),
+  // ...其余配置
+})
+```
+
+**两种模式对比**:
+
+| | `proxy`(代理,上线) | `direct`(直连,开发) |
+|---|---|---|
+| apiKey 位置 | 服务端(浏览器不可见) | 浏览器(DevTools 可见) |
+| 浏览器持有 | userToken(登录态) | 真实 apiKey |
+| token 刷新 | 支持(401 自动重试) | 不需要 |
+| 自定义 headers | 支持 | 不需要 |
+| 适用场景 | 生产环境 | 本地开发/内网工具 |
+
+**代理服务端实现要点**(你的后端,SDK 不管):
+- 接收浏览器请求,验证 userToken,注入真实 `apiKey`,转发到 LLM API
+- 处理 CORS(同源最省事,或设 `Access-Control-Allow-*`)
+- 透传 SSE 流式响应(流式生成不能缓冲)
+- 透传 tool calling 字段(`tools`/`tool_choice`/`tool_calls`)
+- 可选:用量统计、限流、按用户配额
+
+> `summaryLlm`(摘要专用模型)若也要走代理,同样用 `createProxyLlm({ mode:'proxy', ... })` 构造后传入 `summaryLlm` 选项。
+
+#### 8.6.1 支持的接口格式
+
+`createProxyLlm` 内部用 `ChatOpenAI`,所以**两种模式都要求接口是 OpenAI Chat Completions 兼容格式**。区别只在 apiKey 放哪里,不在协议格式。
+
+**请求**(浏览器 → 代理):
+
+```
+POST {baseUrl}/chat/completions
+Authorization: Bearer {userToken}      ← proxy 模式传用户 token
+Authorization: Bearer sk-xxx           ← direct 模式传真实 key
+Content-Type: application/json
+
+{
+  "model": "deepseek-chat",
+  "messages": [{ "role": "system", "content": "..." }, ...],
+  "tools": [...],          // tool calling 字段(可选)
+  "tool_choice": "auto",
+  "temperature": 0.3,
+  "max_tokens": 16384,
+  "stream": true           // 流式时为 SSE
+}
+```
+
+> `ChatOpenAI` 自动在 `baseUrl` 后拼接 `/chat/completions`,所以 `baseUrl` 传 `/api/llm` 即可,实际请求打到 `/api/llm/chat/completions`。
+
+**响应**(代理 → 浏览器),需返回 OpenAI 兼容格式:
+
+非流式:
+```json
+{
+  "id": "chatcmpl-xxx",
+  "choices": [{ "message": { "role": "assistant", "content": "...", "tool_calls": [...] }, "finish_reason": "stop" }],
+  "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+}
+```
+
+流式(SSE):
+```
+data: {"choices":[{"delta":{"content":"你好"}}]}
+data: {"choices":[{"delta":{"tool_calls":[...]}}]}
+data: [DONE]
+```
+
+**401 刷新**(仅 proxy 模式):代理返回 `401` 时,SDK 自动调 `refreshToken` 拿新 token,重试一次原请求。
+
+**不支持的格式**:非 OpenAI 协议(如原生 Claude `/v1/messages`、Gemini `generateContent`)需后端做协议转换,转换后仍以 OpenAI 格式返回给 SDK;自定义 RPC / GraphQL 同理,后端转换成 OpenAI 兼容响应即可。
+
+#### 8.6.2 代理服务端示例(Node.js)
+
+仓库自带 mock 代理 server(`scripts/proxy-mock-server.ts`),`npm run proxy:mock` 启动,监听 `http://localhost:3002`:
+
+- `POST /chat/completions` —— 验证 `Authorization: Bearer {userToken}`,注入真实 apiKey(从服务端 `.env` 读 `VITE_AI_API_KEY`),转发到上游 LLM API(`VITE_AI_BASE_URL`),透传 SSE 流
+- `POST /api/refresh` —— token 刷新演示端点,返回新 token
+- 演示 token 规则:`demo-token-xxx` 正常 / `demo-token-expired` 返 401 触发刷新
+
+最小可用代理(生产参考,Node.js 原生 `http`):
+
+```ts
+import http from 'node:http'
+
+const REAL_API_KEY = process.env.REAL_API_KEY  // 服务端环境变量,浏览器拿不到
+const UPSTREAM = 'https://api.deepseek.com/v1'
+
+http.createServer(async (req, res) => {
+  // CORS(开发跨域;生产建议同源去掉)
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
+
+  if (req.url !== '/chat/completions' || req.method !== 'POST') {
+    res.writeHead(404); res.end('not found'); return
+  }
+
+  // 1. 验证用户 token
+  const userToken = req.headers.authorization?.slice(7)
+  if (!userToken || !await verifyUserToken(userToken)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: { message: 'invalid token' } }))
+    return
+  }
+
+  // 2. 读 body
+  const body = await new Promise<Buffer>(r => {
+    const c: Buffer[] = []; req.on('data', d => c.push(d)); req.on('end', () => r(Buffer.concat(c)))
+  })
+
+  // 3. 注入真实 apiKey 转发(透传 tools/tool_calls/stream)
+  const upstream = await fetch(`${UPSTREAM}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${REAL_API_KEY}` },
+    body,
+  })
+
+  // 4. 透传响应(SSE 流式直接 pipe,不缓冲)
+  res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json' })
+  if (upstream.body) {
+    const reader = upstream.body.getReader()
+    const dec = new TextDecoder()
+    while (true) { const { done, value } = await reader.read(); if (done) break; res.write(dec.decode(value)) }
+  }
+  res.end()
+}).listen(3002, () => console.log('proxy @ 3002'))
+
+async function verifyUserToken(token: string): Promise<boolean> {
+  // 接你的鉴权:JWT 校验 / 查 session / 查用户表 …
+  return token.startsWith('demo-token-')
+}
+```
+
+**生产部署要点**:
+- 真实 apiKey 只存服务端环境变量(或密钥管理服务),**绝不**下发浏览器、不进 git
+- 同源部署(`/api/llm` 与前端同域)省 CORS;跨域需配 `Access-Control-Allow-*`
+- 流式响应用 `pipe` 逐块转发,不要 `await res.json()` 缓冲(会破坏流式生成)
+- 透传 `tools`/`tool_choice`/`tool_calls` 字段(Agent 的 tool calling 依赖这些)
+- 可选:按 userToken 计费用量、限流、按用户配额、审计日志
+
+#### 8.6.3 完整示例页面
+
+仓库 `examples/proxy-demo/` 提供完整可运行示例:
+
+```bash
+# 终端 1:启动代理 server(读 .env 的真实 apiKey)
+npm run proxy:mock
+# → http://localhost:3002,真实 apiKey 在服务端
+
+# 终端 2:启动 dev
+npm run dev
+# → 访问 http://localhost:3000/examples/proxy-demo/
+```
+
+示例页面演示:
+- 浏览器只持 `userToken`(`demo-token-xxx`),DevTools 看不到真实 apiKey
+- 切换为 `demo-token-expired` → 发消息触发 401 → SDK 自动调 `refreshToken` 刷新重试(界面显示刷新次数)
+- 附加 `X-Tenant` header 演示自定义 header 透传
+
 ## 9. 框架无关 / CDN 集成
 
 宿主页面无需任何构建链路,用 IIFE 全量包一行接入:

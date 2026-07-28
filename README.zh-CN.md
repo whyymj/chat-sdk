@@ -137,6 +137,8 @@ SDK 让 AI 安全改 JSON 的核心是**三层解耦配合**——各司其职�
 ```ts
 // 入口与工具构造
 createChatSdk, defineTool, defineSkill, presets, z
+// 代理连接(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
+createProxyLlm
 // harness 与中间件(自定义编排)
 createAgent, createSubagentMiddleware, createSubagentsMiddleware,
 createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
@@ -245,7 +247,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # 类型 / 库唯一入口
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo / proxy-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # 架构要点 + 约定坑 + 编码规范（agent 必读）
 ```
@@ -367,6 +369,7 @@ createChatSdk({
 | mcp-demo | `/examples/mcp-demo/` | MCP 远程工具（需 `npm run mcp:mock`） |
 | animation-demo | `/examples/animation-demo/` | ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
+| proxy-demo | `/examples/proxy-demo/` | 代理连接防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`） |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 
@@ -401,7 +404,7 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 474 项断言（tsx 源码级，不依赖 LLM）
+npm test            # 483 项断言（tsx 源码级，不依赖 LLM）
 npm run test:e2e    # 173 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
