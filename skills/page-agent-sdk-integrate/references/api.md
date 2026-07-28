@@ -173,3 +173,45 @@ createChatSdk({
 - Middleware factories: `createApprovalMiddleware`, `createVerifyMiddleware`, `createWriteBackCheck`, `createSubagentMiddleware`, `createCheckpointMiddleware`, `createUsageHintsMiddleware`
 - Storage: `createSessionStore`, `createMemoryBackend`, `createWebStorageBackend`, `isQuotaError`
 - JSON helpers: `jpEval`, `searchJson`, `runSandboxedScript`, `toolError`, `zodError`
+
+## Proxy connection (`createProxyLlm`) — prevent apiKey leakage
+
+Browser-direct LLM calls expose `apiKey` in DevTools. Use `createProxyLlm` to unify dev/prod access:
+
+```ts
+import { createChatSdk, createProxyLlm } from 'page-agent-sdk'
+
+// Production: proxy mode (server injects real key)
+createChatSdk({
+  llm: createProxyLlm({
+    mode: 'proxy',
+    baseUrl: '/api/llm',        // your proxy (same-origin avoids CORS)
+    userToken: getUserToken(),   // session token (server validates)
+    model: 'deepseek-chat',
+    refreshToken?: async () => ...,  // optional: refresh on 401
+    headers?: { 'X-Tenant': 'acme' }, // optional: extra headers
+  }),
+  ...
+})
+
+// Dev: direct mode (browser holds real key; dev only)
+createChatSdk({
+  llm: createProxyLlm({
+    mode: 'direct',
+    apiKey: 'sk-xxx',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  }),
+  ...
+})
+```
+
+| | `proxy` (prod) | `direct` (dev) |
+|---|---|---|
+| apiKey | server (invisible) | browser (DevTools visible) |
+| browser holds | userToken | real apiKey |
+| token refresh | yes (401 retry) | n/a |
+| headers | supported | n/a |
+
+Server-side proxy essentials: validate userToken → inject real apiKey → forward to LLM API; handle CORS; stream SSE through; pass tool-calling fields. See `doc/usage-guide*.md` §8.6 for full guide.
+

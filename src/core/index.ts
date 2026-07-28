@@ -6,6 +6,9 @@
  */
 // zod:随 SDK 暴露(IIFE 全量模式下消费者从 ChatSdk.z 取用,构造 data schema)
 export { z } from 'zod'
+// 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
+export { createProxyLlm } from './llm/proxyLlm'
+export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig } from './sdk/createChatSdk'

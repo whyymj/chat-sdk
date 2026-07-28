@@ -2,6 +2,17 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.11.0] - 2026-07-28
+
+### Added
+- **代理连接模块(`createProxyLlm`)**:统一管理 LLM 接入,支持两种模式,dev/prod 切换不改代码结构
+  - `proxy` 模式(上线用):浏览器只持 `userToken`,服务端注入真实 `apiKey` 转发到 LLM API,防 apiKey 泄露;支持 `refreshToken`(401 自动刷新重试一次)、自定义 `headers`
+  - `direct` 模式(开发用):浏览器持真实 `apiKey` 直连 LLM API(仅开发环境,生产环境 warn 提醒)
+  - 返回 `BaseChatModel` 实例,直接传 `createChatSdk({ llm })`;`summaryLlm` 也可用同工厂走代理
+  - 兼容性:自定义 fetch 经 `configuration.fetch` 透传 OpenAI client(已验证 @langchain/openai 1.5.x);兼容 `string|URL|Request` 入参;401 重试仅对可重复发送的 body(string/ArrayBuffer/Blob/FormData/URLSearchParams),ReadableStream 跳过避免已消费;token 刷新单例锁防并发重复刷新
+  - 详见 `doc/usage-guide*.md` §8.6
+- **代理示例(`examples/proxy-demo/`)+ mock 代理 server(`scripts/proxy-mock-server.ts`)**:完整可运行演示,浏览器只持 userToken,代理注入真实 key 转发;含 token 过期自动刷新演示;`npm run proxy:mock` 启动
+
 ## [2.10.3] - 2026-07-28
 
 ### Fixed
