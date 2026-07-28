@@ -1,13 +1,13 @@
 # page-agent-sdk
 
-> **[English](./README.md)** · **[中文](./README.zh-CN.md)**
+> **[English](https://github.com/whyymj/chat-sdk/blob/master/README.md)** · **[中文](https://github.com/whyymj/chat-sdk/blob/master/README.zh-CN.md)**
 
 > Give your web page an **AI assistant that edits the page itself**. Mount a chat dialog in one line; the AI reads/writes page data safely via schema-validated tools — "conversational" building/editing/ops.
 
-> **AI agent integration**: see [Agent Integration Cheat Sheet](#agent-integration-cheat-sheet-for-ai-agents) below (exports / options / extension points / built-in tools / file structure). Architecture & gotchas in [`CLAUDE.md`](./CLAUDE.md).
+> **AI agent integration**: see [Agent Integration Cheat Sheet](#agent-integration-cheat-sheet-for-ai-agents) below (exports / options / extension points / built-in tools / file structure). Architecture & gotchas in [`CLAUDE.md`](https://github.com/whyymj/chat-sdk/blob/master/CLAUDE.md).
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
-[![license](https://img.shields.io/badge/license-ISC-blue.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
 [![tests](https://img.shields.io/badge/self%20tests-434%20asserts-brightgreen.svg)](#self-tests)
 
 ---
@@ -446,12 +446,12 @@ function switchTo(i: number) {
 
 | Doc | Contents |
 |---|---|
-| [Doc Index](./doc/README.en.md) | Navigation + other info sources (specs/changes/tests) |
-| [Usage Guide](./doc/usage-guide.en.md) | Install / options / capability deep-dive / custom middleware / FAQ |
-| [Architecture](./doc/architecture.md) *(Chinese)* | Layering / control flow / window-op safety flow |
-| [Context & Compression](./doc/context-management.md) *(Chinese)* | Context composition / 4-layer compression / flow diagrams |
-| [File Overview](./doc/architecture-files.md) *(Chinese)* | Per-file responsibilities / deps / data flow |
-| [CLAUDE.md](./CLAUDE.md) | **agent must-read** · architecture / gotchas / coding conventions |
+| [Doc Index](https://github.com/whyymj/chat-sdk/blob/master/doc/README.en.md) | Navigation + other info sources (specs/changes/tests) |
+| [Usage Guide](https://github.com/whyymj/chat-sdk/blob/master/doc/usage-guide.en.md) | Install / options / capability deep-dive / custom middleware / FAQ |
+| [Architecture](https://github.com/whyymj/chat-sdk/blob/master/doc/architecture.md) *(Chinese)* | Layering / control flow / window-op safety flow |
+| [Context & Compression](https://github.com/whyymj/chat-sdk/blob/master/doc/context-management.md) *(Chinese)* | Context composition / 4-layer compression / flow diagrams |
+| [File Overview](https://github.com/whyymj/chat-sdk/blob/master/doc/architecture-files.md) *(Chinese)* | Per-file responsibilities / deps / data flow |
+| [CLAUDE.md](https://github.com/whyymj/chat-sdk/blob/master/CLAUDE.md) | **agent must-read** · architecture / gotchas / coding conventions |
 
 ## Self-tests
 
@@ -532,8 +532,8 @@ npm test
 
 ## Relationship to Deep Agents
 
-Borrows the harness idea from [Deep Agents](https://github.com/langchain-ai/deepagents) (ReAct + middleware + planning + skills + memory + context management), but implemented in-house: no LangGraph/langchain full bundle; browser-oriented (persistence via IndexedDB, not server-side DB); context via input compression + memory trim + large-result offload, rather than per-step checkpointer archival. See [Context & Compression - Differences from Deep Agents](./doc/context-management.md#七与-deep-agents-的差异).
+Borrows the harness idea from [Deep Agents](https://github.com/langchain-ai/deepagents) (ReAct + middleware + planning + skills + memory + context management), but implemented in-house: no LangGraph/langchain full bundle; browser-oriented (persistence via IndexedDB, not server-side DB); context via input compression + memory trim + large-result offload, rather than per-step checkpointer archival. See [Context & Compression - Differences from Deep Agents](https://github.com/whyymj/chat-sdk/blob/master/doc/context-management.md#七与-deep-agents-的差异).
 
 ## License
 
-[ISC](./LICENSE)
+[ISC](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
