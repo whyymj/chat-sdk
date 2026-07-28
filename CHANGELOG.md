@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.10.3] - 2026-07-28
+
+### Fixed
+- **README 链接 404**:`README.md`/`README.zh-CN.md` 中相对链接(`./README.zh-CN.md`、`./CLAUDE.md`、`./LICENSE`、`./doc/*.md`)在 npm 站点解析为 `npmjs.com/package/...` → 404;改为 GitHub 绝对 URL(`https://github.com/whyymj/chat-sdk/blob/master/...`),npm 与 GitHub 均可正确跳转
+
 ## [2.10.2] - 2026-07-28
 
 ### Fixed
