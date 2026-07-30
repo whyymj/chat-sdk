@@ -51,7 +51,7 @@
 ## [2.10.3] - 2026-07-28
 
 ### Fixed
-- **README 链接 404**:`README.md`/`README.zh-CN.md` 中相对链接(`./README.zh-CN.md`、`./CLAUDE.md`、`./LICENSE`、`./doc/*.md`)在 npm 站点解析为 `npmjs.com/package/...` → 404;改为 GitHub 绝对 URL(`https://github.com/whyymj/chat-sdk/blob/master/...`),npm 与 GitHub 均可正确跳转
+- **README 链接 404**:`README.md`/`README.zh-CN.md` 中相对链接(`./README.zh-CN.md`、`./CLAUDE.md`、`./LICENSE`、`./doc/*.md`)在 npm 站点解析为 `npmjs.com/package/...` → 404;改为 GitHub 绝对 URL(`https://github.com/whyymj/page-agent-sdk/blob/master/...`),npm 与 GitHub 均可正确跳转
 
 ## [2.10.2] - 2026-07-28
 

@@ -23,7 +23,7 @@
 3. **归档**:实现完成后将 `specs/` 增量合入 `openspec/specs/`(系统真相源),change 移入 `openspec/changes/archive/`。
 
 ## 进行中的 change
-_(无)_
+- `2026-07-30-refactor-module-extraction/`:模块抽离重构(可维护性)—— ① 纯函数抽离(`dataOps.ts` 18 个纯函数 → `tools/jsonUtils.ts` + 6 个 schema 工具 → `tools/schemaUtils.ts`;`useContextManager.ts` 6 个纯函数 → `composables/contextIndex.ts`);② 高频改动点抽离(`createChatSdk.ts` → `sdk/promptBuilder.ts` / `sdk/llmResolver.ts` / `sdk/conflictManager.ts` / `sdk/skillStore.ts` 桥接层);③ 对外开放 subpath(`./storage` / `./query` / `./llm`)。纯重构,运行时行为零变化;顶层 `.` 入口导出不变。分期:期一(P0 纯函数 + subpath,可独立发布)→ 期二(P1 状态机/桥接层)→ 期三(P2 低频可选)→ 期四(测试同步)→ 期五(文档 + 门禁 + 归档)。
 
 ## 最近完成的 change(已归档)
 - `archive/2026-07-30-add-dynamic-reconfiguration/`:运行时资源动态加载/卸载 —— `sdk.setTools/addTool/removeTool`(用户工具动态,核心基础设施)/ `sdk.setSubagents/addSubagent/removeSubagent`(复用 tools 机制)/ `sdk.setLlm`(模型切换 + 重解析能力)/ `sdk.setMemory`(memory 动态)。复用 `let + rebind + infoTick` 模式(类比 setData/setSkills),全程向后兼容。自测 524/524,e2e 210/210。规范已合入 `openspec/specs/page-agent-core.md`。

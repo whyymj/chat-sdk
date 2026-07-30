@@ -1,13 +1,13 @@
 # page-agent-sdk
 
-> **[English](https://github.com/whyymj/chat-sdk/blob/master/README.md)** · **[中文](https://github.com/whyymj/chat-sdk/blob/master/README.zh-CN.md)**
+> **[English](https://github.com/whyymj/page-agent-sdk/blob/master/README.md)** · **[中文](https://github.com/whyymj/page-agent-sdk/blob/master/README.zh-CN.md)**
 
 > 给网页一个**会改页面的 AI 助手**。一行代码挂载对话框，AI 通过工具按 schema 安全读写页面数据，实现「对话式」搭建/编辑/运维。
 
-> **AI agent 接入**：直接看下方「[Agent 接入速查](#agent-接入速查给-ai-agent-读)」（导出 / 选项表 / 扩展点 / 内置工具 / 文件结构），架构与约定坑见 [`CLAUDE.md`](https://github.com/whyymj/chat-sdk/blob/master/CLAUDE.md)。
+> **AI agent 接入**：直接看下方「[Agent 接入速查](#agent-接入速查给-ai-agent-读)」（导出 / 选项表 / 扩展点 / 内置工具 / 文件结构），架构与约定坑见 [`CLAUDE.md`](https://github.com/whyymj/page-agent-sdk/blob/master/CLAUDE.md)。
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
-[![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
+[![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
 [![tests](https://img.shields.io/badge/self%20tests-524%20asserts-brightgreen.svg)](#自测)
 
 ---
@@ -269,7 +269,7 @@ npm i page-agent-sdk
 cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-integrate ~/.claude/skills/
 
 # 方式 B —— 从仓库下载（无需安装）
-curl -L https://github.com/whyymj/chat-sdk/tarball/master | tar xz --strip-components=1 --wildcards '*/skills/page-agent-sdk-integrate'
+curl -L https://github.com/whyymj/page-agent-sdk/tarball/master | tar xz --strip-components=1 --wildcards '*/skills/page-agent-sdk-integrate'
 mv skills/page-agent-sdk-integrate ~/.claude/skills/
 ```
 
@@ -404,12 +404,12 @@ function switchTo(i: number) {
 
 | 文档 | 内容 |
 |---|---|
-| [文档索引](https://github.com/whyymj/chat-sdk/blob/master/doc/README.md) | 各文档导航 + 其他信息源（规范/变更/自测） |
-| [使用手册](https://github.com/whyymj/chat-sdk/blob/master/doc/usage-guide.md) | 安装 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
-| [功能架构](https://github.com/whyymj/chat-sdk/blob/master/doc/architecture.md) | 分层 / 控制流 / 数据操作安全流 |
-| [上下文与压缩](https://github.com/whyymj/chat-sdk/blob/master/doc/context-management.md) | 上下文组成 / 4 层压缩 / 流程图 |
-| [文件全览](https://github.com/whyymj/chat-sdk/blob/master/doc/architecture-files.md) | 逐文件职责 / 依赖 / 数据流 |
-| [CLAUDE.md](https://github.com/whyymj/chat-sdk/blob/master/CLAUDE.md) | **agent 必读** · 架构要点 / 约定坑 / 编码规范 |
+| [文档索引](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.md) | 各文档导航 + 其他信息源（规范/变更/自测） |
+| [使用手册](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) | 安装 / 配置项 / 能力详解 / 自定义中间件 / FAQ |
+| [功能架构](https://github.com/whyymj/page-agent-sdk/blob/master/doc/architecture.md) | 分层 / 控制流 / 数据操作安全流 |
+| [上下文与压缩](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) | 上下文组成 / 4 层压缩 / 流程图 |
+| [文件全览](https://github.com/whyymj/page-agent-sdk/blob/master/doc/architecture-files.md) | 逐文件职责 / 依赖 / 数据流 |
+| [CLAUDE.md](https://github.com/whyymj/page-agent-sdk/blob/master/CLAUDE.md) | **agent 必读** · 架构要点 / 约定坑 / 编码规范 |
 
 ## 自测
 
@@ -490,8 +490,8 @@ npm test
 
 ## 与 Deep Agents 的关系
 
-借鉴 [Deep Agents](https://github.com/langchain-ai/deepagents) 的 harness 思路（ReAct + 中间件 + planning + skills + memory + context 管理），但自研实现：不引 LangGraph/langchain 整包；面向浏览器端（持久化用 IndexedDB 而非服务端 DB）；上下文用输入压缩 + 内存裁剪 + 大结果 offload，而非每步 checkpointer 存档。详见 [上下文与压缩 - 与 Deep Agents 的差异](https://github.com/whyymj/chat-sdk/blob/master/doc/context-management.md#七与-deep-agents-的差异)。
+借鉴 [Deep Agents](https://github.com/langchain-ai/deepagents) 的 harness 思路（ReAct + 中间件 + planning + skills + memory + context 管理），但自研实现：不引 LangGraph/langchain 整包；面向浏览器端（持久化用 IndexedDB 而非服务端 DB）；上下文用输入压缩 + 内存裁剪 + 大结果 offload，而非每步 checkpointer 存档。详见 [上下文与压缩 - 与 Deep Agents 的差异](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md#七与-deep-agents-的差异)。
 
 ## License
 
-[ISC](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
+[ISC](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
