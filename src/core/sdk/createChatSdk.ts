@@ -68,6 +68,10 @@ export interface LLMConfig {
   contextWindow?: number
   /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
   maxOutputTokens?: number
+  /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking: { thinking: { type: 'enabled' } }) */
+  extraBody?: Record<string, any>
+  /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
+  extraConfig?: Record<string, any>
 }
 
 /** 单 agent 实例的会话控制 */
@@ -299,8 +303,9 @@ function buildDataPrompt(data: DataConfig | undefined): string {
 }
 
 export interface ChatSdk {
-  /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless) */
-  mount(): Promise<void>
+  /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless)。
+   *  可选传 overrideContainer(HTMLElement | 选择器字符串)覆盖创建时 options.container —— 异步绑定:创建时可省略 container,mount 时才指定 */
+  mount(overrideContainer?: HTMLElement | string): Promise<void>
   /** 响应式消息数组(headless 模式下供集成方自建 UI 读取;与内部共享同一引用) */
   messages: AgentMessage[]
   /** 卸载(shareContext 时仅减引用计数,归零才真销毁) */
@@ -540,7 +545,8 @@ function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Pr
       model: cfg.model,
       temperature,
       maxTokens,
-      configuration: cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined,
+      configuration: { ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}), ...cfg.extraConfig },
+      ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
     })
   }
   return async (prompt: string) => {
@@ -1207,7 +1213,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             model: (llmOpt as LLMConfig).model,
             temperature: (llmOpt as LLMConfig).temperature,
             maxTokens: (llmOpt as LLMConfig).maxTokens,
-            configuration: (llmOpt as LLMConfig).baseUrl ? { baseURL: (llmOpt as LLMConfig).baseUrl } : undefined,
+            configuration: {
+              ...((llmOpt as LLMConfig).baseUrl ? { baseURL: (llmOpt as LLMConfig).baseUrl } : {}),
+              ...(llmOpt as LLMConfig).extraConfig,
+            },
+            ...((llmOpt as LLMConfig).extraBody ? { modelKwargs: (llmOpt as LLMConfig).extraBody } : {}),
           })
       if (typeof (newLlm as any).bindTools !== 'function' && options.debug) {
         console.warn('[page-agent-sdk][setLlm] 新模型不支持 bindTools(tool calling 会失效)')
@@ -1385,6 +1395,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             model: options.llm.model,
             temperature: options.llm.temperature,
             maxTokens: options.llm.maxTokens,
+            extraBody: options.llm.extraBody,
+            extraConfig: options.llm.extraConfig,
           }),
       systemPrompt: baseSystemPrompt,
       tools: allTools,
@@ -1454,13 +1466,15 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   let flushHandler: (() => void) | null = null
   let visHandler: (() => void) | null = null
 
-  async function mount(): Promise<void> {
+  async function mount(overrideContainer?: HTMLElement | string): Promise<void> {
     await core.initDone
     // 已挂载且隐藏中(抽屉模式 hide 后再 mount):直接 show,不重建 vueApp,保留 agent/历史/生成进程
     if (vueApp) {
       show()
       return
     }
+    // mount 时传 container 覆盖 options.container(异步绑定:创建时可不传,mount 时才指定)
+    if (overrideContainer !== undefined) options.container = overrideContainer
     // headless:不渲染 UI,只 init agent + 装 flush 兜底(集成方用 messages/send 自建 UI)
     if (ui === false) {
       if (core.store) {

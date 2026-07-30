@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "2.12.1",
+  "version": "2.12.2",
   "type": "module",
   "description": "Browser-native AI agent SDK: chat dialog + ReAct tool-calling + schema-validated JSON ops. Vue bundled, framework-agnostic. Works with DeepSeek/OpenAI/MCP.",
   "main": "./dist/page-agent-sdk.umd.cjs",

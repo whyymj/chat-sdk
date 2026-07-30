@@ -105,7 +105,7 @@ const loadedList = computed(() => {
 
 onMounted(() => {
   agent = createChatSdk({
-    container: root.value!,
+    // container 异步绑定:创建时省略,mount() 时传选择器(也可传 DOM 元素)
     id: 'dynamic-demo',
     storage: 'memory',
     llm: {
@@ -141,7 +141,7 @@ onMounted(() => {
       placeholder: '先点左侧「加载」加几个组件,再让我改(如:把 banner-1 标题改成「限时特惠」)',
     },
   })
-  agent.mount()
+  agent.mount(root.value!)  // mount 时传 DOM 元素(异步绑定),也可传选择器字符串如 '#root'
   refreshRegistered()
 })
 onUnmounted(() => agent?.unmount())
@@ -192,7 +192,7 @@ onUnmounted(() => agent?.unmount())
         或「card-1 价格改成 59、tag 改成『秒杀』」→ AI 调 <code>write</code> 按 patch jsonPath 改,onEvent 触发 tick 重渲染
       </p>
     </aside>
-    <section ref="root" class="pane pane-right"></section>
+    <section id="root" ref="root" class="pane pane-right"></section>
   </div>
 </template>
 

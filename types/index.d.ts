@@ -168,6 +168,10 @@ export interface LLMConfig {
   contextWindow?: number;
   /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
   maxOutputTokens?: number;
+  /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking: { thinking: { type: 'enabled' } }) */
+  extraBody?: Record<string, any>;
+  /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
+  extraConfig?: Record<string, any>;
 }
 /** LangChain BaseChatModel 的结构形状(provider 抽离:llm 可传任意 provider 实例) */
 export type ChatModelLike = {
@@ -494,7 +498,9 @@ export interface DialogConfig {
 }
 
 export interface ChatSdk {
-  mount(): Promise<void>;
+  /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless)。
+   *  可选传 overrideContainer(HTMLElement | 选择器字符串)覆盖创建时 options.container —— 异步绑定:创建时可省略 container,mount 时才指定 */
+  mount(overrideContainer?: HTMLElement | string): Promise<void>;
   /** 响应式消息数组(headless 模式自建 UI 读) */
   messages: AgentMessage[];
   unmount(): void;

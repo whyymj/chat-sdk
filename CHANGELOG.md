@@ -2,6 +2,18 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.12.2] - 2026-07-30
+
+### Added
+- **`mount()` 支持传参(异步绑定容器)**:`mount(overrideContainer?: HTMLElement | string)` —— 创建 `createChatSdk` 时可省略 `container`,在 `mount()` 时才指定(传 DOM 元素或选择器字符串),覆盖 `options.container`。适合「先初始化 agent(预加载/恢复持久化),稍后再挂载到 UI」场景。向后兼容(不传参 = 用 `options.container`)
+- **LLM 特殊传参透传(`#8`)**:`LLMConfig` 新增 `extraBody`(透传 ChatOpenAI `modelKwargs`,合并到请求 body,如 deepseek thinking: `{ thinking: { type: 'enabled' } }`)+ `extraConfig`(透传 `configuration` 额外字段,如 headers/timeout/customFetch,与 baseUrl 合并)。三处构造 ChatOpenAI 全部透传:主 LLM / 摘要 LLM / `setLlm` 运行时切换。`CreateAgentOptions` 同步加两字段
+
+### Changed
+- `examples/dynamic-demo/App.vue`:示范 `mount(root.value!)` 异步绑定容器(创建时不传 container,mount 时传 DOM 元素)
+
+### Docs
+- `doc/问题.md` #8 状态更新为「2.12.2 做」+ 实现说明
+
 ## [2.12.0] - 2026-07-30
 
 ### Added

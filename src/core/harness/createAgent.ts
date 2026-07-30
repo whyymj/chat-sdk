@@ -72,6 +72,10 @@ export interface CreateAgentOptions {
   contextWindow?: number
   /** 集成方显式声明模型最大输出(token);缺省按 model 名查表,再缺省 4K。maxTokens 未传时作其缺省 */
   maxOutputTokens?: number
+  /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking)。仅 llm 未传实例(按配置构造 ChatOpenAI)时生效 */
+  extraBody?: Record<string, any>
+  /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并。仅按配置构造时生效 */
+  extraConfig?: Record<string, any>
   systemPrompt?: string
   /** 用户自定义工具(与中间件贡献的工具合并) */
   tools?: StructuredToolInterface[]
@@ -132,6 +136,8 @@ export function createAgent(options: CreateAgentOptions) {
     model = 'gpt-3.5-turbo',
     temperature = 0.7,
     maxTokens, // 不设默认:缺省由模型能力(maxOutputTokens)推导,避免设错被截断
+    extraBody,
+    extraConfig,
     systemPrompt,
     tools: extraTools = [],
     middleware: middlewares = [],
@@ -191,7 +197,8 @@ export function createAgent(options: CreateAgentOptions) {
     model,
     temperature,
     maxTokens: resolvedMaxTokens,
-    configuration: baseUrl ? { baseURL: baseUrl } : undefined,
+    configuration: { ...(baseUrl ? { baseURL: baseUrl } : {}), ...extraConfig },
+    ...(extraBody ? { modelKwargs: extraBody } : {}),
   })
   let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
 
