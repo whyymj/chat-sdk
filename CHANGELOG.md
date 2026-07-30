@@ -2,6 +2,41 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.12.0] - 2026-07-30
+
+### Added
+- **运行时动态重配置(`add-dynamic-reconfiguration`)**:运行时增删工具 / 切换 LLM / 更新 memory / 增删预声明子 agent,无需重建 agent(保留对话历史与中间件状态),全程零破坏(不调用 = 现状行为)
+  - `sdk.setTools(tools)` / `addTool(tool)` / `removeTool(name)`:运行时增删**用户工具**(内置工具由 `capabilities` 控制,不动);内部 `rebindTools` 重新绑定到 LLM,下一轮即生效。支持按权限/业务阶段/A-B 实验动态切换工具组
+  - `sdk.setLlm(llm)`:运行时切换 LLM(配额耗尽切便宜模型 / 复杂任务切强模型 / 切 provider);参数 `BaseChatModel` 或 `LLMConfig`(内部构造 `ChatOpenAI`);rebind + 重解析模型能力(`contextWindow`/`maxOutputTokens`);`summaryLlm` 不受影响;新模型不支持 `bindTools` 则工具调用失效(agent 不崩)
+  - `sdk.setMemory(text)`:运行时更新持久指令 memory(下一轮 `augmentPrompt` 注入最新;`setMemory('')` 清空)
+  - `sdk.setSubagents(configs)` / `addSubagent(config)` / `removeSubagent(id)`:运行时增删预声明子 agent(经 `SubagentsController` 重新生成 `use_<id>` 委派工具 + 触发 rebind);需创建时配 `subagents:[]`(空数组也启用 controller,支持「初始无子 agent,运行时动态 add」)
+  - 所有 setter 触发 `infoTick++` → DebugDrawer 实时刷新;`inspect()` 的 tools/model/memory/subagent.subagents 经 getter/`controller.get()` 动态取最新
+  - 详见 `doc/usage-guide.md` §6.11、`skills/page-agent-sdk-integrate/references/advanced.md` §6、`openspec/changes/archive/2026-07-30-add-dynamic-reconfiguration/`
+- **`complex-demo` 动态重配置演示面板(`examples/complex-demo/DynamicReconfigPanel.vue`)**:一次性展示 4 类新增 API 的使用场景与说明文档(工具/LLM/memory/子 agent 动态化),含实时 `inspect()` 快照 + 操作日志(before→after);demo 顺带配 `subagents:[]` 占位启用 controller
+
+### Changed
+- **`subagentsMw` 创建条件**:`options.subagents?.length`(空数组 falsy)→ `useSubagent && options.subagents !== undefined`,使 `subagents:[]` 也能创建 `SubagentsController`(支持「初始无子 agent,运行时动态 add」场景)
+- **`createAgent` 内部**:`allTools`/`llmWithTools`/`llm` 改 `let` + 新增 `rebindTools()`;返回对象 `allTools` 改 getter(setTools/setLlm 重赋值后 inspect 取最新);新增 `setTools`/`setLlm` 方法 + `onLlmChange` 回调选项
+- **`memory` 中间件**:新增 `get()` 方法(供 `inspect().memory` 反映运行时 `setMemory` 后的最新)
+- **`SubagentInfo` 类型**:新增 `subagents?` 字段(预声明子 agent 列表,动态反映 setSubagents/addSubagent/removeSubagent)
+- **导出**:新增 `SubagentsController` 类型导出
+
+### Docs
+- `doc/usage-guide.md` 新增 §6.11「运行时动态重配置」(API 表 + 4 个场景代码示例)
+- `doc/architecture.md` ⑨ 子 agent 小节补「运行时动态重配置」机制说明
+- `doc/system-prompt.md` B4 memory 段标注「运行时可经 `sdk.setMemory` 更新」
+- `doc/roadmap.md` #5 标记「✅ 已完成(归档)」并简化为指引(详情在 openspec archive)
+- `doc/问题.md` #5 移除(已完成),决策汇总表同步
+- `README.md` / `README.zh-CN.md` 便捷 API 注释补 8 个 set*/add*/remove* 方法;测试徽章计数修正(→ 524);e2e 覆盖描述补「运行时动态重配置」
+- `skills/page-agent-sdk-integrate/references/api.md` API 表补 8 个动态方法 + 「Runtime dynamic reconfiguration」章节
+- `skills/page-agent-sdk-integrate/references/advanced.md` 新增 §6「Runtime dynamic reconfiguration」(代码示例 + 缺失项说明)
+- `skills/page-agent-sdk-integrate/references/options.md` `subagents` 选项补注「传 [] 启用 controller 支持运行时动态 add」
+- `CLAUDE.md` 测试计数 495→524 / 189→210;新增「运行时动态重配置」API 说明;SDK 用法示例补 setTools/setLlm/setMemory/setSubagents + subagents:[];Agent 身份职责分工提及「运行时资源动态加载/卸载」
+
+### Tests
+- selftest 495→524(+29,新增 `sec-29` 模块:tools/subagents/llm/memory 动态化单元断言)
+- e2e 189→210(+21,`inspect.mjs` 增 setTools/addTool/removeTool/setSubagents/addSubagent/removeSubagent/setLlm/setMemory 反映断言 + 未配 subagents 时 setter warn 不抛错)
+
 ## [2.11.0] - 2026-07-28
 
 ### Added

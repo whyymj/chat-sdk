@@ -88,6 +88,8 @@ export interface CreateAgentOptions {
   maxVerifyAttempts?: number
   /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
   onLog?: (entry: DebugLog) => void
+  /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
+  onLlmChange?: (newLlm: BaseChatModel) => void
   debug?: boolean
 }
 
@@ -139,6 +141,7 @@ export function createAgent(options: CreateAgentOptions) {
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
     onLog,
+    onLlmChange,
     debug = false,
   } = options
 
@@ -175,20 +178,27 @@ export function createAgent(options: CreateAgentOptions) {
   }
 
   // 合并工具:中间件贡献的工具 + 用户工具
-  const allTools: StructuredToolInterface[] = [
+  // let + rebindTools:支持运行时 setTools 动态增删用户工具(类比 setData/setSkills)
+  let allTools: StructuredToolInterface[] = [
     ...middlewares.flatMap((m) => m.tools || []),
     ...extraTools,
   ]
 
   // provider 抽离:优先用预构造实例(任意 provider);否则按 apiKey/model 配置构造 ChatOpenAI(向后兼容)
-  const llm = options.llm ?? new ChatOpenAI({
+  // let:支持运行时 setLlm 切换模型(配额耗尽切便宜模型 / 复杂任务切强模型 / 切 provider)
+  let llm = options.llm ?? new ChatOpenAI({
     apiKey,
     model,
     temperature,
     maxTokens: resolvedMaxTokens,
     configuration: baseUrl ? { baseURL: baseUrl } : undefined,
   })
-  const llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
+  let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
+
+  /** 重新绑定工具到当前 llm(setTools/setLlm 后调用;bindTools 缺失时退回裸 llm) */
+  function rebindTools(): void {
+    llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
+  }
 
   let state: HarnessState = createInitialState()
 
@@ -518,5 +528,35 @@ export function createAgent(options: CreateAgentOptions) {
     return final
   }
 
-  return { invoke, stream, getState: () => state, allTools, debugLogs }
+  /**
+   * 运行时替换用户工具集(内置工具由中间件贡献,不动)。
+   * 重算 allTools = [中间件贡献工具 + userTools] + rebindTools();下一轮 LLM 调用即用新工具集。
+   * 不调用 = 现状行为(创建时 tools 固定)。
+   */
+  function setTools(userTools: StructuredToolInterface[]): void {
+    allTools = [...middlewares.flatMap((m) => m.tools || []), ...userTools]
+    rebindTools()
+  }
+
+  /**
+   * 运行时切换 LLM 实例(配额耗尽切便宜模型 / 复杂任务切强模型 / 切 provider)。
+   * 替换 llm + rebindTools + onLlmChange 回调(供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens)。
+   * 新模型若不支持 tool calling(bindTools 缺失),rebindTools 退回裸 llm —— 工具调用会失效但 agent 不崩。
+   */
+  function setLlm(newLlm: BaseChatModel): void {
+    llm = newLlm
+    rebindTools()
+    onLlmChange?.(newLlm)
+  }
+
+  return {
+    invoke,
+    stream,
+    getState: () => state,
+    // getter:setTools/setLlm 后 allTools 重赋值,getter 始终取最新(inspect().tools 动态反映)
+    get allTools() { return allTools },
+    setTools,
+    setLlm,
+    debugLogs,
+  }
 }

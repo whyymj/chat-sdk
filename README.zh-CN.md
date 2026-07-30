@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-364%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-524%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -162,6 +162,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
 | | `systemPrompt` | `string` | Agent 身份(不硬编码业务,靠这注入)。可选——不传用内置默认(JSON 操作助手 + `reliableWriteRules`);传了则完全覆盖。`appendReliableWriteRules` 默认 `true`:自动用 `---` 分隔线追加 reliableWriteRules;设 `false` 关闭 |
+| | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
 | **能力开关** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
@@ -352,6 +353,15 @@ createChatSdk({
 // skillStorage: { id: 'shared' }  // 手动指定同一 id → 跨页面/跨 agent 复用同一套用户 skill
 // sdk.usage                     // 累计 token 用量 {prompt_tokens, completion_tokens, total_tokens}
 // sdk.hide() / sdk.show()      // 抽屉模式隐藏/显示(保留 agent/历史/生成进程;hide 后再 mount 直接 show 不重建)
+// 运行时动态重配置(零破坏,不调用 = 现状):
+// sdk.setTools(tools)           // 运行时替换用户工具集(内置不动,内部 rebind 重新绑定到 LLM,下一轮即生效)
+// sdk.addTool(tool)             // 运行时追加用户工具(去重 by name)
+// sdk.removeTool(name)          // 运行时移除用户工具(内置不动);返回是否移除成功
+// sdk.setLlm(llm)               // 运行时切换 LLM(配额耗尽切便宜模型/复杂任务切强模型/切 provider;参数 BaseChatModel 或 LLMConfig;rebind + 重解析模型能力)
+// sdk.setMemory(text)           // 运行时更新持久指令 memory(下一轮 augmentPrompt 注入最新)
+// sdk.setSubagents(configs)     // 运行时替换预声明子 agent(重新生成 use_<id> 委派工具 + rebind;需创建时配 subagents:[])
+// sdk.addSubagent(config)        // 运行时追加预声明子 agent
+// sdk.removeSubagent(id)        // 运行时移除预声明子 agent;返回是否移除成功
 ```
 
 ## 示例
@@ -404,8 +414,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 483 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 173 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 524 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 210 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

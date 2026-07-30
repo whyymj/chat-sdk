@@ -9,6 +9,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | `llm` | `LLMConfig \| BaseChatModel` | — (required) | The model. `LLMConfig = { apiKey, baseUrl, model, temperature?, maxTokens? }` (OpenAI-compatible; DeepSeek default). Or pass any LangChain `BaseChatModel` (e.g. `ChatAnthropic`, install its peerDep). |
 | `systemPrompt` | `string` | built-in default (JSON-operation assistant + reliable write rules) | Agent identity/instructions. Inject here, not hardcoded. Keep single-line in `.env` (`VITE_AI_SYSTEM_PROMPT`). If omitted, a built-in default is used (JSON-operation assistant + `systemPromptHelpers.reliableWriteRules`); passing your own fully overrides it. |
 | `appendReliableWriteRules` | `boolean` | `true` | When `true` (default) and a custom `systemPrompt` is set, auto-append `systemPromptHelpers.reliableWriteRules` to it with a `---` separator (clearly distinguishes user content from SDK-appended write rules; avoids forgetting the write rules). Set `false` to disable. No effect when `systemPrompt` is omitted (default prompt already includes them). |
+| `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | — | Dynamic system-prompt injection hook. Called each turn; return a string to inject as a segment, or `undefined` to skip. Callback errors degrade to skip (no crash). `ctx.data` is taken from `liveData()` each turn (auto-syncs after `setData`), so you can compute dynamic component descriptions / partial schema hints from current runtime state. Segment is placed after built-in segments (base/dataHint/usageHints/.../subagents) and before user `middleware`. Not set = current behavior (no segment). See `doc/system-prompt.md` §B6. |
 | `id` | `string` | random + warn | Stable agent id for multi-agent isolation & persistence. **Must pass a stable value** if you use `storage` or run multiple agents on one page. |
 
 ## UI & mounting
@@ -98,7 +99,7 @@ Full reference for `createChatSdk(options)`. Grouped by purpose. Required: `llm`
 | Option | Type | Default | Purpose / when |
 |---|---|---|---|
 | `subagent` | `object` | enabled | `{ enabled?, allowedTools?, systemPrompt?, temperature?, maxTokens?, skills?, llm?, maxDepth?, maxParallel? }`. `maxDepth` (1) physically cuts recursion. Subagents get a read-only tool subset (no spawn). |
-| `subagents` | `SubagentConfig[]` | `[]` | Pre-declared named subagents → each auto-generates a `use_<id>({ task })` delegation tool (Claude-Code style). Fixed roles (research/review) vs ad-hoc `spawn_agent`. |
+| `subagents` | `SubagentConfig[]` | `[]` | Pre-declared named subagents → each auto-generates a `use_<id>({ task })` delegation tool (Claude-Code style). Fixed roles (research/review) vs ad-hoc `spawn_agent`. Pass `[]` (empty array) to enable the `SubagentsController` for runtime `addSubagent`/`removeSubagent`/`setSubagents` (initial no subagents, add dynamically later). |
 
 ## Verify (self-check before return)
 

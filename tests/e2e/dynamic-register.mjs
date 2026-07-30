@@ -44,5 +44,22 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:dynamic-register] setData 后 inspect().systemPrompt 反映新 schema(验证 A4 动态化已修 Bug)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-dyn-sysprompt', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ oldField: z.string().describe('旧字段说明') }), bind: { oldField: 'a' }, description: '旧配置' },
+    })
+    await sdk.mount()
+    const before = sdk.inspect().systemPrompt
+    assert(before.includes('旧字段说明'), '初始 systemPrompt 含旧 schema 字段说明')
+    sdk.setData({ schema: z.object({ newField: z.string().describe('新字段说明') }), bind: { newField: 'b' }, description: '新配置' })
+    const after = sdk.inspect().systemPrompt
+    assert(after.includes('新字段说明'), 'setData 换 schema 后 systemPrompt 反映新字段说明(A4 动态化已修 Bug)')
+    assert(!after.includes('旧字段说明'), 'setData 换 schema 后 systemPrompt 不再含旧字段说明')
+    assert(after.includes('新配置'), 'setData 后 systemPrompt 含新 description')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

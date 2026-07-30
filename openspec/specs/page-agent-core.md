@@ -121,3 +121,27 @@ DebugDrawer 提供「流程」视图,把扁平 debugLog 按 `round` 分组成流
 ## Requirement: 预声明子 agent(subagents:[] + use_<id>)
 
 `createChatSdk` 接受 `subagents: SubagentConfig[]` 预声明一组命名子 agent(每个 `{ id, description, llm?, systemPrompt?, tools?, skills?, temperature?, maxTokens?, maxToolRounds? }`,配置方式同主)。为每个 subagent 自动生成专属委派工具 `use_<id>({ task })`(Claude Code 风格,主 LLM 经工具描述判断何时委派),id 须合法工具名 `[a-zA-Z_][a-zA-Z0-9_]*` + 唯一(不合法 warn + 跳过)。子 agent 配置**缺省继承主**(llm/systemPrompt 不传则同主);专属 `tools` 经 `extraTools` 直接进子工具池(不经主 allTools 白名单筛选,让子 agent 有主没有的专属工具)。经 `augmentPrompt` 注入「可用子 agent」索引。与 `spawn_agent`/`spawn_agents`(运行时自由委派)**共存**:预声明用于固定角色,spawn 用于临时子任务。子 agent 默认叶子(maxDepth 1,不可再 spawn);进度经 `subagent` 事件转发(不进主上下文)。
+
+## Requirement: 可操作数据段每轮随 data 动态
+
+system prompt 的「可操作数据」段(从 `data.schema` 字段 `.describe()` 经 `extractSchemaHint` 自动提取的字段说明)由 `dataHint` 中间件每轮从 `liveData()` 动态重算注入,而非创建时 `const` 固化。运行时 `sdk.setData()` 换 schema 后,下一轮 `buildSystemPrompt()` 自动反映最新字段描述;`inspect().systemPrompt` 经动态重算(`baseSystemPrompt + buildDataPrompt(liveData()) + augmentSystem 段`)也同步反映。`dataHint` 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与改造前等价。仅 `data` 配置存在时装载;无 data → `buildDataPrompt` 返空 → `augmentPrompt` 返 `undefined` → 跳过。该机制修复了「setData 后 system prompt 仍含旧 schema 描述」的 Bug,使动态 / 懒加载组件场景下 LLM 始终基于最新字段描述操作。
+
+## Requirement: 动态 system prompt 注入钩子(augmentSystem)
+
+`createChatSdk` 接受 `augmentSystem?: (ctx: SystemAugmentContext) => string | undefined` 钩子,`SystemAugmentContext = { state: HarnessState; data?: DataConfig }`。每轮 `buildSystemPrompt()` 时调用,集成方按运行时状态(state/data)返回字符串 → 作为 system prompt 一段注入;返回 `undefined` → 跳过;回调抛错降级为跳过该段 + debug 日志(不崩 agent)。`ctx.data` 每轮从 `liveData()` 取最新(setData 后自动同步),可据此动态算「当前相关组件说明」「部分 schema 描述」。段排在内置段(base/dataHint/usageHints/.../subagents)之后、用户 `middleware` 之前 —— 可在内置数据段 / 能力提示基础上补充。不配 = 完全现状行为(无该段)。本质是 createChatSdk 层把 `augmentPrompt` 中间件 + `liveData` 闭包预包装成便捷选项(类比 `memory`);集成方要更灵活(多段 / 复杂逻辑)仍可写自定义 middleware。`inspect().systemPrompt` 经动态重算也含 augmentSystem 段(供 DebugDrawer 观测)。
+
+## Requirement: 运行时动态工具加载/卸载(tools)
+
+系统提供 `sdk.setTools(tools)` / `sdk.addTool(tool)` / `sdk.removeTool(name)`,集成方可在运行时替换、追加、移除**用户自定义工具**。`setTools` 只替换用户工具部分,内置工具(由 `capabilities` 控制的 dataOps/fetchDoc 等)不受影响。调用后内部重新执行 `llm.bindTools(allTools)` 绑定最新工具集,下一轮 LLM 调用即生效;`inspect().tools` 经 `infoTick` 触发刷新实时反映。不调用这些方法时行为与现状一致(创建时 `tools` 选项固定工具集)。该机制支持「按权限/业务阶段/A-B 实验动态切换工具组」等场景,无需重建 agent(保留对话历史与中间件状态)。
+
+## Requirement: 运行时动态子 agent 加载/卸载(subagents)
+
+系统提供 `sdk.setSubagents(configs)` / `sdk.addSubagent(config)` / `sdk.removeSubagent(id)`,集成方可在运行时替换、追加、移除预声明子 agent 配置。每次变更内部重新生成 `use_<id>` 委派工具并触发工具重新绑定(复用 tools 动态机制)。`inspect().subagent` 实时反映当前子 agent 配置。创建时经 `subagents:[]` 预声明仍支持(向后兼容)。`capabilities.subagent` 关闭时 controller 为 null,setter 调用 warn 提醒但不抛错。该机制支持「运行时根据任务类型决定委派哪些子 agent」等动态编排场景。
+
+## Requirement: 运行时动态模型切换(llm)
+
+系统提供 `sdk.setLlm(llm)`,参数为 `BaseChatModel` 实例或 `LLMConfig`(内部构造 `ChatOpenAI`)。调用后内部替换模型实例、重新绑定工具、重解析模型能力(`contextWindow`/`maxOutputTokens`,影响 offload 阈值与压缩触发),下一轮 LLM 调用即用新模型。`inspect().model` 实时反映。新模型若不支持 tool calling(`bindTools` 缺失)则 warn 提醒(工具调用会失效,但 agent 不崩)。`summaryLlm`(摘要专用模型)独立,不受 `setLlm` 影响。不调用时模型保持创建时配置(向后兼容)。该机制支持「配额耗尽切便宜模型 / 复杂任务切强模型 / 切换 provider」等场景。
+
+## Requirement: 运行时动态 memory 更新(memory)
+
+系统提供 `sdk.setMemory(text)`,集成方可在运行时更新持久指令 memory 文本。内部更新中间件持有的 memory 变量,下一轮 `augmentPrompt` 注入最新值;`setMemory('')` 清空(空串跳过注入)。`inspect().memory` 实时反映。不调用时 memory 保持创建时 `options.memory` 配置(向后兼容)。该机制支持「运行时切换业务上下文 / 追加业务约束」等场景,无需重建 agent。

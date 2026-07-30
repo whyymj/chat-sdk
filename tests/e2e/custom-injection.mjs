@@ -327,5 +327,51 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:custom-injection] augmentSystem 钩子注入内容可观测')
+  {
+    let callCount = 0
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-augsys', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'd' },
+      augmentSystem: ({ state, data }) => {
+        callCount++
+        return `## 业务补充\n当前数据描述:${data?.description ?? '(无)'}`
+      },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(callCount > 0, 'augmentSystem 回调被调用(inspect 时触发)')
+    assert(sp.includes('业务补充'), 'augmentSystem 注入内容出现在 inspect().systemPrompt')
+    assert(sp.includes('当前数据描述:d'), 'augmentSystem 回调收到 data(经 liveData 闭包注入)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] augmentSystem 回调返回 undefined → 不注入(无该段)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-augsys-undef', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      augmentSystem: () => undefined,
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(!sp.includes('业务补充'), 'augmentSystem 返回 undefined → systemPrompt 不含该段')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:custom-injection] augmentSystem 回调抛错 → 降级跳过(不崩)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-augsys-err', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      augmentSystem: () => { throw new Error('boom') },
+    })
+    await sdk.mount()
+    let threw = false
+    let sp
+    try { sp = sdk.inspect().systemPrompt } catch { threw = true }
+    assert(!threw, 'augmentSystem 回调抛错 → inspect 不抛错(降级跳过)')
+    assert(!sp.includes('boom'), 'augmentSystem 抛错 → 内容未注入')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

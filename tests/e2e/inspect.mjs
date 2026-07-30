@@ -1,5 +1,5 @@
 // inspect 反映配置:tools / middleware / id / model / subagent / verify / mcp / 初始状态
-import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
@@ -146,6 +146,122 @@ export async function run() {
     assert(Array.isArray(info.todos) && info.todos.length === 0, 'inspect().todos 初始为空数组')
     assert(info.lastCompression === undefined, 'inspect().lastCompression 初始 undefined(未触发压缩)')
     assert(info.checkpoints === undefined, 'inspect().checkpoints 未开启 → undefined')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:inspect] inspect().middleware 含 dataHint(配 data 时)/ 不含(无 data)')
+  {
+    const sdkData = createChatSdk({
+      ui: false, id: 'e2e-datahint-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkData.mount()
+    const mwData = sdkData.inspect().middleware
+    assert(mwData.includes('dataHint'), '配 data → middleware 含 dataHint(A4 动态化中间件)')
+    assert(sdkData.inspect().systemPrompt.includes('可操作数据'), '配 data → inspect().systemPrompt 含「可操作数据」段(动态重算)')
+    sdkData.unmount()
+
+    const sdkNoData = createChatSdk({ ui: false, id: 'e2e-datahint-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdkNoData.mount()
+    const mwNoData = sdkNoData.inspect().middleware
+    assert(!mwNoData.includes('dataHint'), '无 data → middleware 不含 dataHint')
+    assert(!sdkNoData.inspect().systemPrompt.includes('可操作数据'), '无 data → inspect().systemPrompt 不含数据段')
+    sdkNoData.unmount()
+  }
+
+  console.log('[e2e:inspect] inspect().middleware 含 augmentSystem(配 augmentSystem 时)/ 不含(未配)')
+  {
+    const sdkAug = createChatSdk({
+      ui: false, id: 'e2e-augsys-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      augmentSystem: () => '## 业务补充\n当前组件:Button',
+    })
+    await sdkAug.mount()
+    assert(sdkAug.inspect().middleware.includes('augmentSystem'), '配 augmentSystem → middleware 含 augmentSystem')
+    sdkAug.unmount()
+
+    const sdkNoAug = createChatSdk({ ui: false, id: 'e2e-augsys-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdkNoAug.mount()
+    assert(!sdkNoAug.inspect().middleware.includes('augmentSystem'), '未配 augmentSystem → middleware 不含 augmentSystem')
+    sdkNoAug.unmount()
+  }
+
+  console.log('[e2e:inspect] setTools/addTool/removeTool → inspect().tools 反映动态增删')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-settools', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      tools: [defineTool({ name: 'orig_tool', description: 'orig', schema: z.object({}), handler: async () => 'x' })],
+    })
+    await sdk.mount()
+    const before = sdk.inspect().tools.map((t) => t.name)
+    assert(before.includes('orig_tool'), '初始 inspect().tools 含用户工具 orig_tool')
+    sdk.addTool(defineTool({ name: 'added_tool', description: 'added', schema: z.object({}), handler: async () => 'y' }))
+    const afterAdd = sdk.inspect().tools.map((t) => t.name)
+    assert(afterAdd.includes('added_tool'), 'addTool 后 inspect().tools 含新工具 added_tool')
+    assert(afterAdd.includes('orig_tool'), 'addTool 后原工具仍在')
+    const removed = sdk.removeTool('orig_tool')
+    assert(removed === true, 'removeTool(存在) → 返回 true')
+    const afterRemove = sdk.inspect().tools.map((t) => t.name)
+    assert(!afterRemove.includes('orig_tool'), 'removeTool 后 inspect().tools 不再含 orig_tool')
+    assert(sdk.removeTool('不存在') === false, 'removeTool(不存在) → 返回 false')
+    // setTools 整体替换
+    sdk.setTools([defineTool({ name: 'only_tool', description: 'only', schema: z.object({}), handler: async () => 'z' })])
+    const afterSet = sdk.inspect().tools.map((t) => t.name)
+    assert(afterSet.includes('only_tool') && !afterSet.includes('added_tool'), 'setTools 整体替换 → inspect().tools 反映新工具集')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:inspect] setSubagents/addSubagent/removeSubagent → inspect().subagent.subagents 反映')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-setsubagents', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false },
+      subagents: [{ id: 'writer', description: '写作子 agent' }],
+    })
+    await sdk.mount()
+    assert(sdk.inspect().subagent.subagents?.length === 1 && sdk.inspect().subagent.subagents[0].id === 'writer', '初始 inspect().subagent.subagents 含 writer')
+    sdk.addSubagent({ id: 'reviewer', description: '审查子 agent' })
+    assert(sdk.inspect().subagent.subagents?.length === 2, 'addSubagent 后 subagents 增至 2')
+    assert(sdk.inspect().subagent.subagents?.some((s) => s.id === 'reviewer'), 'addSubagent 后含 reviewer')
+    const removed = sdk.removeSubagent('writer')
+    assert(removed === true, 'removeSubagent(存在) → 返回 true')
+    assert(sdk.inspect().subagent.subagents?.length === 1 && sdk.inspect().subagent.subagents[0].id === 'reviewer', 'removeSubagent 后 subagents 减至 1(reviewer)')
+    sdk.setSubagents([{ id: 'a', description: 'A' }, { id: 'b', description: 'B' }])
+    assert(sdk.inspect().subagent.subagents?.length === 2 && sdk.inspect().subagent.subagents[0].id === 'a', 'setSubagents 整体替换 → 反映新列表')
+    // 委派工具随 controller 变(inspect().tools 含 use_a)
+    assert(sdk.inspect().tools.some((t) => t.name === 'use_a'), 'setSubagents 后 inspect().tools 含新委派工具 use_a')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:inspect] setLlm → inspect().model 反映新模型')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-3.5-turbo' }, capabilities: MIN_CAPS })
+    await sdk.mount()
+    assert(sdk.inspect().model === 'gpt-3.5-turbo', '初始 inspect().model === gpt-3.5-turbo')
+    sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake2', model: 'gpt-4o' })
+    assert(sdk.inspect().model === 'gpt-4o', 'setLlm 后 inspect().model === gpt-4o')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:inspect] setMemory → inspect().memory 反映')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setmemory', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, memory: '初始 memory' })
+    await sdk.mount()
+    assert(sdk.inspect().memory === '初始 memory', '初始 inspect().memory === 初始值')
+    sdk.setMemory('新 memory')
+    assert(sdk.inspect().memory === '新 memory', 'setMemory 后 inspect().memory 反映新值')
+    sdk.setMemory('')
+    assert(sdk.inspect().memory === '', "setMemory('') → inspect().memory 为空串")
+    sdk.unmount()
+  }
+
+  console.log('[e2e:inspect] setSubagents 未配 subagents 时 → warn 不抛错')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setsubagents-nocfg', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    let threw = false
+    try { sdk.setSubagents([{ id: 'x', description: 'X' }]) } catch { threw = true }
+    assert(!threw, '未配 subagents 时 setSubagents → warn 不抛错')
+    assert(sdk.removeSubagent('x') === false, '未配 subagents 时 removeSubagent → 返回 false')
     sdk.unmount()
   }
 

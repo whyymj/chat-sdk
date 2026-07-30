@@ -110,6 +110,8 @@ export interface SubagentInfo {
   maxDepth: number;
   maxParallel: number;
   allowedTools: string[];
+  /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
+  subagents?: { id: string; description: string }[];
 }
 /** 预声明子 agent 配置(同主配置子集 + id/description;缺省继承主 agent) */
 export interface SubagentConfig {
@@ -369,6 +371,16 @@ export interface SessionOptions {
   title?: string;
 }
 
+/**
+ * augmentSystem 钩子上下文:集成方回调据此按运行时状态动态注入 system prompt 段。
+ * - `state`:harness 当前状态(messages/todos/files/skills/memory…);不含 data(data 是 createChatSdk 层概念)
+ * - `data`:当前主数据配置(每轮从 liveData() 取最新,setData 后自动同步;含 schema/bind/description)
+ */
+export interface SystemAugmentContext {
+  state: any;
+  data?: DataConfig;
+}
+
 export interface ChatSdkOptions {
   container?: string | HTMLElement;
   /** UI:'default'(内置 ChatDialog)/ false(headless 不渲染,自建 UI) */
@@ -382,9 +394,17 @@ export interface ChatSdkOptions {
   session?: SessionOptions;
   /** 共享上下文:默认 false;true 时同 id 复用同一核心(messages/agent/工作区) */
   shareContext?: boolean;
+  /** 系统提示词(base + 可操作数据段,数据段随 data 动态;不含 todos/skills/memory/augmentSystem 等运行态 augmentPrompt 段) */
   systemPrompt?: string;
   /** 自定义 systemPrompt 时是否自动追加 reliableWriteRules(默认 true,用 '---' 分隔线区分;设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置,此项无效) */
   appendReliableWriteRules?: boolean;
+  /**
+   * 动态 system prompt 注入钩子:每轮 buildSystemPrompt 时调用,集成方按运行时状态(state/data)返回字符串 → 作为 system prompt 一段注入;返回 undefined → 跳过。
+   * - ctx.data 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算组件说明 / 部分 schema 描述
+   * - 回调异常降级为跳过该段 + debug 日志(不崩 agent)
+   * - 段排在内置段之后、用户 middleware 之前;不配 = 完全现状行为
+   */
+  augmentSystem?: (ctx: SystemAugmentContext) => string | undefined;
   tools?: any[];
   skills?: SkillSpec[];
   /** 用户创建 skill 的独立持久化存储(与 storage 选项分离)。默认 `{ backend: 'indexed' }`(即使 storage:false 也持久化);`false` 关闭;`id` 手动指定同一 id 可跨页面/跨 agent 复用 */
@@ -525,6 +545,22 @@ export interface ChatSdk {
   pendingConflict: Ref<PendingConflict | null>;
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
   resolveConflict(action: ConflictResolution['action']): void;
+  /** 运行时替换用户工具集(内置工具不动);立即 rebind + infoTick 刷新 */
+  setTools(tools: any[]): void;
+  /** 运行时追加用户工具(去重 by name);立即生效 */
+  addTool(tool: any): void;
+  /** 运行时移除用户工具(by name;内置不动);返回是否移除成功 */
+  removeTool(name: string): boolean;
+  /** 运行时切换 LLM(BaseChatModel 或 LLMConfig);rebind + 重解析能力 + infoTick */
+  setLlm(llm: ChatModelLike | LLMConfig): void;
+  /** 运行时更新 memory 文本;立即生效 + infoTick */
+  setMemory(text: string): void;
+  /** 运行时替换预声明子 agent 列表(重新生成委派工具 + rebind);需创建时配 subagents:[] */
+  setSubagents(configs: SubagentConfig[]): void;
+  /** 运行时追加预声明子 agent(id 重复 warn 跳过);需创建时配 subagents:[] */
+  addSubagent(config: SubagentConfig): void;
+  /** 运行时移除预声明子 agent(by id);返回是否移除成功;需创建时配 subagents:[] */
+  removeSubagent(id: string): boolean;
 }
 
 /** 乐观锁冲突挂起(dataOps 写入时 expectedHash 不匹配,挂起等用户决定) */
@@ -683,6 +719,12 @@ export interface StateUpdate { [k: string]: any }
 
 // 子 agent
 export declare function createSubagentsMiddleware(opts: any): any;
+export interface SubagentsController {
+  set(configs: SubagentConfig[]): void;
+  add(config: SubagentConfig): void;
+  remove(id: string): boolean;
+  get(): SubagentConfig[];
+}
 export interface SubagentOptions { [k: string]: any }
 export interface SubagentLlmConfig { [k: string]: any }
 

@@ -863,6 +863,43 @@ createChatSdk({
 })
 ```
 
+### 6.11 运行时动态重配置(tools / llm / memory / subagents)
+
+除 `setData`/`setSkills` 外,SDK 还支持运行时动态重配置 **工具 / LLM / memory / 预声明子 agent**,全程零破坏(不调用 = 现状行为),无需重建 agent(保留对话历史与中间件状态)。所有 setter 触发 `infoTick++` → DebugDrawer 实时刷新;`inspect()` 的 tools/model/memory/subagent.subagents 动态取最新。
+
+| API | 作用 | 备注 |
+|---|---|---|
+| `sdk.setTools(tools)` | 运行时替换**用户工具**集 | 内置工具(由 `capabilities` 控制)不动;内部 `rebindTools` 重新绑定到 LLM,下一轮即生效;支持按权限/业务阶段/A-B 实验动态切换工具组 |
+| `sdk.addTool(tool)` | 运行时追加用户工具 | 去重 by name;内置不动 |
+| `sdk.removeTool(name)` | 运行时移除用户工具 | 内置不动;返回是否移除成功 |
+| `sdk.setLlm(llm)` | 运行时切换 LLM | 参数 `BaseChatModel` 或 `LLMConfig`(内部构造 `ChatOpenAI`);rebind + 重解析模型能力(`contextWindow`/`maxOutputTokens`);`summaryLlm` 不受影响;新模型不支持 `bindTools` 则工具调用失效(agent 不崩) |
+| `sdk.setMemory(text)` | 运行时更新持久指令 memory | 下一轮 `augmentPrompt` 注入最新;`setMemory('')` 清空(空串跳过注入) |
+| `sdk.setSubagents(configs)` | 运行时替换预声明子 agent | 重新生成 `use_<id>` 委派工具 + 触发 rebind;需创建时配 `subagents:[]`(空数组也启用 controller,支持「初始无子 agent,运行时动态 add」) |
+| `sdk.addSubagent(config)` | 运行时追加预声明子 agent | id 重复 warn 跳过;需创建时配 `subagents:[]` |
+| `sdk.removeSubagent(id)` | 运行时移除预声明子 agent | 返回是否移除成功;需创建时配 `subagents:[]` |
+
+```ts
+// 场景 1:按业务阶段切换工具组(浏览期只读 / 编辑期可写)
+sdk.setTools([readOnlyTool1, readOnlyTool2])
+// ...用户点「编辑」按钮
+sdk.setTools([writeTool1, writeTool2, readOnlyTool1])
+
+// 场景 2:配额耗尽切便宜模型 / 复杂任务切强模型
+sdk.setLlm({ apiKey, baseUrl, model: 'gpt-4o-mini' })  // 省钱
+sdk.setLlm({ apiKey, baseUrl, model: 'gpt-4o' })      // 复杂任务
+
+// 场景 3:运行时追加业务约束到 memory
+sdk.setMemory('当前用户是 VIP,优先展示会员价;回答简洁。')
+
+// 场景 4:运行时根据任务类型动态委派子 agent
+// (创建时配 subagents:[] 占位启用 controller)
+sdk.addSubagent({ id: 'translator', description: '中英互译子 agent', systemPrompt: '你是翻译助手。' })
+// ...任务结束移除
+sdk.removeSubagent('translator')
+```
+
+> **说明**:`setSystemPrompt` / `setMiddleware`(中间件数组运行时替换)仍未实现,改动深入 harness 核心,留待后续;当前可用 `setData`/`setSkills`/`augmentSystem` 钩子覆盖大部分动态 system prompt 场景。详见 `doc/roadmap.md` #5。
+
 ## 8. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。

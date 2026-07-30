@@ -139,15 +139,20 @@ const inputText = ref('')
 const isExpanded = ref(true)
 const debugVisible = ref(false)
 const skillPanelVisible = ref(false)
-/** 记录每条消息思考过程的展开状态(按消息索引) */
+/** 记录每条消息思考过程的展开状态(按消息索引);默认展开(undefined = 展开),用户手动折叠后存 false */
 const reasoningExpanded = ref<Record<number, boolean>>({})
 
 const hasMessages = computed(() => state.messages.length > 0)
 const hasUserMessage = computed(() => state.messages.some((m) => m.role === 'user'))
 const hasDebugLogs = computed(() => (props.debugLogs?.length ?? 0) > 0)
 
+/** 思考过程是否展开:默认 true(undefined),用户显式折叠后 false */
+function isReasoningExpanded(idx: number): boolean {
+  return reasoningExpanded.value[idx] !== false
+}
+
 function toggleReasoning(idx: number) {
-  reasoningExpanded.value[idx] = !reasoningExpanded.value[idx]
+  reasoningExpanded.value[idx] = !isReasoningExpanded(idx)
 }
 
 function stepStatusIcon(step: ToolStep) {
@@ -310,18 +315,18 @@ const drawerWidthStyle = computed(() => {
           {{ msg.role === 'user' ? '👤' : '🤖' }}
         </div>
         <div class="message-content">
-          <!-- 思考过程(可折叠) -->
+          <!-- 思考过程(可折叠,默认展开:生成中实时可见,避免长时间一动不动) -->
           <div
             v-if="msg.role === 'assistant' && msg.reasoning"
             class="reasoning-block"
-            :class="{ expanded: reasoningExpanded[idx] }"
+            :class="{ expanded: isReasoningExpanded(idx) }"
           >
             <div class="reasoning-header" @click="toggleReasoning(idx)">
               <span class="reasoning-icon">🧠</span>
               <span class="reasoning-title">思考过程</span>
-              <span class="reasoning-toggle">{{ reasoningExpanded[idx] ? '▾' : '▸' }}</span>
+              <span class="reasoning-toggle">{{ isReasoningExpanded(idx) ? '▾' : '▸' }}</span>
             </div>
-            <div v-if="reasoningExpanded[idx]" class="reasoning-body">{{ msg.reasoning }}</div>
+            <div v-if="isReasoningExpanded(idx)" class="reasoning-body">{{ msg.reasoning }}</div>
           </div>
 
           <!-- 工具调用步骤 -->
@@ -631,7 +636,7 @@ const drawerWidthStyle = computed(() => {
 .reasoning-icon { font-size: 13px; }
 .reasoning-title { font-weight: 600; }
 .reasoning-toggle { margin-left: auto; }
-.reasoning-body { padding: 8px 10px; border-top: 1px dashed #b8d4c5; font-size: 12px; line-height: 1.6; color: #16402f; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
+.reasoning-body { padding: 8px 10px; border-top: 1px dashed #b8d4c5; font-size: 12px; line-height: 1.6; color: #16402f; white-space: pre-wrap; word-break: break-word; }
 
 .steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
 .step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; max-width: 100%; }

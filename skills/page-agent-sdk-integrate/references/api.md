@@ -19,6 +19,14 @@
 | `setSkills(skills)` | `(skills: SkillSpec[]) => void` | Runtime swap the entire skill list (same-name skill overwrites). Takes effect next round: the skill index section of the system prompt re-renders with the new skills; clears the skill full-text cache & in-round loaded set, so the next `load_skill` re-fetches the latest full text (incl. vfs doc). Requires skills enabled (default on). |
 | `invalidateSkillCache(name?)` | `(name?: string) => void` | Invalidate the skill full-text cache (proactive invalidation when a dynamic skill's content changes). Omit `name` to clear all; pass `name` to clear one. The next `load_skill` re-runs `getContent`/`readSkillDoc`. Requires skills enabled (default on). |
 | `usage` | `TokenUsage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` (accumulated per LLM call). |
+| `setTools(tools)` | `(tools: StructuredToolInterface[]) => void` | Runtime swap user tools (built-ins untouched; internal `rebindTools` re-binds to LLM; next round uses new set). Zero-breakage: not calling = current behavior. Supports per-permission/business-stage/A-B-test dynamic tool groups without rebuilding agent. |
+| `addTool(tool)` | `(tool: StructuredToolInterface) => void` | Append user tool at runtime (dedup by name; built-ins untouched). |
+| `removeTool(name)` | `(name: string) => boolean` | Remove user tool at runtime (built-ins untouched). Returns whether removed. |
+| `setLlm(llm)` | `(llm: BaseChatModel \| LLMConfig) => void` | Switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider). Param `BaseChatModel` or `LLMConfig` (constructs `ChatOpenAI` internally). Rebinds tools + re-resolves model caps (`contextWindow`/`maxOutputTokens`). `summaryLlm` unaffected. If new model lacks `bindTools`, tool-calling degrades (agent stays up). |
+| `setMemory(text)` | `(text: string) => void` | Update persistent memory directive at runtime (next `augmentPrompt` injects latest; `setMemory('')` clears). |
+| `setSubagents(configs)` | `(configs: SubagentConfig[]) => void` | Runtime swap pre-declared subagents (regenerates `use_<id>` delegation tools + triggers rebind). Requires `subagents:[]` at creation (else controller is null, setter warns, no throw). |
+| `addSubagent(config)` | `(config: SubagentConfig) => void` | Append pre-declared subagent at runtime (duplicate id warns & skips). Requires `subagents:[]` at creation. |
+| `removeSubagent(id)` | `(id: string) => boolean` | Remove pre-declared subagent at runtime (by id). Returns whether removed. Requires `subagents:[]` at creation. |
 | `restoreLastCheckpoint()` | `() => boolean` | Restore last good checkpoint (needs `checkpoint` enabled). |
 | `listCheckpoints()` | `() => CheckpointMeta[]` | List available checkpoints. |
 | `addSkill(skill)` | `(skill: { name, description, prompt \| getContent \| doc }) => void` | Add a user-created skill at runtime. Auto-merges into the skill list, persists via **independent SkillStore** (default indexedDB, separate from `storage` option), takes effect next round. Same-name overwrites. Requires `capabilities.skills` (default on) + `skillStorage` not `false` for persistence. |
@@ -164,6 +172,12 @@ createChatSdk({
 - **Notifying the outside world of changes**: subscribe `data_change` via `onEvent` (constructor) or `sdk.hook` (runtime, multi-listener, cancellable) — fires after `write`/`set`/`edit`/`delete`/`restore`, with `operation`/`value`. For Vue + reactive bind, template/watch auto-react (no manual notify needed); `onEvent` can coexist for audit/analytics.
 - **Runtime swap**: `sdk.setData({ schema, bind, description? })` replaces the whole config; tools pick up immediately (no rebuild). Snapshots & lock hash reset.
 - **Runtime skill swap**: `sdk.setSkills(skills)` replaces the entire skill list (same-name overwrites); the skill index section of the system prompt re-renders next round, and the skill full-text cache is cleared so the next `load_skill` re-fetches the latest content (incl. vfs doc). Use `sdk.invalidateSkillCache(name?)` to proactively invalidate the cache when a dynamic skill's content changes (without swapping the whole list).
+- **Runtime dynamic reconfiguration (zero-breakage; not calling = current behavior)**: beyond data/skills, you can also dynamically reconfigure tools / LLM / memory / subagents at runtime without rebuilding the agent:
+  - `sdk.setTools(tools)` / `addTool(tool)` / `removeTool(name)` — swap/append/remove user tools (built-ins untouched; internal `rebindTools` re-binds to LLM; next round uses new set). Use cases: per-permission tool groups, business-stage gating, A/B experiments.
+  - `sdk.setLlm(llm)` — switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider). Param `BaseChatModel` or `LLMConfig`. Rebinds tools + re-resolves model caps. `summaryLlm` unaffected.
+  - `sdk.setMemory(text)` — update the persistent memory directive at runtime (next `augmentPrompt` injects latest).
+  - `sdk.setSubagents(configs)` / `addSubagent(config)` / `removeSubagent(id)` — swap/append/remove pre-declared subagents (regenerates `use_<id>` delegation tools + triggers rebind). Requires `subagents:[]` at creation.
+  - All setters trigger `infoTick++` → DebugDrawer refreshes; `inspect()` reflects the latest tools/model/memory/subagent.subagents.
 
 ## Exported building blocks (for custom UIs)
 

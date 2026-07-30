@@ -23,9 +23,11 @@
 3. **归档**:实现完成后将 `specs/` 增量合入 `openspec/specs/`(系统真相源),change 移入 `openspec/changes/archive/`。
 
 ## 进行中的 change
-(无 —— 工作区干净,所有 change 已归档)
+_(无)_
 
 ## 最近完成的 change(已归档)
+- `archive/2026-07-30-add-dynamic-reconfiguration/`:运行时资源动态加载/卸载 —— `sdk.setTools/addTool/removeTool`(用户工具动态,核心基础设施)/ `sdk.setSubagents/addSubagent/removeSubagent`(复用 tools 机制)/ `sdk.setLlm`(模型切换 + 重解析能力)/ `sdk.setMemory`(memory 动态)。复用 `let + rebind + infoTick` 模式(类比 setData/setSkills),全程向后兼容。自测 524/524,e2e 210/210。规范已合入 `openspec/specs/page-agent-core.md`。
+- `archive/2026-07-30-add-augment-system-hook/`:动态 system prompt 注入钩子 `augmentSystem(ctx)`(集成方按运行时状态注入部分 schema / 组件说明)+ A4「可操作数据」段改为每轮随 data 动态(修 `setData()` 不同步 Bug,经 `dataHint` 中间件)。复用 augmentPrompt 中间件机制,不污染 `HarnessState`。规范已合入 `openspec/specs/page-agent-core.md`。自测 495/495,e2e 189/189。
 - `archive/2026-07-24-add-verify-middleware/`:Verify 自检中间件(`beforeReturn` 钩子点 + `createVerifyMiddleware` + `createWriteBackCheck` 写后读回 + 对抗验证)。对应 `doc/evolution-roadmap.md` #5。自测 146/146,规范已合入 `openspec/specs/page-agent-core.md`。
 - `archive/2026-07-23-generalize-chat-sdk/`:通用化(provider 抽离 / headless / capabilities / MCP / presets)。
 - `archive/refactor-to-chat-sdk-sdk/`:重构为框架无关页面内 Agent SDK(规范已合入 `openspec/specs/page-agent-core.md`)。

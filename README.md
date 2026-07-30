@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/chat-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-434%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-524%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -162,6 +162,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | | `llm` | `LLMConfig \| BaseChatModel` · **required** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`; OpenAI-compatible (default DeepSeek) |
 | | `id` | `string` | Stable id (multi-agent isolation + persistence resume; random+warn if omitted) |
 | | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (JSON operation assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it. `appendReliableWriteRules` defaults to `true`: auto-appends `reliableWriteRules` with a `---` separator; set `false` to disable |
+| | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | Dynamic system prompt injection hook: called each turn, returns a string injected as a segment based on runtime state/data; return undefined to skip; callback errors degrade to skip (no crash). `ctx.data` is taken from liveData() each turn (auto-syncs after setData), enabling dynamic component descriptions / partial schema hints. Not set = current behavior |
 | **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | Default all on (`verify` default off); `false` to turn off |
@@ -407,6 +408,15 @@ createChatSdk({
 // skillStorage: { id: 'shared' }  // manually specify the same id to share the same skill set across pages/agents
 // sdk.usage                     // cumulative token usage {prompt_tokens, completion_tokens, total_tokens}
 // sdk.hide() / sdk.show()      // drawer mode hide/show (keeps agent/history/in-flight generation; mount after hide resumes via show, no rebuild)
+// Runtime dynamic reconfiguration (zero-breakage; not calling = current behavior):
+// sdk.setTools(tools)           // replace user tools at runtime (built-ins untouched; internal rebind to LLM; next round uses new set)
+// sdk.addTool(tool)             // append user tool at runtime (dedup by name)
+// sdk.removeTool(name)          // remove user tool at runtime (built-ins untouched); returns whether removed
+// sdk.setLlm(llm)               // switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider; param BaseChatModel or LLMConfig; rebind + re-resolve model caps)
+// sdk.setMemory(text)           // update persistent memory directive at runtime (next augmentPrompt injects latest)
+// sdk.setSubagents(configs)     // replace pre-declared subagents at runtime (regenerates use_<id> delegation tools + rebind; requires subagents:[] at creation)
+// sdk.addSubagent(config)        // append pre-declared subagent at runtime
+// sdk.removeSubagent(id)        // remove pre-declared subagent at runtime; returns whether removed
 ```
 
 ## Examples
@@ -459,8 +469,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 483 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 173 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 524 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 210 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

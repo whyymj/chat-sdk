@@ -321,6 +321,7 @@ flowchart TD
 - 子 agent 日志经 `onLog` 转发到主 debugLogs(带 `source` 标签,调试面板可区分)
 - **skill 全文缓存**:`load_skill` 首次 `getContent` 后缓存到 middleware 内存(contentCache),跨轮跨会话复用,避免重复 IO + 重复 offload;`beforeAgent` 清 `loaded` Set(允许跨轮重新 load,但用缓存内容);offload 内容寻址去重(相同内容复用同一 vfs 文件)
 - **运行时动态 skill**:`skills` 中间件挂 `SkillsController`(不可枚举),`createChatSdk` 暴露 `sdk.setSkills(skills)`(替换整个列表,同名覆盖,清 contentCache + loaded,下轮 `augmentPrompt` 重渲染索引)/ `sdk.invalidateSkillCache(name?)`(清指定/全部缓存);`inspect().skills` 读 `controller.get()` 反映运行时替换。用于懒加载组件等运行时增删 skill 场景
+- **运行时动态重配置(tools/llm/memory/subagents)**:`createAgent` 内 `allTools`/`llmWithTools`/`llm` 改 `let` + `rebindTools()`;`createChatSdk` 暴露 `sdk.setTools/addTool/removeTool`(用户工具动态,内置不动,rebind)、`sdk.setLlm`(切换模型 + rebind + `onLlmChange` 重解析 `modelCaps`)、`sdk.setMemory`(更新 memory 中间件持有的 `mem` 变量)、`sdk.setSubagents/addSubagent/removeSubagent`(经 `SubagentsController` 重新生成 `use_<id>` 委派工具 + 触发 rebind)。所有 setter 触发 `infoTick++` → DebugDrawer 刷新;`inspect()` 的 tools/model/memory/subagent.subagents 经 getter/`controller.get()` 动态取最新。`core.agent.allTools` 用 getter(否则 setTools 重赋值后 inspect 取到旧引用)。`subagents:[]`(空数组)也创建 controller(支持「初始无子 agent,运行时动态 add」,不依赖 length 判定)。全程零破坏(不调用 = 现状)。仍缺失 `setSystemPrompt`/`setMiddleware`(中间件数组运行时替换,留待后续)
 
 ---
 

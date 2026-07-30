@@ -12,6 +12,7 @@ import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
 import EditableBanner from '../_shared/EditableBanner.vue'
+import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
 console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
@@ -24,6 +25,7 @@ const pageObj = reactive({
 ;(window as any).page = pageObj
 
 const root = ref<HTMLElement>()
+const agentRef = ref<ChatSdk | null>(null)
 let agent: ChatSdk | null = null
 
 onMounted(() => {
@@ -66,6 +68,8 @@ onMounted(() => {
         getContent: () => complexBuilderSkillContent,
       }),
     ],
+    // 预声明子 agent:配空数组占位,启用 SubagentsController(供动态重配置面板 addSubagent/removeSubagent 生效)
+    subagents: [],
     debug: true,
     dialog: {
       title: '复杂页面 Agent',
@@ -73,6 +77,7 @@ onMounted(() => {
     },
   })
   agent.mount()
+  agentRef.value = agent
 })
 
 onUnmounted(() => agent?.unmount())
@@ -82,6 +87,7 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
+      <DynamicReconfigPanel :agent="agentRef" />
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
         <PageRenderer />
       </EditableBanner>

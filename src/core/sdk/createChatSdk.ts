@@ -44,7 +44,8 @@ import { systemPromptHelpers, extractSchemaHint } from '../presets'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
-import type { VfsFile } from '../harness/state'
+import type { VfsFile, HarnessState } from '../harness/state'
+import { createInitialState } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
@@ -79,6 +80,16 @@ export interface SessionOptions {
   title?: string
 }
 
+/**
+ * augmentSystem 钩子上下文:集成方回调据此按运行时状态动态注入 system prompt 段。
+ * - `state`:harness 当前状态(messages/todos/files/skills/memory…);**不含 data**(data 是 createChatSdk 层概念,不下沉通用 HarnessState)
+ * - `data`:当前主数据配置(每轮从 liveData() 取最新,setData 后自动同步;含 schema/bind/description)
+ */
+export interface SystemAugmentContext {
+  state: HarnessState
+  data?: DataConfig
+}
+
 export interface ChatSdkOptions {
   /** 挂载点(选择器或元素;headless 模式 ui:false 时可不传) */
   container?: string | HTMLElement
@@ -97,10 +108,22 @@ export interface ChatSdkOptions {
   session?: SessionOptions
   /** 共享上下文:默认 false(每实例独立);true 时同 id 复用同一 AgentCore(同页多对话框 = 同一 agent) */
   shareContext?: boolean
-  /** 系统提示词(通用"JSON 操作助手",可覆盖) */
+  /**
+   * 系统提示词(base + 可操作数据段,数据段随 data 动态;不含 todos/skills/memory/augmentSystem 等运行态 augmentPrompt 段)。
+   * 通用「JSON 操作助手」身份,可覆盖。自定义时默认自动追加 reliableWriteRules(见 appendReliableWriteRules)。
+   */
   systemPrompt?: string
-  /** 自定义 systemPrompt 时是否自动追加 reliableWriteRules(默认 true,用 '---' 分隔线区分用户内容与 SDK 追加的写入规则);设 false 关闭。不传 systemPrompt 用默认 prompt 时已内置,此项无效 */
+  /** 自定义 systemPrompt 时是否自动追加 reliableWriteRules(默认 true,用 '---' 分隔线区分用户内容与 SDK 追加的写入规则);设 false 则不追加(用户已自行写规则时用);不传 systemPrompt 用默认 prompt 时已内置,此项无效 */
   appendReliableWriteRules?: boolean
+  /**
+   * 动态 system prompt 注入钩子:每轮 buildSystemPrompt 时调用,集成方按运行时状态(state/data)返回字符串 → 作为 system prompt 一段注入;返回 undefined → 跳过。
+   * - `ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算组件说明 / 部分 schema 描述
+   * - 回调异常降级为跳过该段 + debug 日志(不崩 agent)
+   * - 段排在内置段(base/dataHint/usageHints/.../subagents)之后、用户 middleware 之前
+   * - 不配 = 完全现状行为(无该段)
+   * 本质是 createChatSdk 层把 augmentPrompt 中间件 + liveData 闭包预包装成便捷选项(类比 memory)
+   */
+  augmentSystem?: (ctx: SystemAugmentContext) => string | undefined
   /** 用户自定义工具(散工具 / 展开的预设数组 / 模块 default,皆可;与内置工具合并) */
   tools?: StructuredToolInterface[]
   /** 声明式 skill(渐进式披露) */
@@ -345,6 +368,35 @@ export interface ChatSdk {
   pendingConflict: import('vue').Ref<PendingConflict | null>
   /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
   resolveConflict(action: ConflictResolution['action']): void
+  /**
+   * 运行时替换用户工具集(内置工具由 capabilities 控制,不动)。立即生效:下一轮 LLM 调用即用新工具集(内部 rebindTools)。
+   * 不调用 = 现状行为(创建时 tools 固定)。支持按权限/业务阶段/A-B 实验动态切换工具组,无需重建 agent。
+   */
+  setTools(tools: StructuredToolInterface[]): void
+  /** 运行时追加用户工具(去重 by name);立即生效。需先 mount */
+  addTool(tool: StructuredToolInterface): void
+  /** 运行时移除用户工具(by name);内置工具不受影响。返回是否移除成功 */
+  removeTool(name: string): boolean
+  /**
+   * 运行时切换 LLM(配额耗尽切便宜模型 / 复杂任务切强模型 / 切 provider)。
+   * 参数为 BaseChatModel 实例或 LLMConfig(内部构造 ChatOpenAI)。立即生效:重新绑定工具 + 重解析模型能力(影响 offload 阈值/压缩)。
+   * summaryLlm(摘要专用)不受影响。新模型若不支持 tool calling 则工具调用失效(agent 不崩)。
+   */
+  setLlm(llm: BaseChatModel | LLMConfig): void
+  /**
+   * 运行时更新持久指令 memory 文本。立即生效:下一轮 augmentPrompt 注入最新值;setMemory('') 清空。
+   * 不调用 = 现状行为(创建时 options.memory 固定)。
+   */
+  setMemory(text: string): void
+  /**
+   * 运行时替换整个预声明子 agent 列表(重新生成 use_<id> 委派工具,立即生效)。
+   * 需创建时配 subagents:[](否则 controller 为 null,setter warn);不调用 = 现状行为。
+   */
+  setSubagents(configs: SubagentConfig[]): void
+  /** 运行时追加预声明子 agent(id 重复 warn 跳过);需创建时配 subagents:[] */
+  addSubagent(config: SubagentConfig): void
+  /** 运行时移除预声明子 agent(by id);返回是否移除成功;需创建时配 subagents:[] */
+  removeSubagent(id: string): boolean
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -605,12 +657,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // ===== 模型能力(声明优先 > model 名查表 > 缺省):供 offload 阈值/压缩触发/maxTokens 缺省自适应 =====
   const llmCfg = isChatModel(options.llm) ? undefined : (options.llm as LLMConfig)
-  const modelCaps = resolveModelCaps({
+  // let:setLlm 后重解析(影响 offload 阈值/压缩触发/maxTokens 缺省)
+  let modelCaps = resolveModelCaps({
     model: llmCfg?.model,
     contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
     maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
   })
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
+  // 当前 LLM 实例/配置:setLlm 后更新(inspect().model 读最新)
+  let currentLlm: BaseChatModel | LLMConfig = options.llm
 
   // 摘要用 LLM invoke(默认 LLM 摘要压缩);apiKey 缺失时为 undefined → 自动回退零成本索引摘要
   const summaryLlmInvoke = buildSummaryLlmInvoke(options)
@@ -668,7 +723,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const basePrompt = options.systemPrompt
     ? (appendRwr ? options.systemPrompt + '\n\n---\n\n' + systemPromptHelpers.reliableWriteRules : options.systemPrompt)
     : DEFAULT_SYSTEM_PROMPT
-  const finalSystemPrompt = basePrompt + buildDataPrompt(finalDataConfig)
+  // base 不含数据段:数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug)
+  const baseSystemPrompt = basePrompt
 
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
@@ -693,10 +749,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const toolSources = new Map<string, string>()
   const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
+  // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
   const userTools: StructuredToolInterface[] = [
     ...(options.tools || []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
+  // mcpTools 可变:mount 时收集,setTools 重建 extraTools 时纳入
+  const mcpTools: StructuredToolInterface[] = []
   // 人工确认(主动侧):默认开启(不猜测,不确定/多方案/高风险时主动征询);顶层 humanConfirm:false 或 approval.humanConfirmTool:false 关闭
   const useHumanConfirm =
     options.humanConfirm !== false && (options.approval ? options.approval.humanConfirmTool !== false : true)
@@ -727,12 +786,23 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ]
     : []
   checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
-  const allTools: StructuredToolInterface[] = [
+  // allTools 可变:setTools 后重建,inspect().tools 读最新值
+  let allTools: StructuredToolInterface[] = [
     ...builtinTools,
     ...userTools,
     ...(humanConfirmTool ? [humanConfirmTool] : []),
     ...checkpointTools,
   ]
+  /** 重建 extraTools(传 createAgent 的 tools):builtin + userTools + humanConfirm + checkpoint + mcp */
+  function rebuildExtraTools(): StructuredToolInterface[] {
+    return [
+      ...builtinTools,
+      ...userTools,
+      ...(humanConfirmTool ? [humanConfirmTool] : []),
+      ...checkpointTools,
+      ...mcpTools,
+    ]
+  }
 
   const usePlanning = caps?.planning !== false
   const useSkills = caps?.skills !== false
@@ -770,9 +840,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         })
 
   // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
-  const subagentsMw = options.subagents?.length
+  // 支持运行时动态:经 controller.set/add/remove 重新生成委派工具 + 触发 rebind
+  // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
+  // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
+  const subagentsMw = useSubagent && options.subagents !== undefined
     ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools, debug: options.debug })
     : undefined
+  const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
   // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回数据检查而非臆测;dataOps 关闭则不含数据工具)
   const READONLY_FOR_ADVERSARIAL = ['get_data', 'describe_data', 'read', 'fetch_document']
@@ -799,6 +873,29 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     useDataOps && !!finalDataConfig,
     options.toolMode,
   )
+  // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
+  // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
+  // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
+  const dataHintMw: Middleware | null = finalDataConfig
+    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData()) || undefined }
+    : null
+
+  // augmentSystem 钩子:集成方按运行时状态(state/data)动态注入 system prompt 段
+  // 插 subagents 之后、用户 middleware 之前(遵循 verify 既定「用户自定义中间件前」约定)
+  // 回调异常降级为跳过该段 + debug 日志(不崩 agent);仅 options.augmentSystem 存在时装载
+  const augmentSystemMw: Middleware | null = options.augmentSystem
+    ? {
+        name: 'augmentSystem',
+        augmentPrompt: (state) => {
+          try {
+            return options.augmentSystem!({ state, data: liveData() })
+          } catch (e) {
+            if (options.debug) console.log('[page-agent-sdk][augmentSystem] 回调抛错,降级跳过:', (e as Error).message)
+            return undefined
+          }
+        },
+      }
+    : null
   // SDK 事件回调:把常用时机外发给集成方(数据槽变化 / 消息更新 / 流式事件 / 错误)
   const userOnEvent = options.onEvent
   // 运行时动态订阅(sdk.hook 注册,可多个监听器,各自可取消)
@@ -863,6 +960,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
   }
   const middlewares = [
+    // dataHint 插最前:数据段紧跟 base(与现状等价);每轮从 liveData() 动态重算
+    ...(dataHintMw ? [dataHintMw] : []),
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(usePlanning ? [todosMw] : []),
@@ -903,6 +1002,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
+    ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(options.middleware || []),
     // SDK 事件中间件(最末,最后观察):数据写后发 data_change;每轮结束发 message_update
     // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
@@ -1071,16 +1171,95 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     resolveConflict,
 
+    /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
+    setTools(tools: StructuredToolInterface[]): void {
+      userTools.length = 0
+      tools.forEach((t) => { userTools.push(t); toolSources.set(t.name, 'user') })
+      allTools = rebuildExtraTools()
+      if (core.agent) core.agent.setTools(allTools)
+      core.infoTick.value++
+    },
+    /** 运行时追加用户工具(去重 by name) */
+    addTool(tool: StructuredToolInterface): void {
+      if (userTools.some((t) => t.name === tool.name)) return
+      userTools.push(tool)
+      toolSources.set(tool.name, 'user')
+      allTools = rebuildExtraTools()
+      if (core.agent) core.agent.setTools(allTools)
+      core.infoTick.value++
+    },
+    /** 运行时移除用户工具(by name;内置不动);返回是否移除成功 */
+    removeTool(name: string): boolean {
+      const idx = userTools.findIndex((t) => t.name === name)
+      if (idx < 0) return false
+      userTools.splice(idx, 1)
+      allTools = rebuildExtraTools()
+      if (core.agent) core.agent.setTools(allTools)
+      core.infoTick.value++
+      return true
+    },
+    /** 运行时切换 LLM(BaseChatModel 或 LLMConfig);rebind + 重解析能力 + infoTick */
+    setLlm(llmOpt: BaseChatModel | LLMConfig): void {
+      const newLlm: BaseChatModel = isChatModel(llmOpt)
+        ? (llmOpt as BaseChatModel)
+        : new ChatOpenAI({
+            apiKey: (llmOpt as LLMConfig).apiKey,
+            model: (llmOpt as LLMConfig).model,
+            temperature: (llmOpt as LLMConfig).temperature,
+            maxTokens: (llmOpt as LLMConfig).maxTokens,
+            configuration: (llmOpt as LLMConfig).baseUrl ? { baseURL: (llmOpt as LLMConfig).baseUrl } : undefined,
+          })
+      if (typeof (newLlm as any).bindTools !== 'function' && options.debug) {
+        console.warn('[page-agent-sdk][setLlm] 新模型不支持 bindTools(tool calling 会失效)')
+      }
+      currentLlm = llmOpt
+      if (core.agent) core.agent.setLlm(newLlm)
+      core.infoTick.value++
+    },
+    /** 运行时更新 memory 文本;立即生效 + infoTick */
+    setMemory(text: string): void {
+      memoryMw.reset(text)
+      core.infoTick.value++
+    },
+    /** 运行时替换预声明子 agent 列表(重新生成委派工具 + rebind) */
+    setSubagents(configs: SubagentConfig[]): void {
+      if (!subagentsController) {
+        if (options.debug) console.warn('[page-agent-sdk][setSubagents] 未配 subagents:[] 或 capabilities.subagent 关闭,忽略')
+        return
+      }
+      subagentsController.set(configs)
+      core.infoTick.value++
+    },
+    /** 运行时追加预声明子 agent */
+    addSubagent(config: SubagentConfig): void {
+      if (!subagentsController) {
+        if (options.debug) console.warn('[page-agent-sdk][addSubagent] 未配 subagents:[] 或 capabilities.subagent 关闭,忽略')
+        return
+      }
+      subagentsController.add(config)
+      core.infoTick.value++
+    },
+    /** 运行时移除预声明子 agent(by id) */
+    removeSubagent(id: string): boolean {
+      if (!subagentsController) {
+        if (options.debug) console.warn('[page-agent-sdk][removeSubagent] 未配 subagents:[] 或 capabilities.subagent 关闭,忽略')
+        return false
+      }
+      const removed = subagentsController.remove(id)
+      if (removed) core.infoTick.value++
+      return removed
+    },
+
     /** 检视 agent 详情:tools/skills/data/memory/middleware/todos(inspect() 与 debug 窗口消费) */
     getInfo(): AgentInfo {
       return {
         id: agentId,
-        model: isChatModel(options.llm) ? ((options.llm as any).model ?? (options.llm as any).modelName) : options.llm.model,
-        systemPrompt: finalSystemPrompt,
-        tools: allTools.map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
+        model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
+        systemPrompt: baseSystemPrompt + buildDataPrompt(liveData()) + (augmentSystemMw ? (augmentSystemMw.augmentPrompt(core.agent?.getState?.() ?? createInitialState()) || '') : ''),
+        tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
-        memory: options.memory ?? '',
+        memory: memoryMw.get(),
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),
         subagent: {
@@ -1088,6 +1267,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           maxDepth: options.subagent?.maxDepth ?? 1,
           maxParallel: options.subagent?.maxParallel ?? 4,
           allowedTools: options.subagent?.allowedTools ?? [],
+          // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新)
+          subagents: subagentsController?.get() ?? [],
         },
         verify: {
           enabled: !!verifyMw,
@@ -1190,7 +1371,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
         }
       })
-      allTools.push(...mcpTools)
+      // 重建 allTools(纳入 mcpTools);此时 createAgent 尚未构造,allTools 直接作为 tools 传入
+      allTools = rebuildExtraTools()
       if (options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
     }
     core.agent = createAgent({
@@ -1204,7 +1386,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             temperature: options.llm.temperature,
             maxTokens: options.llm.maxTokens,
           }),
-      systemPrompt: finalSystemPrompt,
+      systemPrompt: baseSystemPrompt,
       tools: allTools,
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,
@@ -1215,9 +1397,26 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxOutputTokens: modelCaps.maxOutputTokens,
       // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
+      // setLlm 后回调:重解析模型能力(contextWindow/maxOutputTokens 影响 offload 阈值/压缩)
+      onLlmChange: (newLlm: BaseChatModel) => {
+        const cfg = isChatModel(newLlm) ? undefined : (newLlm as unknown as LLMConfig)
+        modelCaps = resolveModelCaps({
+          model: cfg?.model ?? (newLlm as any).model ?? (newLlm as any).modelName,
+          contextWindow: options.contextWindow ?? cfg?.contextWindow,
+          maxOutputTokens: options.maxOutputTokens ?? cfg?.maxOutputTokens,
+        })
+        currentLlm = newLlm
+        if (options.debug) console.log('[page-agent-sdk][setLlm] 重解析 modelCaps:', modelCaps)
+      },
       debug: options.debug,
     })
     agentRef.current = core.agent
+    // 注入 subagents 动态重配置钩子:controller.set/add/remove 后触发 createAgent rebind(重新 bindTools)
+    if (subagentsMw && (subagentsMw as any).setReconfigureHook) {
+      ;(subagentsMw as any).setReconfigureHook(() => {
+        if (core.agent) core.agent.setTools(rebuildExtraTools())
+      })
+    }
   })()
 
   return core
@@ -1503,5 +1702,13 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     pendingConflict: core.pendingConflict,
     /** 冲突解决:用户点「保留外部」(keep_external)/「强制覆盖」(overwrite)/「回退」(restore) → 收口挂起的 conflict,被挂起的工具调用继续 */
     resolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
+    setTools: (tools: StructuredToolInterface[]) => core.setTools(tools),
+    addTool: (t: StructuredToolInterface) => core.addTool(t),
+    removeTool: (name: string) => core.removeTool(name),
+    setLlm: (llm: BaseChatModel | LLMConfig) => core.setLlm(llm),
+    setMemory: (text: string) => core.setMemory(text),
+    setSubagents: (configs: SubagentConfig[]) => core.setSubagents(configs),
+    addSubagent: (config: SubagentConfig) => core.addSubagent(config),
+    removeSubagent: (id: string) => core.removeSubagent(id),
   }
 }

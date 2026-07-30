@@ -271,31 +271,28 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
   }
 }
 
+/** Subagents 动态控制器:set/add/remove 委派工具(复用 tools rebind 机制) */
+export interface SubagentsController {
+  /** 替换整个 subagents 列表(重新生成 use_<id> 工具,触发 onReconfigure 回调) */
+  set(configs: SubagentConfig[]): void
+  /** 追加一个 subagent(id 重复 warn 跳过) */
+  add(config: SubagentConfig): void
+  /** 移除一个 subagent(by id);返回是否移除成功 */
+  remove(id: string): boolean
+  /** 读取当前 subagents 列表 */
+  get(): SubagentConfig[]
+}
+
 /**
  * 预声明子 agent 中间件:为每个 SubagentConfig 生成专属委派工具 use_<id>({ task })。
  * 主 LLM 直接调 use_<id> 委派(工具描述 = subagent.description);子 agent 配置缺省继承主。
  * 与 spawn_agent/spawn_agents(运行时自由委派)共存。子 agent 默认叶子(maxDepth 1,不可再 spawn)。
+ * 支持运行时动态:经 controller.set/add/remove 重新生成委派工具,触发 onReconfigure 回调(供 createAgent rebind)。
  */
 export function createSubagentsMiddleware(
   subagents: SubagentConfig[],
   main: SubagentsMiddlewareOptions,
-): Middleware {
-  // 校验 id:合法工具名 + 唯一;不合法 warn + 跳过
-  const seen = new Set<string>()
-  const valid = subagents.filter((s) => {
-    if (!TOOL_NAME_RE.test(s.id)) {
-      console.warn(`[subagents] id "${s.id}" 非合法工具名(须 [a-zA-Z_][a-zA-Z0-9_]*),已跳过`)
-      return false
-    }
-    const toolName = `use_${s.id}`
-    if (seen.has(toolName)) {
-      console.warn(`[subagents] id "${s.id}" 重复,已跳过`)
-      return false
-    }
-    seen.add(toolName)
-    return true
-  })
-
+): Middleware & { controller: SubagentsController } {
   // 当前主循环 signal/emit/logSink(wrapToolCall 捕获,供 use_<id> 继承/转发子进度)
   let currentSignal: AbortSignal | undefined
   let currentEmit: ((e: StreamEvent) => void) | undefined
@@ -310,25 +307,86 @@ export function createSubagentsMiddleware(
     })
   }
 
-  const tools = valid.map((s) =>
-    tool(
-      async ({ task }) => {
-        const opts = configToSubOpts(s, main)
-        const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${s.id}` })
-        // 预声明子 agent:不传 role(用 config.systemPrompt);runSubagent 默认 maxDepth 1(叶子,不可再 spawn)
-        return runSubagent({ prompt: task }, opts, currentSignal, makeForward(`use_${s.id}`, s.id), onLog)
-      },
-      {
-        name: `use_${s.id}`,
-        description: `委派给「${s.description}」子 agent 执行任务,返回其结论(过程隔离,不占主上下文)。`,
-        schema: z.object({ task: z.string().describe('委派给该子 agent 的任务描述') }),
-      },
-    ),
-  )
+  // 可变状态:支持运行时 set/add/remove
+  let valid: SubagentConfig[] = []
+  let tools: StructuredToolInterface[] = []
+  let onReconfigure: (() => void) | undefined
 
-  return {
+  /** 校验 + 生成委派工具(去重 by id) */
+  function rebuild(list: SubagentConfig[]): { valid: SubagentConfig[]; tools: StructuredToolInterface[] } {
+    const seen = new Set<string>()
+    const v: SubagentConfig[] = []
+    const t: StructuredToolInterface[] = []
+    for (const s of list) {
+      if (!TOOL_NAME_RE.test(s.id)) {
+        console.warn(`[subagents] id "${s.id}" 非合法工具名(须 [a-zA-Z_][a-zA-Z0-9_]*),已跳过`)
+        continue
+      }
+      const toolName = `use_${s.id}`
+      if (seen.has(toolName)) {
+        console.warn(`[subagents] id "${s.id}" 重复,已跳过`)
+        continue
+      }
+      seen.add(toolName)
+      v.push(s)
+      t.push(
+        tool(
+          async ({ task }) => {
+            const opts = configToSubOpts(s, main)
+            const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${s.id}` })
+            return runSubagent({ prompt: task }, opts, currentSignal, makeForward(`use_${s.id}`, s.id), onLog)
+          },
+          {
+            name: `use_${s.id}`,
+            description: `委派给「${s.description}」子 agent 执行任务,返回其结论(过程隔离,不占主上下文)。`,
+            schema: z.object({ task: z.string().describe('委派给该子 agent 的任务描述') }),
+          },
+        ),
+      )
+    }
+    return { valid: v, tools: t }
+  }
+
+  const initial = rebuild(subagents)
+  valid = initial.valid
+  tools = initial.tools
+
+  const controller: SubagentsController = {
+    set(configs) {
+      const r = rebuild(configs)
+      valid = r.valid
+      tools = r.tools
+      onReconfigure?.()
+    },
+    add(config) {
+      const exists = valid.some((s) => s.id === config.id)
+      if (exists) {
+        console.warn(`[subagents] add: id "${config.id}" 已存在,已跳过`)
+        return
+      }
+      const r = rebuild([...valid, config])
+      valid = r.valid
+      tools = r.tools
+      onReconfigure?.()
+    },
+    remove(id) {
+      const idx = valid.findIndex((s) => s.id === id)
+      if (idx < 0) return false
+      const next = valid.filter((s) => s.id !== id)
+      const r = rebuild(next)
+      valid = r.valid
+      tools = r.tools
+      onReconfigure?.()
+      return true
+    },
+    get: () => [...valid],
+  }
+
+  const mw: Middleware & { controller: SubagentsController } = {
     name: 'subagents',
-    tools,
+    get tools() {
+      return tools
+    },
     augmentPrompt: () =>
       valid.length
         ? [
@@ -344,4 +402,11 @@ export function createSubagentsMiddleware(
       return next(ctx)
     },
   }
+  // controller 不可枚举挂载(类比 SkillsController);暴露 onReconfigure setter 供 createAgent 注入 rebind 回调
+  Object.defineProperty(mw, 'controller', { value: controller, enumerable: false })
+  Object.defineProperty(mw, 'setReconfigureHook', {
+    value: (fn: (() => void) | undefined) => { onReconfigure = fn },
+    enumerable: false,
+  })
+  return mw as Middleware & { controller: SubagentsController }
 }

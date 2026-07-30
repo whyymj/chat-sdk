@@ -276,3 +276,31 @@ createChatSdk({
   checkpoint: true,                             // rollback
 }).mount()
 ```
+
+## 6. Runtime dynamic reconfiguration (tools / llm / memory / subagents)
+
+Beyond `setData` / `setSkills`, you can dynamically reconfigure **tools / LLM / memory / pre-declared subagents** at runtime — zero-breakage (not calling = current behavior), no agent rebuild (preserves conversation history & middleware state). All setters trigger `infoTick++` → DebugDrawer refresh; `inspect()` reflects the latest tools/model/memory/subagent.subagents.
+
+```ts
+// 1. Tools: swap/append/remove user tools at runtime (built-ins untouched; internal rebind)
+sdk.setTools([toolA, toolB])            // replace user tool set (built-ins stay)
+sdk.addTool(toolC)                      // append (dedup by name)
+sdk.removeTool('toolA')                 // remove by name → boolean
+
+// 2. LLM: switch model at runtime (quota-exhausted→cheaper / complex task→stronger / switch provider)
+sdk.setLlm({ apiKey, baseUrl, model: 'gpt-4o' })   // LLMConfig form (constructs ChatOpenAI)
+sdk.setLlm(otherChatModel)                          // or pass a BaseChatModel instance
+// rebinds tools + re-resolves model caps (contextWindow/maxOutputTokens); summaryLlm unaffected
+
+// 3. Memory: update persistent directive at runtime (next augmentPrompt injects latest)
+sdk.setMemory('User is VIP; prefer concise answers; use incremental patch when editing.')
+sdk.setMemory('')   // clear (empty string skips injection)
+
+// 4. Subagents: runtime add/remove pre-declared subagents (requires subagents:[] at creation)
+//    Pass subagents: [] (empty array) at creation to enable the controller for dynamic add later.
+sdk.addSubagent({ id: 'translator', description: '中英互译子 agent', systemPrompt: '你是翻译助手。' })
+sdk.removeSubagent('translator')        // → boolean
+sdk.setSubagents([{ id: 'a', description: 'A' }, { id: 'b', description: 'B' }])  // replace all
+```
+
+> **Note**: `setSystemPrompt` / `setMiddleware` (runtime middleware-array swap) are not yet implemented — they touch the harness core and are deferred. Use `setData` / `setSkills` / `augmentSystem` hook to cover most dynamic system-prompt scenarios. See `doc/roadmap.md` #5.

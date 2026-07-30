@@ -101,6 +101,8 @@ export interface SubagentInfo {
   maxDepth: number
   maxParallel: number
   allowedTools: string[]
+  /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
+  subagents?: { id: string; description: string }[]
 }
 export interface AgentInfo {
   id: string

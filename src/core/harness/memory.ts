@@ -9,16 +9,18 @@ import type { Middleware } from './middleware'
 
 export function createMemoryMiddleware(
   memory = '',
-): Middleware & { reset: (memory: string) => void } {
+): Middleware & { reset: (memory: string) => void; get: () => string } {
   let mem = memory
-  const mw: Middleware & { reset: (memory: string) => void } = {
+  const mw: Middleware & { reset: (memory: string) => void; get: () => string } = {
     name: 'memory',
     beforeAgent: () => ({ memory: mem }),
     augmentPrompt: (state) => (state.memory ? `## 持久指令(Memory)\n${state.memory}` : undefined),
-    // 运行期重置(持久化恢复时由 createChatSdk 注入:options.memory 优先,snap.memory 兜底)
+    // 运行期重置(持久化恢复时由 createChatSdk 注入:options.memory 优先,snap.memory 兜底;setMemory 也用此)
     reset: (m: string) => {
       mem = m
     },
+    // 读取当前 memory(setMemory 后 / inspect 反映最新)
+    get: () => mem,
   }
   return mw
 }
