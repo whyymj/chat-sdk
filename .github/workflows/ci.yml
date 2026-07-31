@@ -14,6 +14,11 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # GitHub Actions runner 某些环境默认 NODE_ENV=production,会导致 npm ci 跳过 devDependencies
+      # → vite(在 devDependencies)不装 → build 报 "vite: not found"
+      # 显式设 development 确保 devDependencies 装上
+      NODE_ENV: development
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +56,9 @@ jobs:
     # 跨 Node 版本构建验证(仅 build,不跑测试,省额度)
     # Vite 8 要求 Node 20+,故只测 20/22
     runs-on: ubuntu-latest
+    env:
+      # 同 test job:防 NODE_ENV=production 跳过 devDependencies
+      NODE_ENV: development
     strategy:
       matrix:
         node: [20, 22]
