@@ -4,16 +4,16 @@
 
 ## 1. 现状定位:三个巨型文件
 
-**痛点① `createChatSdk.ts` 1714 行 / 36 imports**(上帝文件):
+**痛点① `createChatSdk.ts` 1751 行 / 37 imports**(上帝文件):
 
 ```
-buildCore() 一个函数干 7 件事:
-├─ prompt 构建(DEFAULT_SYSTEM_PROMPT 286-401 + buildDataPrompt 295-401)
-├─ LLM 解析(isChatModel 422-425 + buildSummaryLlmInvoke 520-567 + modelCaps 658-672)
-├─ 存储解析(resolveStorage 407-416 + resolveDialogConfig 417-420)
-├─ 冲突管理(pendingConflict 628-660 + setPendingConflict/resolveConflict)
-├─ Skill 持久化桥接(toPersistedSkill/toSkillSpec 911-925 + loadUserSkillsFromStore 945-961 + syncUserSkills 936-944)
-├─ 事件系统(listeners 902-913 + emit + hook + createSdkEventMiddleware 589-624)
+buildCore() 一个函数干 7 件事(行号为当前源码实际值,实施时以符号名为准 —— 行号随实现演进易过时):
+├─ prompt 构建(DEFAULT_SYSTEM_PROMPT :297 + buildDataPrompt :306)
+├─ LLM 解析(isChatModel :441 + buildSummaryLlmInvoke :539 + resolveModelCaps 调用 :681)
+├─ 存储解析(resolveStorage :426 + resolveDialogConfig :436)
+├─ 冲突管理(pendingConflict ref :649 + setPendingConflict :653 + resolveConflict :665)
+├─ Skill 持久化桥接(toPersistedSkill :936 + toSkillSpec :942 + syncUserSkills :958 + loadUserSkillsFromStore :967)
+├─ 事件系统(listeners :924 + emit + hook + createSdkEventMiddleware :609)
 └─ 核心装配(中间件装载 + createAgent 调用 + sdk 返回对象)
 ```
 
@@ -225,7 +225,7 @@ function buildCore(options, agentId): AgentCore {
 }
 ```
 
-主线只看装配顺序,细节都在各自模块里。体积从 1714 行降到 ~900 行。
+主线只看装配顺序,细节都在各自模块里。体积从 1751 行降到 ~900 行。
 
 ## 4. 依赖方向(确保不循环)
 
@@ -303,13 +303,25 @@ assert(await import('page-agent-sdk/query') 含 jpEval/searchJson)
 assert(await import('page-agent-sdk/llm') 含 createProxyLlm)
 ```
 
+## 6. 与 2026-07-31 系列 change 的顺序协调
+
+本变更是**基础设施**(纯重构),与同批 8 个新 change 有同区域文件交集。完整顺序表见 `proposal.md`「与 2026-07-31 系列 change 的顺序协调」。此处只列**实施本变更时必须注意的协同点**:
+
+1. **`deleteByPath` 搬迁的 sparse-array 修复**:本变更把 `deleteByPath` 从 dataOps 搬到 jsonUtils。`fix-dataops-write-correctness` 指出 `deleteByPath` 对数组元素用 `delete arr[i]`(产生稀疏数组)应改 `splice`。**实施本变更时**:若 fix-dataops 已先实施 → 直接搬修复版;若未实施 → 搬迁时一并应用 splice 修复(避免把 bug 搬进 jsonUtils),并在搬迁 commit 标注"含 fix-dataops 的 deleteByPath 修复"。修复点:`if (Array.isArray(cur) && /^\d+$/.test(last)) cur.splice(Number(last), 1); else delete cur[last]`。
+
+2. **jsonUtils/schemaUtils 是后续新函数的归宿**:本变更建好两个文件后,`harden-optimistic-lock` 的 `cyrb53`、`evolve-default-toolset` 的 `diffObjects` 落入 jsonUtils;`expose-schema-constraints` 的 `describeSchemaNode` 落入 schemaUtils(复用本变更抽出的 `unwrapSchema`)。本变更只需建文件 + 搬现有函数,无需预留接口。
+
+3. **`buildSystemPrompt` 是 prompt 单一出口**:本变更新增 `buildSystemPrompt(options, dataConfig)` 统一入口。`fix-introspection-consistency` 的 `getEffectiveSystemPrompt()` 直接代理到它(prompt 拼装收敛为单一真相源)。本变更把 `buildSystemPrompt` 设计为纯函数(入参 options + dataConfig,无闭包依赖),便于后续 `getEffectiveSystemPrompt` 复用。
+
+4. **装配段抽离与 `declarative-middleware-ordering`**:本变更(期二/三)抽 conflictManager/skillStoreBridge/events,改 createChatSdk 装配段。`declarative-middleware-ordering` 把中间件数组改为 priority 声明式排序。两者都动装配段 → **declarative 必须后于本变更**(本变更先理清装配,declarative 再声明式化)。
+
 ## 权衡
 
 - **为何不做多入口构建**:当前 bundler tree-shaking 已能 shake 掉未用 named export(已设 `sideEffects`)。多入口构建要改 vite.config + 拆 types + 管共享 chunk,复杂度不划算。CDN 场景 subpath 指向同一文件至少语义清晰 + 可独立缓存。等真有 CDN 体积痛点再做。
 - **为何 subpath 指向同一 dist 而非独立 chunk**:独立 chunk 要多入口构建。同一 dist + bundler tree-shaking 已能覆盖主流场景。subpath 的价值是**语义清晰 + CDN 入口独立 + 未来切多入口时零迁移**。
 - **为何纯函数优先抽**:零依赖、零风险、易白盒测、可对外开放。dataOps 的 18 个纯函数目前是黑盒测,抽出后补白盒单测,测试质量提升明显。
 - **为何状态机抽工厂而非抽纯函数**:conflictManager / skillStoreBridge 有内部状态,抽成 `createXxx()` 工厂返回实例,buildCore 持有实例,生命周期清晰。
-- **为何不抽 createAgent 内部**:createAgent.ts 562 行尚可接受,且是 ReAct 循环骨架,改动风险高。抽离收益不抵风险。
+- **为何不抽 createAgent 内部**:createAgent.ts 569 行尚可接受,且是 ReAct 循环骨架,改动风险高。抽离收益不抵风险。
 - **为何 EditOp 类型移到 jsonUtils**:applyPatchToClone/Live 需要 EditOp 类型,若留 dataOps 会导致 jsonUtils 反向依赖 dataOps(循环)。EditOp 是纯类型,移到 jsonUtils 合理。
 
 ## 风险

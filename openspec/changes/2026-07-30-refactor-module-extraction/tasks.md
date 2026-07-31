@@ -1,8 +1,9 @@
 # Tasks: refactor-module-extraction
 
-> 状态:**待实施**。关联:本目录 `proposal.md` / `design.md`。
+> 状态:**期一(P0)已完成 ✅(2026-07-31)** —— jsonUtils(16 纯函数)+ schemaUtils(6 函数)+ promptBuilder(DEFAULT_SYSTEM_PROMPT/buildDataPrompt/buildSystemPrompt)抽离 + ./storage/./query/./llm subpath 开放;dataOps 969→663 行、createChatSdk 1751→1724 行;新增 sec-30/31 白盒单测 + subpath 配置断言,selftest 537→609、exports-consistency 1→6 全过。**期二/三/四/五待实施**。关联:本目录 `proposal.md` / `design.md`。
 > 顺序:期一(P0 纯函数抽离 + subpath 开放,核心 + 价值最高)→ 期二(P1 状态机/桥接层抽离)→ 期三(P2 低频抽离,可选)→ 期四(测试同步)→ 期五(文档 + 门禁 + 归档)。
 > 全程向后兼容:顶层 `.` 入口导出不变,运行时行为零变化。期一可独立交付。
+> 行号定位:本清单以**符号名为主、行号为辅**(行号随实现演进易过时,实施时以符号为准;行号基于 createChatSdk.ts 当前 1751 行 / dataOps.ts 969 行 / useContextManager.ts 321 行)。
 
 ## 期一 — P0 纯函数抽离 + subpath 开放(核心,可独立发布)
 
@@ -23,7 +24,7 @@
 ### 1.3 promptBuilder 抽离
 
 - [ ] 新建 `src/core/sdk/promptBuilder.ts`
-- [ ] 从 `createChatSdk.ts` 逐字搬迁:`DEFAULT_SYSTEM_PROMPT`(:286-294)/`buildDataPrompt`(:295-401)
+- [ ] 从 `createChatSdk.ts` 逐字搬迁:`DEFAULT_SYSTEM_PROMPT`(:297)/`buildDataPrompt`(:306)
 - [ ] 新增 `buildSystemPrompt(options, dataConfig)` 统一入口:处理 `appendReliableWriteRules` 分支 + `---` 分割线
 - [ ] `createChatSdk.ts` 改:从 `./promptBuilder` import;`buildCore` 内调 `buildSystemPrompt(options, finalDataConfig)` 替代散落拼接逻辑
 
@@ -56,22 +57,22 @@
 ### 2.1 llmResolver 抽离
 
 - [ ] 新建 `src/core/sdk/llmResolver.ts`
-- [ ] 从 `createChatSdk.ts` 逐字搬迁:`isChatModel`(:422-425)/`buildSummaryLlmInvoke`(:520-567)
-- [ ] 新增 `resolveLlm(options)` 统一入口:返回 `{ llm, modelCaps, summaryLlmInvoke }`(整合 :658-672 的 modelCaps 解析)
+- [ ] 从 `createChatSdk.ts` 逐字搬迁:`isChatModel`(:441)/`buildSummaryLlmInvoke`(:539)
+- [ ] 新增 `resolveLlm(options)` 统一入口:返回 `{ llm, modelCaps, summaryLlmInvoke }`(整合 :681 的 `resolveModelCaps` 调用)
 - [ ] `createChatSdk.ts` 改:从 `./llmResolver` import;`buildCore` 内调 `resolveLlm(options)`
 
 ### 2.2 conflictManager 抽离
 
 - [ ] 新建 `src/core/sdk/conflictManager.ts`
 - [ ] 定义 `ConflictManager` 接口:`{ pendingConflict: Ref<PendingConflict | null>, set(info), resolve(action) }`
-- [ ] 新增 `createConflictManager()` 工厂:搬迁 `createChatSdk.ts` :628-660 的 `pendingConflict` ref + `setPendingConflict` + `resolveConflict` 逻辑
+- [ ] 新增 `createConflictManager()` 工厂:搬迁 `createChatSdk.ts` 的 `pendingConflict` ref(:649)+ `setPendingConflict`(:653)+ `resolveConflict`(:665)
 - [ ] `createChatSdk.ts` 改:`const conflictMgr = createConflictManager()`;`dataOps` 的 `onConflict` 接 `conflictMgr.set`;`sdk.pendingConflict`/`sdk.resolveConflict` 代理到 `conflictMgr`
 
 ### 2.3 skillStore 桥接层抽离
 
 - [ ] 新建 `src/core/sdk/skillStore.ts`(注意:与 `backends/skillStore.ts` 区分,本文件是桥接层)
 - [ ] 定义 `SkillStoreBridge` 接口:`{ loadUserSkills(), syncUserSkills(), store }`
-- [ ] 新增 `createSkillStoreBridge(options, messages, setSkills)` 工厂:搬迁 `createChatSdk.ts` :911-961 的 `toPersistedSkill`/`toSkillSpec`/`loadUserSkillsFromStore`/`syncUserSkills`/`skillStore` 初始化
+- [ ] 新增 `createSkillStoreBridge(options, messages, setSkills)` 工厂:搬迁 `createChatSdk.ts` 的 `toPersistedSkill`(:936)/`toSkillSpec`(:942)/`syncUserSkills`(:958)/`loadUserSkillsFromStore`(:967)/`skillStore` 初始化
 - [ ] `createChatSdk.ts` 改:`const skillBridge = createSkillStoreBridge(options, messages, setSkills)`;`resolveAndLoad`/`loadUserSkills` 代理到 `skillBridge`
 
 ### 2.4 contextIndex 抽离
@@ -92,13 +93,13 @@
 
 - [ ] 新建 `src/core/sdk/events.ts`
 - [ ] 定义 `SdkEvents` 接口:`{ emit(event, payload), hook(handler), middleware }`
-- [ ] 新增 `createSdkEvents(onEvent)` 工厂:搬迁 `createChatSdk.ts` :902-913 的 `listeners` Set + `emit` + `hook` + `createSdkEventMiddleware`(:589-624)
+- [ ] 新增 `createSdkEvents(onEvent)` 工厂:搬迁 `createChatSdk.ts` 的 `listeners` Set(:924)+ `emit` + `hook` + `createSdkEventMiddleware`(:609)
 - [ ] `createChatSdk.ts` 改:`const events = createSdkEvents(options.onEvent)`;中间件装载用 `events.middleware`
 
 ### 3.2 optionsResolver 抽离
 
 - [ ] 新建 `src/core/sdk/optionsResolver.ts`
-- [ ] 从 `createChatSdk.ts` 逐字搬迁:`resolveStorage`(:407-416)/`resolveDialogConfig`(:417-420)
+- [ ] 从 `createChatSdk.ts` 逐字搬迁:`resolveStorage`(:426)/`resolveDialogConfig`(:436)
 - [ ] 可选:整合能力开关解析(`caps?.xxx !== false` 逻辑)为 `resolveCapabilities(options)` 纯函数
 - [ ] `createChatSdk.ts` 改:从 `./optionsResolver` import
 
@@ -169,4 +170,4 @@
 - [ ] `doc/问题.md`:更新 #17 状态(标记 subpath 已加,多入口构建按真实 CDN 体积痛点再排期)
 - [ ] `CHANGELOG.md`:新增版本条目(期一可独立发布为 minor,期二/三叠加为 patch 或合并一次 minor)
 
-> 备注:期一(P0)是核心 + 价值最高,可独立交付。期二/三在期一基础上叠加。全程零破坏性(纯重构 + 新增 subpath,运行时行为不变)。期一完成后 `createChatSdk.ts` 体积从 1714 降到 ~1600(只抽 promptBuilder),期二完成后降到 ~900(抽 llmResolver/conflictManager/skillStoreBridge);`dataOps.ts` 期一完成后从 969 降到 ~480;`useContextManager.ts` 期二完成后从 321 降到 ~170。
+> 备注:期一(P0)是核心 + 价值最高,可独立交付。期二/三在期一基础上叠加。全程零破坏性(纯重构 + 新增 subpath,运行时行为不变)。期一完成后 `createChatSdk.ts` 体积从 1751 降到 ~1600(只抽 promptBuilder),期二完成后降到 ~900(抽 llmResolver/conflictManager/skillStoreBridge);`dataOps.ts` 期一完成后从 969 降到 ~480;`useContextManager.ts` 期二完成后从 321 降到 ~170。
