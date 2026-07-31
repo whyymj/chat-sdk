@@ -1153,7 +1153,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       return {
         id: agentId,
         model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
-        systemPrompt: baseSystemPrompt + buildDataPrompt(liveData()) + (augmentSystemMw ? (augmentSystemMw.augmentPrompt(core.agent?.getState?.() ?? createInitialState()) || '') : ''),
+        // 代理到 createAgent 权威拼装(base + Σ augmentPrompt,含 usageHints/skills/memory/todos/subagents/augmentSystem 等全部段);agent 未构造时回退 base+data(fix-introspection-consistency)
+        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData())),
         tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,

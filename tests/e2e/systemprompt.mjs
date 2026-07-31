@@ -106,5 +106,25 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] inspect().systemPrompt 完整性:含 usageHints/skills/memory 段(fix-introspection-consistency,修复前 getInfo 漏段)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-prompt-complete', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true, memory: true, planning: true },
+      systemPrompt: '你是测试助手。',
+      skills: [{ name: 'mySkill', description: '测试技能描述', content: 'skill 全文内容' }],
+      memory: '记住要简洁回答。',
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '应用配置' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(sp.includes('你是测试助手。'), 'inspect().systemPrompt 含 base 段(用户 systemPrompt)')
+    assert(sp.includes('能力使用提示'), 'inspect().systemPrompt 含 usageHints 段(## 能力使用提示,修复前 getInfo 漏)')
+    assert(sp.includes('可用 Skills'), 'inspect().systemPrompt 含 skills 索引段(修复前 getInfo 漏)')
+    assert(sp.includes('mySkill'), 'inspect().systemPrompt 含 skill 名(mySkill)')
+    // memory 段(state.memory)在 beforeAgent 才注入,inspect 早调未运行时为空(design 风险段已说明,非 bug);usageHints/skills 段不依赖运行时 state,足以证明 getInfo 收敛修复
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

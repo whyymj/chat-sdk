@@ -177,3 +177,7 @@ vfs 内部按 path 前缀分三池独立 LRU:`large_results/*`(offload 自动,�
 ## Requirement: offload 大结果结构化元数据
 
 工具结果外存 vfs 时 `offloadLargeResult` 返回结构化 `OffloadResult` `{ offloaded: true, content, path, totalChars, preview(1000 字符), suggestedReadPlan? }`(`content` 写入 ToolMessage,其余为元数据),其中 `suggestedReadPlan` 在 `totalChars > 10000` 时建议分页 `vfs_read({ path, offset, limit })` 读取策略,使 LLM 基于元数据决定读取策略而非盲读。
+
+## Requirement: inspect() 返回的 systemPrompt 与运行时实际注入一致
+
+`inspect()`(及 DebugDrawer 经 `getInfo()` 读取)返回的 `systemPrompt` 字段必须等于 agent 运行时实际注入 LLM 的完整 system prompt,即 base(用户 systemPrompt + 可靠写入规则)+ `buildDataPrompt`(可操作数据段)+ 所有已装载中间件的 `augmentPrompt` 段(usageHints 工具用法提示 / todos 任务清单 / skills 技能索引 / memory 持久指令 / subagents 预声明索引 / augmentSystem 用户钩子等)。该一致性经 `createAgent` 暴露 `getEffectiveSystemPrompt()`(复用内部 `buildSystemPrompt()` 权威拼装)实现,`getInfo` 的 `systemPrompt` 代理到该出口,消除"展示拼装"与"运行时拼装"两套逻辑分叉。agent 尚未构造时(initDone 未 resolve 的早期 inspect)回退 `base + buildDataPrompt`。

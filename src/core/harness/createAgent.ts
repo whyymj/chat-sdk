@@ -565,5 +565,7 @@ export function createAgent(options: CreateAgentOptions) {
     setTools,
     setLlm,
     debugLogs,
+    // 复用内部权威拼装(base + Σ augmentPrompt),供 getInfo/inspect 收敛为单一真相源(fix-introspection-consistency)
+    getEffectiveSystemPrompt: () => buildSystemPrompt(),
   }
 }
