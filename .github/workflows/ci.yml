@@ -31,8 +31,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build (lib + iife)
-        run: npm run build
+      - name: Build lib (ESM + UMD)
+        run: npm run build:lib
+
+      - name: Build iife (CDN single file)
+        run: npm run build:iife
+
+      - name: Diagnose build failure
+        if: failure()
+        run: |
+          echo "=== node/npm versions ==="
+          node -v && npm -v
+          echo "=== NODE_ENV ==="
+          echo "$NODE_ENV"
+          echo "=== vite installed? ==="
+          ls -la node_modules/.bin/vite 2>&1 || echo "vite NOT in .bin"
+          npx vite --version 2>&1 || echo "npx vite failed"
+          echo "=== dist content ==="
+          ls -la dist 2>&1 || echo "no dist"
 
       - name: Self-test (630 assertions, tsx 跑源码,无 LLM 依赖)
         run: npm test
@@ -69,4 +85,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - name: Build lib (matrix)
+        run: npm run build:lib
+      - name: Build iife (matrix)
+        run: npm run build:iife
