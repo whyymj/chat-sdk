@@ -8,9 +8,11 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-524%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-537%20asserts-brightgreen.svg)](#self-tests)
 
 ---
+
+> 🚀 **Quick start?** → [30-second quickstart](#30-second-quickstart) · [Examples](#examples) · [Options cheat sheet](#createchatsdk-options-cheat-sheet) · [LLM 连接](#llm-连接直连--代理--openai-兼容端点)
 
 ## Who is it for
 
@@ -413,7 +415,8 @@ createChatSdk({
 // sdk.addTool(tool)             // append user tool at runtime (dedup by name)
 // sdk.removeTool(name)          // remove user tool at runtime (built-ins untouched); returns whether removed
 // sdk.setLlm(llm)               // switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider; param BaseChatModel or LLMConfig; rebind + re-resolve model caps)
-// sdk.setMemory(text)           // update persistent memory directive at runtime (next augmentPrompt injects latest)
+// sdk.setMemory(source)         // update memory at runtime; supports string and sync/async function (async fn evaluated in background, fits RAG doc loading)
+// sdk.refreshMemory()           // re-evaluate current memory function source (force refresh after RAG doc update); returns latest text
 // sdk.setSubagents(configs)     // replace pre-declared subagents at runtime (regenerates use_<id> delegation tools + rebind; requires subagents:[] at creation)
 // sdk.addSubagent(config)        // append pre-declared subagent at runtime
 // sdk.removeSubagent(id)        // remove pre-declared subagent at runtime; returns whether removed
@@ -425,6 +428,9 @@ After `npm run dev`, visit the corresponding page:
 
 | Example | Entry | Demonstrates |
 |---|---|---|
+| minimal-demo | `/examples/minimal-demo/` | Minimal: 5-line chat dialog, no data ops |
+| rag-demo | `/examples/rag-demo/` | RAG async docs: `memory` accepts async fn to load KB + switch/refresh |
+| headless-demo | `/examples/headless-demo/` | Headless: `ui:false` + self-built UI via `sdk.messages`/`sdk.send` |
 | page-demo | `/` | Self-bootstrapping demo: left JSON reactive page + right chat |
 | nested-demo | `/examples/nested-demo/` | Nested block tree + human confirm + checkpoint |
 | dynamic-demo | `/examples/dynamic-demo/` | Lazy-loaded components with dynamic schemas (`sdk.setData`/``) |
@@ -469,7 +475,7 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 524 assertions (tsx, source-level; no LLM dependency)
+npm test            # 537 assertions (tsx, source-level; no LLM dependency)
 npm run test:e2e    # 210 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 

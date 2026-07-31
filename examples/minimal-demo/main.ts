@@ -1,4 +1,4 @@
-// 用途:规划反思 —— 高温创意规划 + 低温反思员(plan-reflect-execute)
+// 用途:最简集成 —— 5 行给页面加 AI 对话框(无数据操作,纯对话)
 import { createApp } from 'vue'
 import App from './App.vue'
 

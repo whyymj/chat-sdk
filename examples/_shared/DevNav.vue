@@ -8,6 +8,9 @@ import { ref, computed } from 'vue'
 
 const LINKS = [
   { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
+  { href: '/examples/minimal-demo/', label: '最简集成', match: (p: string) => p.startsWith('/examples/minimal-demo') },
+  { href: '/examples/rag-demo/', label: 'RAG 异步文档', match: (p: string) => p.startsWith('/examples/rag-demo') },
+  { href: '/examples/headless-demo/', label: 'Headless', match: (p: string) => p.startsWith('/examples/headless-demo') },
   { href: '/examples/complex-demo/', label: '复杂页面', match: (p: string) => p.startsWith('/examples/complex-demo') },
   { href: '/examples/subagent-demo/', label: '子 Agent', match: (p: string) => p.startsWith('/examples/subagent-demo') },
   { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },

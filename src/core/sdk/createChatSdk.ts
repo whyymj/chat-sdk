@@ -140,8 +140,15 @@ export interface ChatSdkOptions {
    * - `backend`:'indexed'(默认)/ 'local' / 'session' / 'memory'
    */
   skillStorage?: SkillStoreConfig | false
-  /** AGENTS.md 风格持久指令(加载时优先于持久化的 memory) */
-  memory?: string
+  /**
+   * AGENTS.md 风格持久指令(加载时优先于持久化的 memory)。
+   * 支持三种形态:
+   *   - string:静态文本
+   *   - () => string:同步求值(每次 beforeAgent 求值,适合读运行时变量)
+   *   - () => Promise<string>:异步求值(首次 beforeAgent 求值并缓存,适合异步加载 RAG 文档)
+   * 函数 source 不可序列化,reload 时 options.memory 仍是函数会重新求值。
+   */
+  memory?: string | (() => string | Promise<string>)
   /** 主数据对象(单对象;schema 校验 + bind 直连,工具直接读写 bind,不挂 window) */
   data?: DataConfig
   /** scope 白名单(默认不启用;启用后对 window/vfs 工具生效) */
@@ -389,10 +396,17 @@ export interface ChatSdk {
    */
   setLlm(llm: BaseChatModel | LLMConfig): void
   /**
-   * 运行时更新持久指令 memory 文本。立即生效:下一轮 augmentPrompt 注入最新值;setMemory('') 清空。
-   * 不调用 = 现状行为(创建时 options.memory 固定)。
+   * 运行时更新持久指令 memory。支持 string 与同步/异步函数:
+   *   - string:立即生效,下一轮 augmentPrompt 注入
+   *   - () => string | Promise<string>:后台求值(适合异步加载 RAG 文档),求值完成自动生效
+   * setMemory('') 清空。不调用 = 现状行为(创建时 options.memory 固定)。
    */
-  setMemory(text: string): void
+  setMemory(source: string | (() => string | Promise<string>)): void
+  /**
+   * 重新求值当前 memory 函数 source(用于 RAG 文档更新后强制刷新);返回最新文本。
+   * 字符串 source 直接返回当前值。
+   */
+  refreshMemory(): Promise<string>
   /**
    * 运行时替换整个预声明子 agent 列表(重新生成 use_<id> 委派工具,立即生效)。
    * 需创建时配 subagents:[](否则 controller 为 null,setter warn);不调用 = 现状行为。
@@ -692,6 +706,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const todosMw = createTodosMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
+  // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
+  if (typeof options.memory === 'function') void memoryMw.refresh()
 
   // agent 实例引用 holder(checkpoint manager 需读 agent.getState 取 todos,但 agent 在 initDone 内才创建;闭包延后读取)
   const agentRef: { current: any } = { current: null }
@@ -1141,7 +1157,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         core.applySnapshot(snap)
         emit({ type: 'session_restored', sessionId: target, rounds: snap.messages?.length ?? 0 })
       }
-      if (options.memory) void store.save(agentId, core.sessionId, { memory: options.memory })
+      if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
       return target
     },
 
@@ -1226,10 +1242,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (core.agent) core.agent.setLlm(newLlm)
       core.infoTick.value++
     },
-    /** 运行时更新 memory 文本;立即生效 + infoTick */
-    setMemory(text: string): void {
-      memoryMw.reset(text)
+    /** 运行时更新 memory;支持 string 与同步/异步函数(异步函数后台求值,下一轮 beforeAgent 前就绪)*/
+    setMemory(source: string | (() => string | Promise<string>)): void {
+      memoryMw.reset(source)
+      if (typeof source === 'function') void memoryMw.refresh()
       core.infoTick.value++
+    },
+    /** 重新求值当前 memory 函数 source(用于 RAG 文档更新后强制刷新);返回最新文本 */
+    refreshMemory(): Promise<string> {
+      return memoryMw.refresh()
     },
     /** 运行时替换预声明子 agent 列表(重新生成委派工具 + rebind) */
     setSubagents(configs: SubagentConfig[]): void {
@@ -1327,7 +1348,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       core.sessionId = await store.createSession(agentId, sessOpts.title)
     }
     // options.memory 落盘(每次启动确保持久化;加载时 options 优先已在 applySnapshot 处理)
-    if (options.memory) void store.save(agentId, core.sessionId, { memory: options.memory })
+    // 函数 source 落盘已解析的文本(函数本身不可序列化,且 reload 时 options.memory 仍是函数会重新求值)
+    if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
   }
 
   /** Skill 独立加载:从 SkillStore 恢复用户创建的 skill(与 storage 选项分离,即使 storage:false 也持久化) */
@@ -1720,7 +1742,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     addTool: (t: StructuredToolInterface) => core.addTool(t),
     removeTool: (name: string) => core.removeTool(name),
     setLlm: (llm: BaseChatModel | LLMConfig) => core.setLlm(llm),
-    setMemory: (text: string) => core.setMemory(text),
+    setMemory: (source: string | (() => string | Promise<string>)) => core.setMemory(source),
+    refreshMemory: () => core.refreshMemory(),
     setSubagents: (configs: SubagentConfig[]) => core.setSubagents(configs),
     addSubagent: (config: SubagentConfig) => core.addSubagent(config),
     removeSubagent: (id: string) => core.removeSubagent(id),

@@ -413,7 +413,8 @@ export interface ChatSdkOptions {
   skills?: SkillSpec[];
   /** 用户创建 skill 的独立持久化存储(与 storage 选项分离)。默认 `{ backend: 'indexed' }`(即使 storage:false 也持久化);`false` 关闭;`id` 手动指定同一 id 可跨页面/跨 agent 复用 */
   skillStorage?: SkillStoreConfig | false;
-  memory?: string;
+  /** AGENTS.md 风格持久指令。支持 string 与同步/异步函数(异步函数适合加载 RAG 文档) */
+  memory?: string | (() => string | Promise<string>);
   data?: DataConfig;
   permissions?: PermissionRule[];
   /** 自定义中间件(注入到内置中间件之后;可拦截/观察模型调用、工具、prompt) */
@@ -559,8 +560,10 @@ export interface ChatSdk {
   removeTool(name: string): boolean;
   /** 运行时切换 LLM(BaseChatModel 或 LLMConfig);rebind + 重解析能力 + infoTick */
   setLlm(llm: ChatModelLike | LLMConfig): void;
-  /** 运行时更新 memory 文本;立即生效 + infoTick */
-  setMemory(text: string): void;
+  /** 运行时更新 memory;支持 string 与同步/异步函数(异步函数后台求值,下一轮 beforeAgent 前就绪) */
+  setMemory(source: string | (() => string | Promise<string>)): void;
+  /** 重新求值当前 memory 函数 source(RAG 文档更新后强制刷新);返回最新文本 */
+  refreshMemory(): Promise<string>;
   /** 运行时替换预声明子 agent 列表(重新生成委派工具 + rebind);需创建时配 subagents:[] */
   setSubagents(configs: SubagentConfig[]): void;
   /** 运行时追加预声明子 agent(id 重复 warn 跳过);需创建时配 subagents:[] */
@@ -618,6 +621,8 @@ export declare function detectGarbledToolCall(content: string): boolean;
 export declare function createSubagentMiddleware(opts: any): any;
 export declare function createVerifyMiddleware(opts: VerifyMiddlewareOptions): any;
 export declare function createWriteBackCheck(opts?: WriteBackCheckOptions): VerifyCheck;
+export declare function createMemoryMiddleware(memory?: string | (() => string | Promise<string>)): any;
+export type MemorySource = string | (() => string | Promise<string>);
 export declare const presets: Record<string, any>;
 /** systemPrompt 辅助片段(标准化最佳实践,拼进 systemPrompt 降低写错门槛) */
 export declare const systemPromptHelpers: {

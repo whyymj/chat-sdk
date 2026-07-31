@@ -25,6 +25,8 @@ export { createSubagentMiddleware, createSubagentsMiddleware } from './harness/s
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsController } from './harness/subagent'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
+export { createMemoryMiddleware } from './harness/memory'
+export type { MemorySource } from './harness/memory'
 export { createApprovalMiddleware } from './harness/approval'
 export type { ApprovalOptions } from './harness/approval'
 export { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from './harness/humanConfirm'

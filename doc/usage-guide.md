@@ -23,6 +23,7 @@
   - [6.7 对话鲁棒性(重试 / 停止 / 重试)](#67-对话鲁棒性重试--停止--重试)
   - [6.8 上下文与内存上限](#68-上下文与内存上限)
   - [6.9 onEvent 事件回调(订阅常用时机)](#69-onevent-事件回调订阅常用时机)
+  - [6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点](#612-llm-连接直连--代理--openai-兼容端点)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -476,6 +477,29 @@ createChatSdk({
 })
 ```
 
+**支持异步函数 source(适合 RAG / 异步加载文档)**:
+
+```ts
+// 异步加载知识库文档作为 memory
+createChatSdk({
+  memory: async () => await fetch('/kb/faq.md').then((r) => r.text()),
+})
+
+// 同步函数读运行时变量(注意:函数 source 默认缓存首次求值结果)
+let lang = 'zh'
+createChatSdk({ memory: () => `请用${lang}回答。` })
+// lang 变了需 sdk.refreshMemory() 强制重新求值
+```
+
+| source 形态 | 求值时机 | 缓存 | 适用场景 |
+|---|---|---|---|
+| `string` | 立即 | 无需 | 静态文本(规范、约束) |
+| `() => string` | 首次 `beforeAgent` | 是,`refreshMemory()` 重求 | 读运行时变量 |
+| `() => Promise<string>` | 首次 `beforeAgent`(后台预求值) | 是,`refreshMemory()` 重求 | 异步加载 RAG 文档 |
+
+> **缓存策略**:函数 source 首次求值后缓存结果,后续 `beforeAgent` 直接用缓存(避免每轮重复 fetch)。`setMemory(newSource)` 或 `refreshMemory()` 可清缓存重求。异步求值失败降级为空串(不阻塞 agent)。
+> **持久化**:函数 source 不可序列化,落盘的是已解析的文本;reload 时 `options.memory` 仍是函数会重新求值(文档可能已更新,符合预期)。
+
 ### 6.5 Planning(任务规划,自动)
 
 SDK 内置 todos 规划能力(中间件),**默认开启,无需配置**。遇到多步任务时,Agent 会:
@@ -555,6 +579,21 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 这些在 `storage: false`(纯内存)下也生效,防 OOM。
 
 压缩统计可在 DebugDrawer「🧬 Agent 信息」tab 的「🗜️ 上轮压缩」段查看(触发与否、摘要轮次、召回条数、策略名),排查"上下文为何变了"。
+
+#### 三者关系(`maxMemoryRounds` vs `contextOptions.windowRounds` vs `capabilities.summarization`)
+
+三个配置各管不同层级,易混淆,对比:
+
+| 配置 | 层级 | 作用 | 默认 | 关掉后果 |
+|---|---|---|---|---|
+| `capabilities.summarization` | 总开关 | 是否装载压缩中间件 | `true`(开) | 不压缩,只剩 `maxMemoryRounds` 硬截断(最旧轮次直接丢弃,无摘要) |
+| `contextOptions.windowRounds` | 每轮 LLM 输入层 | 滑动窗口保留最近 N 轮**原文**,更老的进摘要区 | 6(`auto` 预设) | 窗口=0 则全进摘要区(每轮都压缩,省上下文但丢原文细节) |
+| `maxMemoryRounds` | 持久化/内存层 | 对话历史**硬上限**,超限把最旧轮次压缩为一条摘要 system 消息 | 50 | 无上限(长会话 OOM 风险) |
+
+**易混点澄清**:
+- `maxMemoryRounds` ≠ `windowRounds`:前者是「历史最多存多少轮」(超限压缩归档),后者是「每轮给 LLM 看多少轮原文」(更老的摘要化)。例:`maxMemoryRounds=50, windowRounds=6` = 最多存 50 轮历史,但每轮 LLM 只看最近 6 轮原文 + 更老的摘要。
+- `contextPreset`(`auto`/`conservative`/`aggressive`)是 `contextOptions` 的预设档,改 preset 等于批量调 `windowRounds`/`summaryThresholdRounds` 等阈值;`contextOptions` 显式字段覆盖 preset。
+- 关 `capabilities.summarization` 后,`contextOptions` 全部失效(中间件不装载),只剩 `maxMemoryRounds` 硬截断 —— 适合「上下文由接口方管理,SDK 不压缩」的场景。
 
 ### 6.9 子 agent(委派与并行)
 
@@ -873,7 +912,8 @@ createChatSdk({
 | `sdk.addTool(tool)` | 运行时追加用户工具 | 去重 by name;内置不动 |
 | `sdk.removeTool(name)` | 运行时移除用户工具 | 内置不动;返回是否移除成功 |
 | `sdk.setLlm(llm)` | 运行时切换 LLM | 参数 `BaseChatModel` 或 `LLMConfig`(内部构造 `ChatOpenAI`);rebind + 重解析模型能力(`contextWindow`/`maxOutputTokens`);`summaryLlm` 不受影响;新模型不支持 `bindTools` 则工具调用失效(agent 不崩) |
-| `sdk.setMemory(text)` | 运行时更新持久指令 memory | 下一轮 `augmentPrompt` 注入最新;`setMemory('')` 清空(空串跳过注入) |
+| `sdk.setMemory(source)` | 运行时更新持久指令 memory | 支持 `string` 与同步/异步函数;异步函数后台求值,下一轮 `augmentPrompt` 注入最新;`setMemory('')` 清空(空串跳过注入) |
+| `sdk.refreshMemory()` | 重新求值当前 memory 函数 source | RAG 文档更新后强制刷新;返回最新文本;字符串 source 直接返回当前值 |
 | `sdk.setSubagents(configs)` | 运行时替换预声明子 agent | 重新生成 `use_<id>` 委派工具 + 触发 rebind;需创建时配 `subagents:[]`(空数组也启用 controller,支持「初始无子 agent,运行时动态 add」) |
 | `sdk.addSubagent(config)` | 运行时追加预声明子 agent | id 重复 warn 跳过;需创建时配 `subagents:[]` |
 | `sdk.removeSubagent(id)` | 运行时移除预声明子 agent | 返回是否移除成功;需创建时配 `subagents:[]` |
@@ -891,6 +931,21 @@ sdk.setLlm({ apiKey, baseUrl, model: 'gpt-4o' })      // 复杂任务
 // 场景 3:运行时追加业务约束到 memory
 sdk.setMemory('当前用户是 VIP,优先展示会员价;回答简洁。')
 
+// 场景 3.5:异步加载 RAG 文档到 memory(支持 string 与同步/异步函数 source)
+// - 创建时直接传异步函数:后台预求值,首次对话前尽量就绪
+createChatSdk({
+  memory: async () => await fetch('/kb/faq.md').then((r) => r.text()),
+  /* ... */
+})
+// - 运行时切换为异步函数(如用户切换了知识库)
+sdk.setMemory(async () => await fetch('/kb/product-v2.md').then((r) => r.text()))
+// - 文档更新后强制刷新(重新求值当前函数 source)
+await sdk.refreshMemory()
+// - 也可以传同步函数读运行时变量
+let lang = 'zh'
+sdk.setMemory(() => `请用${lang}回答。`)
+lang = 'en' // 变量变了,需 refreshMemory() 才重求值(函数 source 默认缓存首次结果)
+
 // 场景 4:运行时根据任务类型动态委派子 agent
 // (创建时配 subagents:[] 占位启用 controller)
 sdk.addSubagent({ id: 'translator', description: '中英互译子 agent', systemPrompt: '你是翻译助手。' })
@@ -899,6 +954,93 @@ sdk.removeSubagent('translator')
 ```
 
 > **说明**:`setSystemPrompt` / `setMiddleware`(中间件数组运行时替换)仍未实现,改动深入 harness 核心,留待后续;当前可用 `setData`/`setSkills`/`augmentSystem` 钩子覆盖大部分动态 system prompt 场景。详见 `doc/roadmap.md` #5。
+
+### 6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点
+
+SDK 兼容任意 OpenAI Chat Completions 协议端点。三种连接方式按「apiKey 是否暴露到浏览器」选:
+
+#### 方式一:直连(浏览器持有 apiKey)
+
+适合内部工具 / 开发期 / apiKey 可暴露的场景。`LLMConfig.baseUrl` 指向任意 OpenAI 兼容端点:
+
+```ts
+import { createChatSdk } from 'page-agent-sdk'
+
+createChatSdk({
+  llm: {
+    apiKey: 'sk-xxx',
+    baseUrl: 'https://api.deepseek.com/v1',  // deepseek / qwen / glm / 文心 等 OpenAI 兼容端点
+    model: 'deepseek-v4-pro',
+    temperature: 0.3,
+    // 2.12.2+:透传额外请求 body 参数(如 deepseek thinking)
+    extraBody: { thinking: { type: 'enabled' } },
+    // 透传 configuration 额外字段(如 headers/timeout/customFetch),与 baseUrl 合并
+    extraConfig: { timeout: 60000 },
+  },
+  // ...其他配置
+}).mount()
+```
+
+> **主流国产模型 OpenAI 兼容端点**:
+> - DeepSeek:`https://api.deepseek.com/v1`
+> - 通义千问:`https://dashscope.aliyuncs.com/compatible-mode/v1`
+> - 智谱 GLM:`https://open.bigmodel.cn/api/paas/v4`
+> - 文心一言:`https://qianfan.baidubce.com/v2`
+
+#### 方式二:代理模式(防 apiKey 泄露)
+
+适合公开网站 —— 浏览器只持有用户 token,真实 apiKey 留在服务端代理。用 `createProxyLlm`:
+
+```ts
+import { createChatSdk, createProxyLlm } from 'page-agent-sdk'
+
+createChatSdk({
+  llm: createProxyLlm({
+    mode: 'proxy',           // 代理模式:浏览器 → 你的代理 → LLM 服务
+    proxyUrl: '/api/llm-proxy',  // 你的后端代理地址
+    userToken: getUserToken(),   // 用户登录态(由你的后端校验),非 apiKey
+    // 代理后端负责:校验 userToken → 注入真实 apiKey → 转发到 LLM → 返回 OpenAI 格式
+  }),
+  // ...其他配置
+}).mount()
+```
+
+#### 方式三:直连模式(代理 + 浏览器持有 apiKey)
+
+`createProxyLlm` 的 `direct` 模式 —— 走代理但 apiKey 在浏览器(适合代理只做转发/审计,不持有 key):
+
+```ts
+createChatSdk({
+  llm: createProxyLlm({
+    mode: 'direct',
+    proxyUrl: '/api/llm-direct',
+    apiKey: 'sk-xxx',
+    model: 'deepseek-v4-pro',
+  }),
+}).mount()
+```
+
+#### 三种方式对比
+
+| 方式 | apiKey 位置 | 适用场景 | 安全性 |
+|---|---|---|---|
+| 直连(`LLMConfig`) | 浏览器 | 内部工具 / 开发期 | 低(key 暴露) |
+| 代理 `proxy` 模式 | 服务端 | 公开网站 | 高(浏览器只有 userToken) |
+| 代理 `direct` 模式 | 浏览器 | 代理只做转发/审计 | 中(key 暴露但走代理) |
+
+> **代理后端要求**:只需返回 OpenAI Chat Completions 兼容格式(`{ choices: [{ message: { role, content } }] }`),SDK 即可对接。详见 `examples/proxy-demo/`(需 `npm run proxy:mock` 起本地 mock 代理)。
+
+#### 运行时切换 LLM
+
+配合 §6.11 动态重配置,运行时切换 LLM(含 `extraBody`/`extraConfig`):
+
+```ts
+// 配额耗尽切便宜模型 + 开启 thinking
+sdk.setLlm({
+  apiKey, baseUrl, model: 'deepseek-v4-pro',
+  extraBody: { thinking: { type: 'enabled' } },
+})
+```
 
 ## 8. 高级:自定义中间件
 

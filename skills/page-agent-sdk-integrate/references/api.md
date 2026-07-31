@@ -23,7 +23,8 @@
 | `addTool(tool)` | `(tool: StructuredToolInterface) => void` | Append user tool at runtime (dedup by name; built-ins untouched). |
 | `removeTool(name)` | `(name: string) => boolean` | Remove user tool at runtime (built-ins untouched). Returns whether removed. |
 | `setLlm(llm)` | `(llm: BaseChatModel \| LLMConfig) => void` | Switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider). Param `BaseChatModel` or `LLMConfig` (constructs `ChatOpenAI` internally). Rebinds tools + re-resolves model caps (`contextWindow`/`maxOutputTokens`). `summaryLlm` unaffected. If new model lacks `bindTools`, tool-calling degrades (agent stays up). |
-| `setMemory(text)` | `(text: string) => void` | Update persistent memory directive at runtime (next `augmentPrompt` injects latest; `setMemory('')` clears). |
+| `setMemory(source)` | `(source: string \| (() => string \| Promise<string>)) => void` | Update memory at runtime. Supports `string` and sync/async function (async fn evaluated in background, fits RAG doc loading). `setMemory('')` clears. |
+| `refreshMemory()` | `() => Promise<string>` | Re-evaluate current memory function source (force refresh after RAG doc update). String source returns current value. |
 | `setSubagents(configs)` | `(configs: SubagentConfig[]) => void` | Runtime swap pre-declared subagents (regenerates `use_<id>` delegation tools + triggers rebind). Requires `subagents:[]` at creation (else controller is null, setter warns, no throw). |
 | `addSubagent(config)` | `(config: SubagentConfig) => void` | Append pre-declared subagent at runtime (duplicate id warns & skips). Requires `subagents:[]` at creation. |
 | `removeSubagent(id)` | `(id: string) => boolean` | Remove pre-declared subagent at runtime (by id). Returns whether removed. Requires `subagents:[]` at creation. |
@@ -175,7 +176,7 @@ createChatSdk({
 - **Runtime dynamic reconfiguration (zero-breakage; not calling = current behavior)**: beyond data/skills, you can also dynamically reconfigure tools / LLM / memory / subagents at runtime without rebuilding the agent:
   - `sdk.setTools(tools)` / `addTool(tool)` / `removeTool(name)` — swap/append/remove user tools (built-ins untouched; internal `rebindTools` re-binds to LLM; next round uses new set). Use cases: per-permission tool groups, business-stage gating, A/B experiments.
   - `sdk.setLlm(llm)` — switch LLM at runtime (quota-exhausted→cheaper model / complex task→stronger model / switch provider). Param `BaseChatModel` or `LLMConfig`. Rebinds tools + re-resolves model caps. `summaryLlm` unaffected.
-  - `sdk.setMemory(text)` — update the persistent memory directive at runtime (next `augmentPrompt` injects latest).
+  - `sdk.setMemory(source)` — update memory at runtime; supports `string` and sync/async function (async fn evaluated in background, fits RAG doc loading). `sdk.refreshMemory()` re-evaluates the current function source (force refresh after RAG doc update).
   - `sdk.setSubagents(configs)` / `addSubagent(config)` / `removeSubagent(id)` — swap/append/remove pre-declared subagents (regenerates `use_<id>` delegation tools + triggers rebind). Requires `subagents:[]` at creation.
   - All setters trigger `infoTick++` → DebugDrawer refreshes; `inspect()` reflects the latest tools/model/memory/subagent.subagents.
 

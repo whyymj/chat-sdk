@@ -2,6 +2,29 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.13.0] - 2026-07-31
+
+### Added
+- **`memory` 支持异步函数 source(RAG)**:`options.memory` 与 `sdk.setMemory(source)` 现支持三种形态 —— `string`(静态文本)/ `() => string`(同步求值)/ `() => Promise<string>`(异步求值,适合加载 RAG 文档)。异步函数在首次 `beforeAgent` 后台求值并缓存,`sdk.refreshMemory()` 可强制重新求值(文档更新后刷新)。求值失败降级空串(不阻塞 agent)。函数 source 不可序列化,落盘的是已解析文本;reload 时 `options.memory` 仍是函数会重新求值
+- **`sdk.refreshMemory()`**:重新求值当前 memory 函数 source,返回最新文本;字符串 source 直接返回当前值
+- **`createMemoryMiddleware` / `MemorySource` 类型从入口导出**:供自定义中间件场景复用
+- **`rag-demo` 示例**:`examples/rag-demo/` 演示 memory 异步加载知识库 + 切换知识库 + 强制刷新
+
+### Changed
+- `minimal-demo` / `headless-demo` / `rag-demo` 导入改为 `../../src/core`(源码直连,避免 dev 模式预打包 dist 旧版缓存问题);mount 改用 CSS 选择器字符串(`'#chat-root'`)
+- `demo/npm-local/node_modules/page-agent-sdk/dist` 同步到最新构建(供 `demo/plain.html` CDN 集成示例使用)
+
+### Docs
+- `doc/usage-guide.md` §6.4 Memory 章节补充异步函数 source 说明 + 三种形态对比表 + 缓存策略
+- `doc/usage-guide.md` §6.11 便捷 API 表 `setMemory` 行更新 + 新增 `refreshMemory` 行 + 场景 3.5 RAG 代码示例
+- `README.md` / `README.zh-CN.md`:便捷 API 注释更新 + Examples 表新增 `rag-demo` + 测试徽章 537
+- `skills/page-agent-sdk-integrate`:`api.md` 表与 `advanced.md` §3.5 同步异步 memory + RAG 示例
+- `CLAUDE.md`:setMemory 描述更新 + 测试计数 537
+
+### Tests
+- `sec-29.ts` 新增 memory 异步函数 source 单元断言(同步求值/缓存/refresh/异步求值/缓存/reset 切换/求值失败降级)
+- `sec-07.ts` `beforeAgent` 调用改为 `await`(适配异步 beforeAgent)
+
 ## [2.12.2] - 2026-07-30
 
 ### Added

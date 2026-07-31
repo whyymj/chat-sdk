@@ -30,6 +30,50 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mw.augmentPrompt!(state) === undefined, 'memoryMw.augmentPrompt → state.memory 空时返 undefined(跳过)')
   }
 
+  // ===== memory 异步函数 source(RAG 场景) =====
+  {
+    // 同步函数 source:beforeAgent 求值并注入 state
+    let dynamic = '运行时值'
+    const syncMw = createMemoryMiddleware(() => dynamic)
+    assert(syncMw.get() === '', '同步函数 source 未求值前 → get() 返空串(尚未求值)')
+    let s = await syncMw.beforeAgent?.({} as any)
+    assert((s as any)?.memory === '运行时值', '同步函数 source → beforeAgent 求值注入 state.memory')
+    assert(syncMw.get() === '运行时值', '同步函数 source 求值后 → get() 返回已解析值')
+    // source 变量变了,缓存仍是旧值(缓存生效)
+    dynamic = '新运行时值'
+    s = await syncMw.beforeAgent?.({} as any)
+    assert((s as any)?.memory === '运行时值', '同步函数 source 缓存生效 → 第二次 beforeAgent 仍用缓存(不重求值)')
+    // refresh 强制重求值
+    const refreshed = await syncMw.refresh()
+    assert(refreshed === '新运行时值', 'refresh() → 重新求值函数 source,返回最新值')
+    assert(syncMw.get() === '新运行时值', 'refresh() 后 get() 反映最新求值结果')
+
+    // 异步函数 source:beforeAgent await 求值并缓存
+    const asyncMw = createMemoryMiddleware(async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      return '异步加载的 RAG 文档内容'
+    })
+    assert(asyncMw.get() === '', '异步函数 source 未求值前 → get() 返空串')
+    s = await asyncMw.beforeAgent?.({} as any)
+    assert((s as any)?.memory === '异步加载的 RAG 文档内容', '异步函数 source → beforeAgent await 求值注入 state.memory')
+    assert(asyncMw.get() === '异步加载的 RAG 文档内容', '异步函数 source 求值后 → get() 返回已解析值')
+    // 第二次 beforeAgent 用缓存(不再 await)
+    s = await asyncMw.beforeAgent?.({} as any)
+    assert((s as any)?.memory === '异步加载的 RAG 文档内容', '异步函数 source 缓存生效 → 第二次 beforeAgent 用缓存')
+
+    // reset 切换 source 类型:函数 → 字符串
+    asyncMw.reset('静态文本')
+    assert(asyncMw.get() === '静态文本', 'reset(字符串) → get() 立即返回字符串(无需 beforeAgent)')
+
+    // 异步求值失败 → 降级空串,不抛
+    const failMw = createMemoryMiddleware(async () => {
+      throw new Error('网络错误')
+    })
+    s = await failMw.beforeAgent?.({} as any)
+    assert((s as any)?.memory === '', '异步求值失败 → 降级空串注入 state.memory(不阻塞 agent)')
+    assert(failMw.get() === '', '异步求值失败 → get() 返空串')
+  }
+
   // ===== subagents 动态化(SubagentsController) =====
   {
     const main = { llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake' }, allTools: [], debug: false }

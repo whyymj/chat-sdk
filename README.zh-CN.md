@@ -8,9 +8,11 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-524%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-537%20asserts-brightgreen.svg)](#自测)
 
 ---
+
+> 🚀 **快速上手?** → [30 秒上手](#30-秒上手) · [示例](#示例) · [配置项速查](#createchatsdk-配置项速查) · [LLM 连接](#llm-连接直连--代理--openai-兼容端点)
 
 ## 适合谁
 
@@ -358,7 +360,8 @@ createChatSdk({
 // sdk.addTool(tool)             // 运行时追加用户工具(去重 by name)
 // sdk.removeTool(name)          // 运行时移除用户工具(内置不动);返回是否移除成功
 // sdk.setLlm(llm)               // 运行时切换 LLM(配额耗尽切便宜模型/复杂任务切强模型/切 provider;参数 BaseChatModel 或 LLMConfig;rebind + 重解析模型能力)
-// sdk.setMemory(text)           // 运行时更新持久指令 memory(下一轮 augmentPrompt 注入最新)
+// sdk.setMemory(source)         // 运行时更新 memory;支持 string 与同步/异步函数(异步函数后台求值,适合 RAG 加载文档)
+// sdk.refreshMemory()           // 重新求值当前 memory 函数 source(RAG 文档更新后强制刷新);返回最新文本
 // sdk.setSubagents(configs)     // 运行时替换预声明子 agent(重新生成 use_<id> 委派工具 + rebind;需创建时配 subagents:[])
 // sdk.addSubagent(config)        // 运行时追加预声明子 agent
 // sdk.removeSubagent(id)        // 运行时移除预声明子 agent;返回是否移除成功
@@ -370,6 +373,9 @@ createChatSdk({
 
 | 示例 | 入口 | 演示 |
 |---|---|---|
+| minimal-demo | `/examples/minimal-demo/` | 最简集成:5 行加 AI 对话框,无数据操作 |
+| rag-demo | `/examples/rag-demo/` | RAG 异步文档:`memory` 传异步函数加载知识库 + 切换/刷新 |
+| headless-demo | `/examples/headless-demo/` | Headless:`ui:false` + 自建 UI(`sdk.messages`/`sdk.send`) |
 | page-demo | `/` | 自举 demo：左 JSON 响应式页面 + 右对话框 |
 | nested-demo | `/examples/nested-demo/` | 嵌套区块树 + 人工确认 + checkpoint |
 | dynamic-demo | `/examples/dynamic-demo/` | 懒加载组件 + 动态注册 schema（`sdk.setData`/``） |
@@ -414,7 +420,7 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 524 项断言（tsx 源码级，不依赖 LLM）
+npm test            # 537 项断言（tsx 源码级，不依赖 LLM）
 npm run test:e2e    # 210 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 

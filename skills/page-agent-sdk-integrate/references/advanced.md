@@ -296,6 +296,20 @@ sdk.setLlm(otherChatModel)                          // or pass a BaseChatModel i
 sdk.setMemory('User is VIP; prefer concise answers; use incremental patch when editing.')
 sdk.setMemory('')   // clear (empty string skips injection)
 
+// 3.5 Memory async function source (RAG): load knowledge base doc asynchronously
+//     - Async fn evaluated in background on first beforeAgent, cached afterwards
+//     - refreshMemory() forces re-evaluation (e.g. after KB doc updated)
+createChatSdk({
+  memory: async () => await fetch('/kb/faq.md').then((r) => r.text()),
+  /* ... */
+})
+sdk.setMemory(async () => await fetch('/kb/faq-v2.md').then((r) => r.text()))  // switch KB
+await sdk.refreshMemory()   // force re-fetch after KB doc updated
+// Sync fn reads runtime variable (cached on first eval; refresh to re-evaluate)
+let lang = 'zh'
+sdk.setMemory(() => `请用${lang}回答。`)
+lang = 'en'; await sdk.refreshMemory()  // re-evaluate with new lang
+
 // 4. Subagents: runtime add/remove pre-declared subagents (requires subagents:[] at creation)
 //    Pass subagents: [] (empty array) at creation to enable the controller for dynamic add later.
 sdk.addSubagent({ id: 'translator', description: '中英互译子 agent', systemPrompt: '你是翻译助手。' })
