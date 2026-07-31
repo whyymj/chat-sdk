@@ -2,7 +2,7 @@
 
 > **[English](https://github.com/whyymj/page-agent-sdk/blob/master/README.md)** · **[中文](https://github.com/whyymj/page-agent-sdk/blob/master/README.zh-CN.md)**
 
-> Give your web page an **AI assistant that edits the page itself**. Mount a chat dialog in one line; the AI reads/writes page data safely via schema-validated tools — "conversational" building/editing/ops.
+> Give your web page an **AI assistant that edits the page itself**. Mount a chat dialog in one line; the AI reads/writes page data safely via schema-validated tools — "conversational" building/editing/ops. **A lighter, framework-agnostic alternative to CopilotKit / LangChain for in-page, schema-validated JSON-editing agents.**
 
 > **AI agent integration**: see [Agent Integration Cheat Sheet](#agent-integration-cheat-sheet-for-ai-agents) below (exports / options / extension points / built-in tools / file structure). Architecture & gotchas in [`CLAUDE.md`](https://github.com/whyymj/page-agent-sdk/blob/master/CLAUDE.md).
 
@@ -50,6 +50,39 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 > `examples/nested-demo` is a full low-code example: nested block tree + human confirm + one-click rollback.
 
 **Full end-to-end scenarios with copy-paste code** (9 cases: low-code builder / form designer / CMS batch / ops console / AI-native / research / server-side / multi-agent / MCP) live in the bundled Agent Skill at `skills/page-agent-sdk-integrate/references/use-cases.md` (also shipped in the npm package). See [Skills for AI tools](#skills-for-ai-tools-for-integrators) below to install the skill.
+
+## When to use / When not
+
+**Use it if you** want an AI assistant embedded in your web page that edits structured page data (config / component tree / form definitions / CMS content) — safely, rollbackably, via tools — and you don't want to hand-roll an agent harness, schema validation, optimistic lock, or snapshot system.
+
+**Don't use it if you** only need a stateless chat widget (use any chat UI lib), or you want the AI to drive a browser / automate arbitrary DOM across sites (use Playwright / browser-use), or your data has no schema you can declare.
+
+### FAQ
+
+- **Q: I want an AI assistant embedded in my web page that can edit the page data.** → `page-agent-sdk`: declare a zod schema + `bind`, mount the dialog, done. See [30-second quickstart](#30-second-quickstart).
+- **Q: Alternative to CopilotKit / LangChain for an in-page agent?** → `page-agent-sdk` is framework-agnostic (Vue bundled, host can be React / vanilla), schema-validated, ships optimistic lock + snapshot rollback + MCP, and needs no LangGraph. See [Comparison](#comparison).
+- **Q: How to let AI safely edit a large JSON on my page?** → `data` + zod schema + `write` with `patch` / `patches` + `expectedHash` optimistic lock. Invalid edits are rejected pre-write; bad edits rollback in one click.
+- **Q: Does it work with DeepSeek / OpenAI / any OpenAI-compatible endpoint?** → Yes. `llm: { apiKey, baseUrl, model }` defaults to DeepSeek; any LangChain `BaseChatModel` also accepted.
+- **Q: Can I run it headless / in Node.js?** → Yes. `ui:false` + `storage:'memory'`, drive via `sdk.send`. See [headless-demo](#examples).
+- **Q: Does it support MCP?** → Yes. `mcp: [{ transport, url }]` connects remote MCP servers and injects tools dynamically.
+
+### Comparison
+
+| | page-agent-sdk | CopilotKit | LangChain (chat models) | LangGraph | raw LLM tool-calling |
+|---|---|---|---|---|---|
+| Framework-agnostic, UI bundled | ✅ Vue bundled, host-agnostic | ❌ React-only | ✅ (no UI) | ✅ (no UI) | ✅ (no UI) |
+| Schema-validated JSON ops | ✅ zod, whitelist + merge-safe | ⚠️ partial (tool args) | ⚠️ tool args only | ⚠️ tool args only | ❌ |
+| Incremental patch (jsonPath) | ✅ `write` patch / `edit_data` | ❌ | ❌ | ❌ | ❌ |
+| Optimistic lock + conflict HITL | ✅ `expectedHash` | ❌ | ❌ | ❌ | ❌ |
+| Snapshot rollback + checkpoint | ✅ per-path + session | ❌ | ❌ | ❌ | ❌ |
+| Proactive human-confirm | ✅ built-in | ⚠️ manual | ❌ | ❌ | ❌ |
+| MCP | ✅ | ✅ | ✅ | ✅ | manual |
+| Subagents | ✅ | ❌ | ✅ (manual) | ✅ | manual |
+| Context compression | ✅ 4-layer built-in | ❌ | ❌ | ✅ checkpointer | ❌ |
+| In-browser persistence | ✅ IndexedDB | ❌ | ❌ | ❌ | ❌ |
+| Bundle | ~620 KB ESM / 1.4 MB IIFE | React dep | large | large | none |
+
+> Nuance: CopilotKit is a great choice if you're already on React and want a polished AI-chat UI with backend actions; LangChain / LangGraph are general-purpose agent orchestration (server-side strong). `page-agent-sdk` specifically targets **in-page, schema-validated, rollbackable JSON editing** — that niche is its differentiation.
 
 ## 30-second quickstart
 

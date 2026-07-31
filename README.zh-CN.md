@@ -2,7 +2,7 @@
 
 > **[English](https://github.com/whyymj/page-agent-sdk/blob/master/README.md)** · **[中文](https://github.com/whyymj/page-agent-sdk/blob/master/README.zh-CN.md)**
 
-> 给网页一个**会改页面的 AI 助手**。一行代码挂载对话框，AI 通过工具按 schema 安全读写页面数据，实现「对话式」搭建/编辑/运维。
+> 给网页一个**会改页面的 AI 助手**。一行代码挂载对话框，AI 通过工具按 schema 安全读写页面数据，实现「对话式」搭建/编辑/运维。**比 CopilotKit / LangChain 更轻、框架无关的「页面内、schema 校验、JSON 编辑 Agent」方案。**
 
 > **AI agent 接入**：直接看下方「[Agent 接入速查](#agent-接入速查给-ai-agent-读)」（导出 / 选项表 / 扩展点 / 内置工具 / 文件结构），架构与约定坑见 [`CLAUDE.md`](https://github.com/whyymj/page-agent-sdk/blob/master/CLAUDE.md)。
 
@@ -50,6 +50,39 @@
 > 仓库 `examples/nested-demo` 即低代码场景完整示例：嵌套区块树 + 人工确认 + 一键回退。
 
 **完整端到端场景（含可复制代码，共 9 例：低代码搭建 / 表单设计器 / CMS 批量 / 运维配置台 / AI 原生 / 调研 / 服务端 / 多 agent / MCP）** 见随包附带的 Agent Skill：`skills/page-agent-sdk-integrate/references/use-cases.md`（npm 包内同样包含）。安装 skill 见下文[给 AI 工具使用者的 Skills](#给-ai-工具使用者的-skills集成方安装)。
+
+## 何时用 / 何时不用
+
+**适合**：你想在网页里嵌一个 AI 助手，让它安全、可回退地用工具改结构化页面数据（配置 / 组件树 / 表单定义 / CMS 内容），又不想自己写 agent harness、schema 校验、乐观锁、快照系统。
+
+**不适合**：只需无状态聊天挂件（用任意聊天 UI 库）；要 AI 跨站驱动浏览器 / 自动化任意 DOM（用 Playwright / browser-use）；数据没有可声明的 schema。
+
+### FAQ
+
+- **Q：我想在网页里加一个能改页面数据的 AI 助手。** → 用 `page-agent-sdk`：声明 zod schema + `bind`、挂载对话框即可。见[30 秒上手](#30-秒上手)。
+- **Q：CopilotKit / LangChain 的页面内 agent 替代方案?** → `page-agent-sdk` 框架无关（Vue 打包进库，宿主可 React / 原生）、schema 校验、自带乐观锁 + 快照回退 + MCP，不依赖 LangGraph。见[对比](#对比)。
+- **Q：怎么让 AI 安全地改页面上的大 JSON?** → `data` + zod schema + `write` 的 `patch` / `patches` + `expectedHash` 乐观锁。非法编辑写前拦截、改错了一键回退。
+- **Q：支持 DeepSeek / OpenAI / 任意 OpenAI 兼容端点吗?** → 支持。`llm:{apiKey,baseUrl,model}` 默认接 DeepSeek；也接受任意 LangChain `BaseChatModel`。
+- **Q：能 headless / 在 Node.js 跑吗?** → 能。`ui:false` + `storage:'memory'`，用 `sdk.send` 驱动。见 [headless-demo](#示例)。
+- **Q：支持 MCP 吗?** → 支持。`mcp:[{transport,url}]` 连远程 MCP server 动态注入工具。
+
+### 对比
+
+| | page-agent-sdk | CopilotKit | LangChain(chat 模型) | LangGraph | 裸 LLM tool-calling |
+|---|---|---|---|---|---|
+| 框架无关、UI 打包进库 | ✅ Vue 打包,宿主任意 | ❌ 仅 React | ✅(无 UI) | ✅(无 UI) | ✅(无 UI) |
+| schema 校验的 JSON 操作 | ✅ zod + 白名单 + merge 防误删 | ⚠️ 部分(工具参数) | ⚠️ 仅工具参数 | ⚠️ 仅工具参数 | ❌ |
+| 增量 patch(jsonPath) | ✅ `write` patch / `edit_data` | ❌ | ❌ | ❌ | ❌ |
+| 乐观锁 + 冲突人工介入 | ✅ `expectedHash` | ❌ | ❌ | ❌ | ❌ |
+| 快照回退 + checkpoint | ✅ per-path + 会话级 | ❌ | ❌ | ❌ | ❌ |
+| 主动人工确认 | ✅ 内置 | ⚠️ 手动 | ❌ | ❌ | ❌ |
+| MCP | ✅ | ✅ | ✅ | ✅ | 手动 |
+| 子 agent | ✅ | ❌ | ✅(手动) | ✅ | 手动 |
+| 上下文压缩 | ✅ 4 层内置 | ❌ | ❌ | ✅ checkpointer | ❌ |
+| 浏览器内持久化 | ✅ IndexedDB | ❌ | ❌ | ❌ | ❌ |
+| 体积 | ~620KB ESM / 1.4MB IIFE | 依赖 React | 大 | 大 | 无 |
+
+> 补充：CopilotKit 适合已在 React 生态、想要现成 AI 聊天 UI + 后端 action 的场景；LangChain / LangGraph 是通用 agent 编排（服务端强）。`page-agent-sdk` 专攻**页面内、schema 校验、可回退的 JSON 编辑**——这个细分定位是它的差异点。
 
 ## 30 秒上手
 

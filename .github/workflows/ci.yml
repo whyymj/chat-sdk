@@ -29,10 +29,10 @@ jobs:
       - name: Build (lib + iife)
         run: npm run build
 
-      - name: Self-test (364 assertions, tsx 跑源码,无 LLM 依赖)
+      - name: Self-test (630 assertions, tsx 跑源码,无 LLM 依赖)
         run: npm test
 
-      - name: E2E integration (120 assertions,用 dist 产物,无 LLM 依赖)
+      - name: E2E integration (210 assertions,用 dist 产物,无 LLM 依赖)
         run: npm run test:e2e
 
       - name: Exports consistency (核对 types/index.d.ts 与 src/core/index.ts 导出对齐)
@@ -49,10 +49,11 @@ jobs:
 
   build-matrix:
     # 跨 Node 版本构建验证(仅 build,不跑测试,省额度)
+    # Vite 8 要求 Node 20+,故只测 20/22
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20, 22]
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
