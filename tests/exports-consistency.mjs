@@ -35,5 +35,14 @@ assert(missingInTypes.length === 0, `types/index.d.ts 无漏导出(缺失:${miss
 if (missingInTypes.length > 0) console.error('  ✗ types 缺失:', missingInTypes.join(', '))
 if (extraInTypes.length > 0) console.log('  ℹ types 多余(可能内部类型):', extraInTypes.join(', '))
 
+// subpath exports 配置断言(refactor-module-extraction:./storage / ./query / ./llm 按需引入)
+// 注:实际运行时可达性由 e2e(浏览器经同一 dist)覆盖;此处校验 package.json exports 配置正确(语义可达 + CDN 入口独立)
+const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+assert(!!pkg.exports['.'] && !!pkg.exports['.'].import, '顶层 . 入口保留(向后兼容)')
+assert(!!pkg.exports['./storage']?.import && pkg.exports['./storage'].import.endsWith('page-agent-sdk.js'), 'subpath ./storage 已配置(持久化层:createSessionStore 等)')
+assert(!!pkg.exports['./query']?.import && pkg.exports['./query'].import.endsWith('page-agent-sdk.js'), 'subpath ./query 已配置(jpEval/searchJson + jsonUtils/schemaUtils 纯函数)')
+assert(!!pkg.exports['./llm']?.import && pkg.exports['./llm'].import.endsWith('page-agent-sdk.js'), 'subpath ./llm 已配置(createProxyLlm 防 apiKey 泄露)')
+assert(pkg.exports['./style.css'], 'subpath ./style.css 保留')
+
 console.log(`\n==== exports-consistency: ${pass} passed, ${fail} failed ====`)
 if (fail > 0) process.exit(1)

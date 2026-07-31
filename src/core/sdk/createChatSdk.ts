@@ -40,7 +40,7 @@ import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfi
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
-import { systemPromptHelpers, extractSchemaHint } from '../presets'
+import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -286,27 +286,6 @@ export interface DialogConfig {
   inputRows?: number
   /** 抽屉模式关闭回调:点击遮罩/关闭按钮时调用(默认调 unmount 带退出动画)。集成方需同步外部挂载状态时传此选项覆盖默认行为 */
   onClose?: () => void
-}
-
-/**
- * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
- * 定位:通用「JSON 操作助手」(规范化 JSON 操作 agent)——通过专用工具安全读写集成方声明的主数据对象(bind)。
- * 含身份 + 能力概述 + 可靠写入规则(改前先读、动态先查、字段以工具返回为准、写错看校验错误重试、优先增量 patch)。
- * 用户传了 systemPrompt 则完全覆盖此默认;默认 appendReliableWriteRules:true,会在自定义 systemPrompt 末尾用 '---' 分隔线追加 reliableWriteRules(避免集成方忘写写入规则);设 false 关闭。
- */
-const DEFAULT_SYSTEM_PROMPT = [
-  '你是一个 JSON 操作助手。集成方声明了一个主数据对象(含 zod schema 校验),你通过专用工具安全地读写它来完成任务。',
-  '所有写操作都经范围控制(仅 schema 声明字段内)与 schema 校验(不合法会返回结构化错误而非写入),并自动留快照可回退。',
-  '大对象/数组优先用增量 patch(只发改动)而非整体重传,避免输出被截断。',
-  '---',
-  systemPromptHelpers.reliableWriteRules,
-].join('\n\n')
-
-/** 拼接「可操作数据」段到 systemPrompt:从 data 的 schema 字段 .describe() 自动提取注入 */
-function buildDataPrompt(data: DataConfig | undefined): string {
-  if (!data) return ''
-  const hint = extractSchemaHint(data.schema)
-  return `\n\n## 可操作数据(字段以 read 工具返回的实际值为准)\n${data.description ? data.description + '\n' : ''}${hint}`
 }
 
 export interface ChatSdk {
@@ -738,15 +717,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const caps = options.capabilities
   const useDataOps = caps?.dataOps !== false
 
-  // 最终 systemPrompt = 用户 systemPrompt(或默认)+ 可操作数据段(从 data schema .describe() 自动注入;inspect 与 createAgent 共用,保持一致)
-  // appendReliableWriteRules 默认 true:自定义 systemPrompt 时自动在末尾追加 reliableWriteRules(用 '---' 分隔线明确区分用户内容与 SDK 追加的写入规则)
-  // 设 false 则不追加(用户已自行写规则时用);不传 systemPrompt 用默认 prompt 时已内置,此项无效
-  const appendRwr = options.appendReliableWriteRules !== false
-  const basePrompt = options.systemPrompt
-    ? (appendRwr ? options.systemPrompt + '\n\n---\n\n' + systemPromptHelpers.reliableWriteRules : options.systemPrompt)
-    : DEFAULT_SYSTEM_PROMPT
-  // base 不含数据段:数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug)
-  const baseSystemPrompt = basePrompt
+  // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
+  // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
+  const baseSystemPrompt = buildSystemPrompt(options)
 
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)

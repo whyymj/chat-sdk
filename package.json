@@ -17,6 +17,18 @@
       "import": "./dist/page-agent-sdk.js",
       "require": "./dist/page-agent-sdk.umd.cjs"
     },
+    "./storage": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/page-agent-sdk.js"
+    },
+    "./query": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/page-agent-sdk.js"
+    },
+    "./llm": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/page-agent-sdk.js"
+    },
     "./style.css": "./dist/page-agent-sdk.css"
   },
   "files": [

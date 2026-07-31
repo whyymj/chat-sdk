@@ -12,6 +12,8 @@ export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, SystemAugmentContext } from './sdk/createChatSdk'
+// system prompt 构建(refactor-module-extraction 从 createChatSdk 抽离;buildSystemPrompt 为纯函数,供 fix-introspection-consistency 的 getEffectiveSystemPrompt 复用)
+export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 export { defineTool } from './sdk/defineTool'
 export { presets, systemPromptHelpers, extractSchemaHint } from './presets'
@@ -41,6 +43,15 @@ export type { SkillsController } from './harness/skills'
 export { createDataOps, filterByToolMode } from './tools/dataOps'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
+// 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)
+export {
+  UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
+  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
+  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
+} from './tools/jsonUtils'
+export type { EditOp } from './tools/jsonUtils'
+// schema 白名单投影纯函数(refactor-module-extraction 从 dataOps 抽离;expose-schema-constraints 的 describeSchemaNode 归宿)
+export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema } from './tools/schemaUtils'
 export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'
 export type { ToolErrorInput } from './tools/toolError'
 export { fetchDocTools } from './tools/fetchDoc'

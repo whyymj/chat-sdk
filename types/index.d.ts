@@ -601,6 +601,16 @@ export interface ConflictInfo {
 }
 
 export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
+// ============ system prompt 构建(promptBuilder,refactor-module-extraction 从 createChatSdk 抽离)============
+/** 默认 systemPrompt(用户未传 systemPrompt 时用);含身份 + 能力概述 + 可靠写入规则 */
+export declare const DEFAULT_SYSTEM_PROMPT: string;
+/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入) */
+export declare function buildDataPrompt(data: DataConfig | undefined): string;
+/**
+ * 统一 systemPrompt base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
+ * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
+ */
+export declare function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean }): string;
 export declare function defineTool(opts: {
   name: string;
   description: string;
@@ -609,6 +619,31 @@ export declare function defineTool(opts: {
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
 export declare function filterByToolMode(tools: any[], mode?: 'simple' | 'advanced' | 'minimal'): any[];
+// ============ 通用 JSON 操作纯函数(jsonUtils,refactor-module-extraction 从 dataOps 抽离;零依赖,经 ./query subpath 按需引入)============
+export type EditOp = 'set' | 'remove' | 'merge' | 'append';
+export declare const UNSAFE_KEYS: Set<string>;
+export declare function isUnsafePath(path: string): boolean;
+export declare function safeMerge(target: Record<string, any>, src: unknown): void;
+export declare function getByPath(obj: unknown, path: string): unknown;
+export declare function setByPath(obj: unknown, path: string, value: unknown): void;
+export declare function deleteByPath(obj: unknown, path: string): boolean;
+export declare function deepClone<T>(v: T): T;
+export declare function maybeParseValue(v: unknown): { parsed?: unknown; parseError?: unknown };
+export declare function projectFields(obj: unknown, fields: string[]): unknown;
+export declare function limitDepth(obj: unknown, depth: number): unknown;
+export declare function safeStringify(value: unknown, maxLen?: number): string;
+export declare function hashValue(value: unknown): string;
+export declare function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unknown): string | null;
+export declare function applyPatchToLive(bind: any, op: EditOp, jsonPath: string, value: unknown): void;
+export declare function restoreLive(bind: any, snapshotVal: unknown): void;
+export declare function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: unknown): void;
+// ============ schema 白名单投影纯函数(schemaUtils,refactor-module-extraction 从 dataOps 抽离)============
+export declare function getSchemaTopKeys(schema: any): string[] | null;
+export declare function isPathAllowed(jsonPath: string, schema: any | null, allowKeys: string[] | null): boolean;
+export declare function unwrapSchema(schema: any): any;
+export declare function getSchemaAtPath(schema: any, jsonPath: string): any | null;
+export declare function projectBySchemaDeep(obj: unknown, schema: any | null): unknown;
+export declare function projectBySchema(obj: unknown, allowKeys: string[] | null): unknown;
 export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean } | undefined, dataOps: any[], fetchDocs: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
 export declare const fetchDocTools: any[];
