@@ -477,6 +477,23 @@ createChatSdk({
 | UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~560 KB |
 | IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~1.4 MB |
 
+### 按需引入(subpath exports)
+
+除了顶层 `import { createChatSdk } from 'page-agent-sdk'`,三个子路径入口让你只引特定能力(bundler 对未用部分 tree-shaking):
+
+| subpath | 主要导出 | 场景 |
+|---|---|---|
+| `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | 只要持久化层,不引 Agent |
+| `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils/schemaUtils 全部纯函数 | JSON 查询 / 沙箱 / 路径操作工具集 |
+| `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | 防 apiKey 泄露的代理连接 |
+
+```js
+import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
+import { jpEval, searchJson } from 'page-agent-sdk/query'
+```
+
+> 三个 subpath 当前指向同一份 dist + types(未拆多入口构建),语义清晰 + 便于 CDN 按入口拉取;未来切多入口构建时 import 路径零迁移。
+
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
 - **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。

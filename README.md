@@ -532,6 +532,23 @@ The package ships three builds — pick by integration scenario:
 | UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~560 KB |
 | IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~1.4 MB |
 
+### Import only what you need (subpath exports)
+
+Besides the top-level `import { createChatSdk } from 'page-agent-sdk'`, three subpath entries scope your import to a single capability (the bundler tree-shakes the rest):
+
+| subpath | key exports | use case |
+|---|---|---|
+| `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | persistence layer only, no Agent |
+| `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + all jsonUtils/schemaUtils pure fns | JSON query / sandbox / path helpers |
+| `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | proxy connection to avoid leaking apiKey |
+
+```js
+import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
+import { jpEval, searchJson } from 'page-agent-sdk/query'
+```
+
+> All three subpaths currently resolve to the same dist + types (no multi-entry build yet) — clear semantics and per-entry CDN fetch; when a multi-entry build lands, your import paths won't change.
+
 `sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
 
 - **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`).
