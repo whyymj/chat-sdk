@@ -32,7 +32,7 @@ import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThr
 import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE } from '../../sdk/contextPreset'
 import { jpEval, searchJson } from '../../tools/dataSlotQuery'
-import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
+import { createAgent, computeMaxIterations, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -95,6 +95,12 @@ export async function run(ctx: TestCtx): Promise<void> {
     const falseOpts = resolveContextOptions({ contextOptions: false }, 131072)
     assert(falseOpts.enableLLMSummary === true && falseOpts.recallTopK === 3, 'contextOptions:false → 用 auto preset 默认')
   }
+
+  // computeMaxIterations(循环总迭代硬上限 max(maxToolRounds*3,30),防自纠死循环;harden-react-loop-budget)
+  assert(computeMaxIterations(10) === 30, 'computeMaxIterations: 默认 max(10*3, 30) = 30')
+  assert(computeMaxIterations(3) === 30, 'computeMaxIterations: 小 maxToolRounds(3) 取下限 30')
+  assert(computeMaxIterations(20) === 60, 'computeMaxIterations: 大 maxToolRounds(20) → 60')
+  assert(computeMaxIterations(10, 50) === 50, 'computeMaxIterations: 显式 userMax(50) 覆盖')
 
   // ============ 大 JSON 查询/搜索(query_data / search_data)============
   console.log('\n[data query + search]')

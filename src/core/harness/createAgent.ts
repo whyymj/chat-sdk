@@ -82,6 +82,8 @@ export interface CreateAgentOptions {
   /** 中间件栈(顺序:内置在前,用户在后) */
   middleware?: Middleware[]
   maxToolRounds?: number
+  /** 循环总迭代硬上限(防自纠死循环;默认 max(maxToolRounds*3, 30);harden-react-loop-budget) */
+  maxIterations?: number
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number
   /** 重试退避基数 ms(默认 500,第 n 次重试等待 = base*2^n + jitter) */
@@ -129,6 +131,16 @@ export function trimContextIfNeededImpl(messages: BaseMessage[], maxChars: numbe
   })
 }
 
+/**
+ * 推导循环总迭代硬上限(防自纠死循环的总闸):max(maxToolRounds*3, 30)。
+ * 工具轮每轮可能伴自纠(format 2 + verify maxAttempts),*3 留余量;下限 30 防小 maxToolRounds 时自纠空间不足。
+ * 正常自纠有界(formatRetries<=2、verifyAttempts<maxVerifyAttempts)不会触顶,触顶即模型异常(反复格式错/verify 反复拒)强制退出。
+ * 纯函数,可白盒单测。harden-react-loop-budget
+ */
+export function computeMaxIterations(maxToolRounds: number, userMax?: number): number {
+  return userMax ?? Math.max(maxToolRounds * 3, 30)
+}
+
 export function createAgent(options: CreateAgentOptions) {
   const {
     apiKey,
@@ -142,6 +154,7 @@ export function createAgent(options: CreateAgentOptions) {
     tools: extraTools = [],
     middleware: middlewares = [],
     maxToolRounds = DEFAULT_MAX_TOOL_ROUNDS,
+    maxIterations: userMaxIterations,
     maxRetries = 2,
     retryDelayMs = 500,
     maxParallelTools = 1,
@@ -381,11 +394,14 @@ export function createAgent(options: CreateAgentOptions) {
     const toolHandler = composeToolCall(middlewares, coreExecTool)
 
     let rounds = 0
+    let iterations = 0 // 总循环计数(含自纠轮),受 maxIterations 硬上限约束防死循环(harden-react-loop-budget)
+    const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
     let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
     let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
     const maxFormatRetries = 2
     try {
-      while (rounds < maxToolRounds) {
+      while (rounds < maxToolRounds && iterations < maxIterations) {
+        iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
         if (signal?.aborted) break
         onEvent({ type: 'round_start', round: rounds + 1 })
@@ -423,7 +439,6 @@ export function createAgent(options: CreateAgentOptions) {
             formatRetries += 1
             log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
             currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签,如 <｜tool_calls｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
-            rounds += 1
             continue
           }
           // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
@@ -435,7 +450,6 @@ export function createAgent(options: CreateAgentOptions) {
               state.verifyAttempts += 1
               currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
               log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
-              rounds += 1
               continue // 回灌反馈,继续循环让模型修正(不 return)
             }
           }
@@ -509,7 +523,7 @@ export function createAgent(options: CreateAgentOptions) {
         }
       }
       // 收口也无文本(极端)→ 兜底文案
-      const fallback = '已达到最大工具调用轮次，请简化你的问题。'
+      const fallback = '我已完成本轮能做的操作,但未能综合出最终结论。请基于上方已完成的工具操作结果继续,或告诉我下一步重点。'
       onEvent({ type: 'done', content: fallback })
       return fallback
     } finally {

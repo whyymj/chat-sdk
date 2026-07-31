@@ -176,7 +176,7 @@ createChatSdk({
   vfs: { initialFiles?, maxBytes?, poolBytes? },      // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
-  maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
+  maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
   capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向:默认关,需显式 verify:true)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)

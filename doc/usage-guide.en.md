@@ -176,7 +176,7 @@ createChatSdk({
   // robustness
   maxRetries: 2,                   // model call retries (network/429/5xx)
   maxParallelTools: 1,              // per-round tool concurrency
-  maxToolRounds: 10,               // max tool rounds
+  maxToolRounds: 10,               // max tool rounds (default 10; counts only real tool rounds — format/verify self-correction doesn't consume; maxIterations total-iteration hard cap prevents self-correction loops)
 
   // external tools
   mcp: [{ transport: 'http'|'sse'|'websocket', url, name? }],
