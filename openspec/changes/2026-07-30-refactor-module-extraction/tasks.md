@@ -1,6 +1,6 @@
 # Tasks: refactor-module-extraction
 
-> 状态:**期一(P0)已完成 ✅(2026-07-31)** —— jsonUtils(16 纯函数)+ schemaUtils(6 函数)+ promptBuilder(DEFAULT_SYSTEM_PROMPT/buildDataPrompt/buildSystemPrompt)抽离 + ./storage/./query/./llm subpath 开放;dataOps 969→663 行、createChatSdk 1751→1724 行;新增 sec-30/31 白盒单测 + subpath 配置断言,selftest 537→609、exports-consistency 1→6 全过。**期二/三/四/五待实施**。关联:本目录 `proposal.md` / `design.md`。
+> 状态:**期一 + 期二已完成 ✅(2026-07-31)** —— 期一:jsonUtils(16 纯函数)+ schemaUtils(6)+ promptBuilder 抽离 + ./storage/./query/./llm subpath;期二:contextIndex(6 纯函数)+ llmResolver(isChatModel/resolveLlm)+ conflictManager(createConflictManager)抽离。createChatSdk 1751→1631、dataOps 969→670、useContextManager 321→235;新增 sec-30/31/32 白盒单测,selftest 537→630、exports-consistency 1→6 全过。skillStore 桥接评估延后(userSkills 被 12+ 处用、skillsMw/core 闭包时序交错,完整抽离风险 > 收益)。**期三/四/五待实施**。关联:本目录 `proposal.md` / `design.md`。
 > 顺序:期一(P0 纯函数抽离 + subpath 开放,核心 + 价值最高)→ 期二(P1 状态机/桥接层抽离)→ 期三(P2 低频抽离,可选)→ 期四(测试同步)→ 期五(文档 + 门禁 + 归档)。
 > 全程向后兼容:顶层 `.` 入口导出不变,运行时行为零变化。期一可独立交付。
 > 行号定位:本清单以**符号名为主、行号为辅**(行号随实现演进易过时,实施时以符号为准;行号基于 createChatSdk.ts 当前 1751 行 / dataOps.ts 969 行 / useContextManager.ts 321 行)。

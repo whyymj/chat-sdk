@@ -644,6 +644,23 @@ export declare function unwrapSchema(schema: any): any;
 export declare function getSchemaAtPath(schema: any, jsonPath: string): any | null;
 export declare function projectBySchemaDeep(obj: unknown, schema: any | null): unknown;
 export declare function projectBySchema(obj: unknown, allowKeys: string[] | null): unknown;
+// ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
+export declare const STOP_WORDS: Set<string>;
+export declare function tokenize(text: string): string[];
+export declare function estimateMessageTokens(m: any): number;
+export declare function estimateRoundTokens(r: any): number;
+export declare function indexSummarize(older: any[], preserve?: Set<string>): string;
+export declare function recallRounds(older: any[], query: string, topK: number): any[];
+// ============ LLM 解析(llmResolver,refactor-module-extraction 期二 从 createChatSdk 抽离)============
+export declare function isChatModel(v: unknown): boolean;
+export declare function resolveLlm(options: any): { modelCaps: any; summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined };
+// ============ 乐观锁冲突管理器(conflictManager,refactor-module-extraction 期二 从 createChatSdk 抽离)============
+export interface ConflictManager {
+  pendingConflict: import('vue').Ref<any | null>;
+  set(info: any): Promise<any>;
+  resolve(action: any): void;
+}
+export declare function createConflictManager(getEmit?: () => (((e: any) => void) | undefined)): ConflictManager;
 export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean } | undefined, dataOps: any[], fetchDocs: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
 export declare const fetchDocTools: any[];

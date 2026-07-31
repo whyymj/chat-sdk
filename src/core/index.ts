@@ -52,6 +52,13 @@ export {
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数(refactor-module-extraction 从 dataOps 抽离;expose-schema-constraints 的 describeSchemaNode 归宿)
 export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema } from './tools/schemaUtils'
+// 上下文索引纯函数(refactor-module-extraction 期二 从 useContextManager 抽离;白盒可测)
+export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds } from './composables/contextIndex'
+// LLM 解析(refactor-module-extraction 期二 从 createChatSdk 抽离;isChatModel 实例判定 + resolveLlm 初始装配入口)
+export { isChatModel, resolveLlm } from './sdk/llmResolver'
+// 乐观锁冲突管理器(refactor-module-extraction 期二 从 createChatSdk 抽离;headless 自建冲突 UI 可复用)
+export { createConflictManager } from './sdk/conflictManager'
+export type { ConflictManager } from './sdk/conflictManager'
 export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'
 export type { ToolErrorInput } from './tools/toolError'
 export { fetchDocTools } from './tools/fetchDoc'

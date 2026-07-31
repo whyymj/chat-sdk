@@ -18,7 +18,6 @@
 import { createApp, h, defineComponent, reactive, ref, type App as VueApp, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import { ChatOpenAI } from '@langchain/openai'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
@@ -41,6 +40,8 @@ import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
+import { isChatModel, resolveLlm } from './llmResolver'
+import { createConflictManager } from './conflictManager'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -416,11 +417,6 @@ function resolveDialogConfig(opts: ChatSdkOptions): DialogConfig {
   return opts.dialog ?? {}
 }
 
-/** 判定 llm 选项是模型实例(BaseChatModel)还是配置对象(LLMConfig) */
-function isChatModel(v: unknown): v is BaseChatModel {
-  return !!v && typeof v === 'object' && typeof (v as any).invoke === 'function' && typeof (v as any).stream === 'function'
-}
-
 // ===== AgentCore:可被多实例共享的核心上下文 =====
 type AgentInstance = ReturnType<typeof createAgent>
 type TodosMw = ReturnType<typeof createTodosMiddleware>
@@ -497,70 +493,6 @@ interface AgentCore {
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
 const sharedCores = new Map<string, AgentCore>()
 
-/** 从 LLM 响应消息提取文本内容(content 可能是 string 或 content parts 数组) */
-function extractText(msg: BaseMessage): string {
-  const c = msg.content
-  if (typeof c === 'string') return c
-  if (Array.isArray(c)) {
-    return c
-      .map((p: any) => (typeof p === 'string' ? p : p?.text ?? ''))
-      .join('')
-  }
-  return String(c ?? '')
-}
-
-/**
- * 构建摘要用 LLM invoke 函数(供 summarization 中间件 llmInvoke)。
- * 优先用 options.summaryLlm(专用压缩模型,如更便宜的小模型);未配则回退主 agent 模型(options.llm)。
- * 复用实例或按 LLMConfig 另构造 ChatOpenAI(低温 + 限输出,压缩成连贯段落)。
- * 温度/输出/超时可配(summaryTemperature/summaryMaxTokens/summaryTimeoutMs);超时回退索引摘要(不阻塞用户)。
- */
-function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string) => Promise<string>) | undefined {
-  const llmOpt = options.summaryLlm ?? options.llm
-  if (!llmOpt) return undefined
-  const temperature = options.summaryTemperature ?? 0.3
-  const maxTokens = options.summaryMaxTokens ?? 1024
-  const timeoutMs = options.summaryTimeoutMs ?? 15000
-  let llm: BaseChatModel
-  if (isChatModel(llmOpt)) {
-    llm = llmOpt
-  } else {
-    const cfg = llmOpt as LLMConfig
-    if (!cfg.apiKey) {
-      // 显式配了 summaryLlm 却无效(apiKey 缺失):非 debug 也 warn,避免"以为用了专用模型实际回退了主模型/索引摘要"
-      if (options.summaryLlm) {
-        console.warn('[page-agent-sdk][summarization] summaryLlm 已配置但缺 apiKey,摘要回退主 agent 模型或零成本索引摘要')
-      }
-      return undefined
-    }
-    llm = new ChatOpenAI({
-      apiKey: cfg.apiKey,
-      model: cfg.model,
-      temperature,
-      maxTokens,
-      configuration: { ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}), ...cfg.extraConfig },
-      ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
-    })
-  }
-  return async (prompt: string) => {
-    // 超时保护:摘要 LLM 卡住时 reject → useContextManager 的 try/catch 回退索引摘要,不阻塞用户首次响应
-    const ac = new AbortController()
-    const timer = setTimeout(() => ac.abort(), timeoutMs)
-    try {
-      const res = await llm.invoke(
-        [
-          new SystemMessage('你是对话历史压缩助手。把下面按轮次索引的对话要点,改写成一段连贯、紧凑的中文摘要,保留关键事实、用户意图与已用工具,不要编造。直接输出摘要正文。'),
-          new HumanMessage(prompt),
-        ],
-        { signal: ac.signal } as any,
-      )
-      return extractText(res).trim()
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-}
-
 /**
  * 数据写工具名 → operation 映射(供 onEvent 的 data_change 推断操作类型)。
  * 非数据写工具返回 null。write 高层入口按 args 推断(del→delete,patch→edit,否则 set)。
@@ -625,28 +557,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // ===== 累计 token 用量(每轮 LLM 调用经 sdk-events 中间件 afterModel 提取累加;供 sdk.usage 暴露 + onEvent('usage') 单轮外发) =====
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
-  const pendingConflict = ref<PendingConflict | null>(null)
+  // ===== 乐观锁冲突人工介入管理器(emit getter 延迟求值:emit 在下方 listeners 后定义,set 运行时才调) =====
+  const conflictMgr = createConflictManager(() => emit)
   // Agent 信息刷新 tick:setSkills/setData 等运行时变更后 ++,经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取(实时反映动态 skill/data)
   const infoTick = ref(0)
-  let conflictSeq = 0
-  function setPendingConflict(info: ConflictInfo): Promise<ConflictResolution> {
-    return new Promise((resolve) => {
-      // shareContext 多实例并发冲突时,新冲突覆盖旧 pendingConflict.value,旧 resolve 函数会丢失 → 旧工具永挂。
-      // 兜底:覆盖前若仍有未解决冲突,自动按「保留外部」收口旧冲突(防 resolve 丢失)
-      const prev = pendingConflict.value
-      if (prev) prev.resolve({ action: 'keep_external' })
-      const pending = { ...info, id: ++conflictSeq, resolve }
-      pendingConflict.value = pending
-      // 外发 conflict 事件(headless 集成方可经 onEvent/hook 收,无需 watch ref)
-      emit({ type: 'conflict', conflict: pending })
-    })
-  }
-  function resolveConflict(action: ConflictResolution['action']) {
-    const p = pendingConflict.value
-    if (!p) return
-    pendingConflict.value = null
-    p.resolve({ action })
-  }
 
   // ===== 持久化(默认关闭;赋值后端字符串或配置对象开启)=====
   const store = resolveStorage(options.storage)
@@ -654,20 +568,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     store.onEvent((e) => console.log('[page-agent-sdk][storage]', e))
   }
 
-  // ===== 模型能力(声明优先 > model 名查表 > 缺省):供 offload 阈值/压缩触发/maxTokens 缺省自适应 =====
-  const llmCfg = isChatModel(options.llm) ? undefined : (options.llm as LLMConfig)
-  // let:setLlm 后重解析(影响 offload 阈值/压缩触发/maxTokens 缺省)
-  let modelCaps = resolveModelCaps({
-    model: llmCfg?.model,
-    contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
-    maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
-  })
+  // ===== 模型能力 + 摘要 LLM invoke(统一由 resolveLlm 解析;声明优先 > model 名查表 > 缺省)=====
+  // let modelCaps:setLlm 后经 onLlmChange 重解析(影响 offload 阈值/压缩触发/maxTokens 缺省)
+  const { modelCaps: initialModelCaps, summaryLlmInvoke } = resolveLlm(options)
+  let modelCaps = initialModelCaps
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
-  // 当前 LLM 实例/配置:setLlm 后更新(inspect().model 读最新)
+  // 当前 LLM 实例/配置:setLlm 后更新(inspect().model 读最新);主 LLM 实例化由 createAgent/setLlm 处理
   let currentLlm: BaseChatModel | LLMConfig = options.llm
-
-  // 摘要用 LLM invoke(默认 LLM 摘要压缩);apiKey 缺失时为 undefined → 自动回退零成本索引摘要
-  const summaryLlmInvoke = buildSummaryLlmInvoke(options)
   if (options.debug && !summaryLlmInvoke) console.warn('[page-agent-sdk][summarization] 未构造 llmInvoke(apiKey 缺失?),摘要回退零成本索引摘要')
 
   // ===== 共享 messages(send/mount 唯一来源)=====
@@ -727,7 +634,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createDataOps(finalDataConfig, {
         onAudit: options.onAudit ?? (options.debug ? (e) => console.log('[page-agent-sdk][data audit]', e) : undefined),
         maxSnapshots: options.maxSnapshots,
-        onConflict: setPendingConflict,
+        onConflict: conflictMgr.set,
         autoLock: options.autoLock,
         interceptors: options.interceptors,
       })
@@ -1024,7 +931,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     dataOpsController,
     skillsController: skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null,
     infoTick,
-    pendingConflict,
+    pendingConflict: conflictMgr.pendingConflict,
     liveData,
     usage,
     emit,
@@ -1106,7 +1013,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       await core.initDone
         if (!store) throw new Error('page-agent-sdk: storage 未开启,无法切换会话(请传 storage 选项)')
       // 收口挂起的冲突(按「保留外部」),防切会话后旧 conflict Promise 永久挂起
-      resolveConflict('keep_external')
+      conflictMgr.resolve('keep_external')
       vfsStore.flush?.()
       await store.flush()
       let target = sessionId ?? ''
@@ -1142,7 +1049,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         : onEvent
       // abort 联动:用户停止生成时,自动收口挂起的乐观锁冲突(按「保留外部」处理,防工具永久挂起)
       if (signal) {
-        const abortConflict = () => resolveConflict('keep_external')
+        const abortConflict = () => conflictMgr.resolve('keep_external')
         if (signal.aborted) abortConflict()
         else signal.addEventListener('abort', abortConflict, { once: true })
       }
@@ -1164,7 +1071,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       }
     },
 
-    resolveConflict,
+    resolveConflict: conflictMgr.resolve,
 
     /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
     setTools(tools: StructuredToolInterface[]): void {
