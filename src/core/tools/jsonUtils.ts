@@ -139,13 +139,25 @@ export function safeStringify(value: unknown, maxLen = Infinity): string {
   return result
 }
 
-export function hashValue(value: unknown): string {
-  const s = safeStringify(value)
-  let h = 5381
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0
+/**
+ * cyrb53:53-bit 非加密 hash(碰撞空间 2^53,生日碰撞 ~2^26.5 ≈ 9500 万对象 50%)。
+ * 零依赖纯函数,雪崩好;替代旧 djb2(32-bit,~65536 对象即 50% 碰撞)用于乐观锁 hash(harden-optimistic-lock)。
+ * 非加密(不抗恶意碰撞,但乐观锁场景 LLM/集成方非对抗者,够用)。
+ */
+export function cyrb53(str: string, seed = 0): number {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
   }
-  return h.toString(36)
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
+}
+
+export function hashValue(value: unknown): string {
+  return cyrb53(safeStringify(value)).toString(36)
 }
 
 export function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unknown): string | null {

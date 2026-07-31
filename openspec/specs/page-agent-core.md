@@ -185,3 +185,7 @@ vfs 内部按 path 前缀分三池独立 LRU:`large_results/*`(offload 自动,�
 ## Requirement: 模型能力表 longest-match 匹配(去顺序依赖)
 
 `resolveModelCaps` 对内置 `MODEL_TABLE` 的匹配采用 longest-match:收集所有命中条目,按"实际匹配到的子串长度"(`RegExp.exec(model)[0].length`)降序,取最长(最具体)的命中;与 `MODEL_TABLE` 条目排列顺序无关。用匹配子串长度而非 `pattern.source.length`(后者会被 `|` 分支数虚高,如 `glm-4|glm4` source 长 9 但只匹配 `glm-4` 5 字符,误压更具体的 `glm-4.5`)。声明值(`contextWindow`/`maxOutputTokens`)优先于表,表未命中走保守缺省(DEFAULT_CAPS 32K/4K)。
+
+## Requirement: 乐观锁 hash 强度(cyrb53)与并发语义文档化
+
+乐观锁的 `hashValue`(整体 bind 值的 hash,用于 `expectedHash`/`autoLock` 比对)采用 cyrb53(53-bit 非加密 hash,碰撞空间 2^53,替代旧 djb2 32-bit),降低"不同值 hash 恰等 → 误判无冲突 → 静默覆盖外部修改"的概率。hash 算法不持久化、不跨会话(同会话内 read→write 用同一算法即自洽,换算法无兼容负担)。`autoLock`(默认 true)在 `maxParallelTools>1` 并发工具下语义为"整体快照":多个 read 并发写共享 `lastReadHash`(完成顺序不定),后续 write 比对"最后完成的 read 的整体 bind hash";并发场景下若需精确乐观锁,LLM 应显式传 `expectedHash`(取自它自己那次 read 的返回值 hash)绕开共享态竞态。

@@ -430,6 +430,25 @@ sdk.hook((e) => {
 
 > 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createDataOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
 
+#### 乐观锁与并发工具(`maxParallelTools > 1`)
+
+`autoLock`(默认 `true`)让 `write` 自动比对乐观锁 hash:它复用 **LLM 最近一次 `read` 返回的整体 bind hash**(内部共享的 `lastReadHash`)做整体快照比对,集成方无需手传 `expectedHash`。单工具串行场景下这等价于"基于我自己刚 read 的值写入"。
+
+**并发工具下,`autoLock` 退化为"整体快照语义"。** 当 `maxParallelTools > 1` 时,同一轮的多个 `read` 会**并发写同一个共享 `lastReadHash`**,完成顺序不确定,后续 `write` 比对的是"**最后完成的那个 `read` 的整体 hash**"——跨工具维度"我这个 write 用的是我自己那次 read 的 hash 吗"**不可重现**。这不破坏安全边界(仍是整体快照校验,冲突仍能被捕获),但失去了"每个 write 精确对应它自己的 read"的语义。
+
+**并发场景需要精确乐观锁时:让 LLM 显式传 `expectedHash`。** 取它自己那次 `read` 返回值里的 `hash`,在 `write` 里回传:
+
+```ts
+// Agent 工作流(并发场景,由 LLM 自动执行)
+// 1. read({ jsonPath:'title' }) → "主数据 @ title = old (hash=a1b2)"   ← 记住这个 hash
+// 2. write({ patch:{ op:'set', jsonPath:'title', value:'new' }, expectedHash:'a1b2' })
+//    精确比对 LLM 自己那次 read 的 hash,绕开共享 lastReadHash 的竞态
+```
+
+显式 `expectedHash` 优先于 `autoLock` 的共享 hash,跨并发工具可重现、可推理。
+
+> **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read`/`get_data` 返回值里的 `hash` 字段即可,无需集成方自己算。
+
 ### 6.2 自定义工具
 
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):

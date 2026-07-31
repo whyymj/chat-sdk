@@ -379,6 +379,25 @@ sdk.hook((e) => {
 
 > Omitting `expectedHash` → backward-compatible direct write (no check). Using `createDataOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
 
+#### Optimistic lock under concurrent tools (`maxParallelTools > 1`)
+
+`autoLock` (default `true`) makes `write` verify the optimistic-lock hash automatically: it reuses **the whole-bind hash from the LLM's most recent `read`** (an internal shared `lastReadHash`) for whole-snapshot comparison, so integrators don't pass `expectedHash` by hand. In a serial single-tool flow this is equivalent to "write based on the value I just read".
+
+**Under concurrent tools, `autoLock` degrades to "whole-snapshot semantics".** When `maxParallelTools > 1`, multiple `read`s in the same round **concurrently write the same shared `lastReadHash`** with nondeterministic completion order, and a subsequent `write` compares against "**the whole hash of whichever `read` finished last**" — "is this write using the hash from *my own* read?" is **not reproducible** across tools. This doesn't break the safety boundary (it's still whole-snapshot validation; conflicts are still caught), but you lose the "each write corresponds precisely to its own read" semantics.
+
+**When you need precise optimistic locking under concurrency: have the LLM pass `expectedHash` explicitly.** Take the `hash` returned by its own `read` and pass it back in `write`:
+
+```ts
+// Agent workflow (concurrent scenario, run by the LLM automatically)
+// 1. read({ jsonPath:'title' }) → "main data @ title = old (hash=a1b2)"   ← remember this hash
+// 2. write({ patch:{ op:'set', jsonPath:'title', value:'new' }, expectedHash:'a1b2' })
+//    precisely compares the hash from the LLM's own read, bypassing the shared-lastReadHash race
+```
+
+Explicit `expectedHash` takes precedence over the `autoLock` shared hash — reproducible and reason-able across concurrent tools.
+
+> **Hash algorithm**: from 2.16+, `hashValue` is upgraded to **cyrb53 (53-bit)**, replacing the old djb2 (32-bit) to significantly reduce collisions. Just take the `hash` field from `read` / `get_data` return values for `expectedHash` — integrators never compute it themselves.
+
 ### 6.2 Custom tools
 
 ```ts

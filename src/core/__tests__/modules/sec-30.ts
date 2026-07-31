@@ -1,7 +1,7 @@
 import type { TestCtx } from './_ctx'
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
-  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
+  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, cyrb53,
   applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
 } from '../../tools/jsonUtils'
 
@@ -80,9 +80,15 @@ export async function run(ctx: TestCtx): Promise<void> {
   cyc.self = cyc
   assert(safeStringify(cyc).includes('Circular'), 'safeStringify → 循环引用占位 [Circular]')
 
-  // hashValue
+  // hashValue(底层 cyrb53,harden-optimistic-lock 升级 53-bit 降碰撞)
   assert(hashValue({ a: 1 }) === hashValue({ a: 1 }), 'hashValue → 相同值同 hash')
   assert(hashValue({ a: 1 }) !== hashValue({ a: 2 }), 'hashValue → 不同值不同 hash')
+  assert(typeof hashValue({ a: 1 }) === 'string', 'hashValue → 返回 base36 字符串')
+  // cyrb53:53-bit 非加密 hash(确定性 + 雪崩)
+  assert(cyrb53('x') === cyrb53('x'), 'cyrb53 → 确定性(相同输入同输出)')
+  assert(cyrb53('a') !== cyrb53('b'), 'cyrb53 → 不同输入不同输出(雪崩)')
+  assert(cyrb53('') !== cyrb53('a'), 'cyrb53 → 空串 vs 非空串不同')
+  assert(hashValue({ a: 1 }) !== hashValue({ a: 2, b: 1 }), 'hashValue → 碰撞抽样({a:1} vs {a:2,b:1} 不同)')
 
   // isUnsafePath / safeMerge
   assert(isUnsafePath('__proto__.x') === true, 'isUnsafePath → 检测 __proto__')

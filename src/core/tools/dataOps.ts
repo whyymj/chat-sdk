@@ -106,6 +106,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
   const snapshots: DataSnapshotEntry[] = []
   const maxSnapshots = opts.maxSnapshots ?? 20
+  // 并发工具(maxParallelTools>1)下 autoLock 退化为"整体快照语义":多个 read 并发写本变量(完成顺序不定),
+  // 后续 write 比对"最后完成的 read 的整体 bind hash";单线程下单工具原子,但跨工具的"哪个 read 的 hash 被 autoLock 用"不可重现。
+  // 并发场景下若需精确乐观锁,LLM 应显式传 expectedHash(取自它自己那次 read 的返回值)。harden-optimistic-lock
   let lastReadHash: string | undefined
   const autoLock = opts.autoLock !== false
 
