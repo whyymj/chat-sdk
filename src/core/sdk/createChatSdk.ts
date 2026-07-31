@@ -42,6 +42,8 @@ import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { isChatModel, resolveLlm } from './llmResolver'
 import { createConflictManager } from './conflictManager'
+import { resolveStorage, resolveDialogConfig } from './optionsResolver'
+import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, type ContextPreset } from './contextPreset'
 import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
@@ -51,7 +53,7 @@ import { createDataOps, filterByToolMode, type DataConfig, type DataOpsControlle
 import { fetchDocTools } from '../tools/fetchDoc'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
-import { createSessionStore, type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
+import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
@@ -401,21 +403,6 @@ export interface ChatSdk {
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 50
 
-
-/** 解析 storage 选项 → SessionStore | null(undefined/false/未传 关闭;字符串/对象 开启) */
-function resolveStorage(storage: StorageBackendType | StorageConfig | false | undefined): SessionStore | null {
-  if (storage === undefined || storage === false) return null
-  if (typeof storage === 'string') return createSessionStore({ backend: storage })
-  if (storage.enabled === false) return null
-  return createSessionStore(storage)
-}
-
-/**
- * 解析对话框配置:从 options.dialog 读取归组配置(扁平写法已移除)。
- */
-function resolveDialogConfig(opts: ChatSdkOptions): DialogConfig {
-  return opts.dialog ?? {}
-}
 
 // ===== AgentCore:可被多实例共享的核心上下文 =====
 type AgentInstance = ReturnType<typeof createAgent>
@@ -800,14 +787,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : null
   // SDK 事件回调:把常用时机外发给集成方(数据槽变化 / 消息更新 / 流式事件 / 错误)
   const userOnEvent = options.onEvent
-  // 运行时动态订阅(sdk.hook 注册,可多个监听器,各自可取消)
-  const listeners = new Set<SdkEventHandler>()
-  const emit: SdkEventHandler = (event) => {
-    // approval_request 不外发(UI 已处理,避免集成方误调 resolve 双重收口)
-    if ((event as any).type === 'approval_request') return
-    if (userOnEvent) { try { userOnEvent(event) } catch { /* 回调抛错不影响 agent 循环 */ } }
-    for (const l of listeners) { try { l(event) } catch { /* 单个监听器抛错不影响其他 */ } }
-  }
+  // SDK 事件系统(sdk.hook 注册监听器;emit 外发事件,approval_request 不外发,onEvent/listeners 各自 try/catch 隔离)
+  const events = createSdkEvents(options.onEvent)
+  const emit = events.emit
 
   let skillsMw: ReturnType<typeof createSkillsMiddleware> | undefined
   // 用户在 ChatDialog 创建的 skill(独立持久化;与集成方 initialSkills 合并后给 controller,同名 userSkills 覆盖)
@@ -918,7 +900,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     store,
     messages,
     vfsStore,
-    listeners,
+    listeners: events.listeners,
     todosMw,
     memoryMw,
     agent: null,

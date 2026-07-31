@@ -6,16 +6,17 @@
 
 ### Added
 - **按需引入 subpath exports**:`package.json` `exports` 新增三个 subpath 入口 —— `./storage`(持久化层:`createSessionStore`/`createMemoryBackend`/`createWebStorageBackend`/`isQuotaError`)、`./query`(JSON 查询/沙箱:`jpEval`/`searchJson`/`runSandboxedScript` + jsonUtils/schemaUtils 全部纯函数)、`./llm`(代理连接:`createProxyLlm` 防 apiKey 泄露)。三个 subpath 指向同一 dist + types(不动构建),实际体积靠 bundler tree-shaking(已设 `sideEffects`)。语义清晰 + CDN 可按需入口;顶层 `.` 入口不变(向后兼容),未来切多入口构建时 import 路径零迁移
-- **新增顶层导出**:`jsonUtils` 16 个纯函数(`getByPath`/`setByPath`/`deleteByPath`/`deepClone`/`safeStringify`/`hashValue`/`applyPatchToClone`/`applyPatchToLive`/`restoreLive` 等)+ `EditOp` 类型;`schemaUtils` 6 个 schema 白名单函数(`getSchemaTopKeys`/`isPathAllowed`/`unwrapSchema`/`getSchemaAtPath`/`projectBySchemaDeep`/`projectBySchema`);`promptBuilder` 的 `buildSystemPrompt`/`buildDataPrompt`/`DEFAULT_SYSTEM_PROMPT`;期二补充:`contextIndex` 纯函数(`tokenize`/`estimateMessageTokens`/`estimateRoundTokens`/`indexSummarize`/`recallRounds` + `STOP_WORDS`)、`llmResolver`(`isChatModel`/`resolveLlm`)、`conflictManager`(`createConflictManager` + `ConflictManager` 类型)
+- **新增顶层导出**:`jsonUtils` 16 个纯函数(`getByPath`/`setByPath`/`deleteByPath`/`deepClone`/`safeStringify`/`hashValue`/`applyPatchToClone`/`applyPatchToLive`/`restoreLive` 等)+ `EditOp` 类型;`schemaUtils` 6 个 schema 白名单函数(`getSchemaTopKeys`/`isPathAllowed`/`unwrapSchema`/`getSchemaAtPath`/`projectBySchemaDeep`/`projectBySchema`);`promptBuilder` 的 `buildSystemPrompt`/`buildDataPrompt`/`DEFAULT_SYSTEM_PROMPT`;期二补充:`contextIndex` 纯函数(`tokenize`/`estimateMessageTokens`/`estimateRoundTokens`/`indexSummarize`/`recallRounds` + `STOP_WORDS`)、`llmResolver`(`isChatModel`/`resolveLlm`)、`conflictManager`(`createConflictManager` + `ConflictManager` 类型);期三:`optionsResolver`(`resolveStorage`/`resolveDialogConfig`)、`events`(`createSdkEvents` + `SdkEvents`)
 
 ### Changed
 - **模块抽离(refactor-module-extraction 期一,纯重构零行为变化)**:`dataOps.ts` 的 16 个零依赖纯函数抽离至 `tools/jsonUtils.ts`、6 个 schema 白名单投影函数抽离至 `tools/schemaUtils.ts`;`createChatSdk.ts` 的 `DEFAULT_SYSTEM_PROMPT`/`buildDataPrompt` + 新增 `buildSystemPrompt` 统一入口(处理 `appendReliableWriteRules` 分支 + `---` 分割线,纯函数结构化参数)抽离至 `sdk/promptBuilder.ts`。为后续 change(cyrb53/diffObjects → jsonUtils;describeSchemaNode → schemaUtils;getEffectiveSystemPrompt 复用 buildSystemPrompt)建好骨架
 - **模块抽离(refactor-module-extraction 期二,纯重构零行为变化)**:`useContextManager.ts` 的 6 个纯函数(分词/估算/摘要/召回)抽离至 `composables/contextIndex.ts`;`createChatSdk.ts` 的 `isChatModel`/`extractText`/`buildSummaryLlmInvoke` + 新增 `resolveLlm`(封装 modelCaps + summaryLlmInvoke 解析)抽离至 `sdk/llmResolver.ts`;`pendingConflict`/`setPendingConflict`/`resolveConflict` 冲突状态机抽离为 `sdk/conflictManager.ts` 的 `createConflictManager` 工厂(emit getter 延迟求值,适配 emit 晚于工厂定义的闭包时序)。`createChatSdk.ts` 1724→1631 行、`useContextManager.ts` 321→235 行。**skillStore 桥接评估延后**(`userSkills` 被 12+ 处引用 + skillsMw/core.infoTick 闭包时序交错,完整抽离风险 > 收益,留期三/独立 change)
+- **模块抽离(refactor-module-extraction 期三,纯重构零行为变化)**:`resolveStorage`/`resolveDialogConfig` 抽离至 `sdk/optionsResolver.ts`;`listeners`/`emit`/`hook` 事件系统抽离为 `sdk/events.ts` 的 `createSdkEvents` 工厂(`createSdkEventMiddleware`/`matchDataOp` 仍留 createChatSdk,依赖 messages/liveData/usage 闭包)。`createChatSdk.ts` 1631→1613 行
 
 ### Tests
 - 新增 `sec-30.ts`(jsonUtils 白盒 ~46 断言:路径/克隆/序列化/投影/patch/还原 + 原型污染防护)+ `sec-31.ts`(schemaUtils + promptBuilder 白盒 ~26 断言)+ `sec-32.ts`(contextIndex + conflictManager 工厂白盒 ~21 断言:set/resolve 状态机 + 并发覆盖兜底 + conflict 事件外发)
 - `tests/exports-consistency.mjs` 加 subpath 配置断言(1→6)
-- selftest 断言计数 537→630
+- selftest 断言计数 537→630(期一 sec-30/31 + 期二 sec-32;期三 events/optionsResolver 纯重构经 e2e events/storage 模块覆盖,无新增白盒)
 
 ## [2.13.0] - 2026-07-31
 

@@ -661,6 +661,15 @@ export interface ConflictManager {
   resolve(action: any): void;
 }
 export declare function createConflictManager(getEmit?: () => (((e: any) => void) | undefined)): ConflictManager;
+// ============ 配置解析 + 事件系统(optionsResolver/events,refactor-module-extraction 期三)============
+export declare function resolveStorage(storage: any): any | null;
+export declare function resolveDialogConfig(opts: any): any;
+export interface SdkEvents {
+  listeners: Set<(e: any) => void>;
+  emit: (e: any) => void;
+  hook(handler: (e: any) => void): () => void;
+}
+export declare function createSdkEvents(onEvent?: (e: any) => void): SdkEvents;
 export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean } | undefined, dataOps: any[], fetchDocs: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
 export declare const fetchDocTools: any[];

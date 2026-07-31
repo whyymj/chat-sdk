@@ -59,6 +59,11 @@ export { isChatModel, resolveLlm } from './sdk/llmResolver'
 // 乐观锁冲突管理器(refactor-module-extraction 期二 从 createChatSdk 抽离;headless 自建冲突 UI 可复用)
 export { createConflictManager } from './sdk/conflictManager'
 export type { ConflictManager } from './sdk/conflictManager'
+// 配置解析(refactor-module-extraction 期三 从 createChatSdk 抽离)
+export { resolveStorage, resolveDialogConfig } from './sdk/optionsResolver'
+// SDK 事件系统工厂(refactor-module-extraction 期三 从 createChatSdk 抽离;高级复用:自建事件分发)
+export { createSdkEvents } from './sdk/events'
+export type { SdkEvents } from './sdk/events'
 export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'
 export type { ToolErrorInput } from './tools/toolError'
 export { fetchDocTools } from './tools/fetchDoc'
