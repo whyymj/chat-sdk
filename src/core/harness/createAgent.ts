@@ -301,7 +301,7 @@ export function createAgent(options: CreateAgentOptions) {
         toolName: ctx.name,
         threshold: offloadThreshold,
         passThroughChars: offloadPassThrough,
-      })
+      }).content
       return { content, status: 'done' }
     } catch (err: any) {
       return { content: `工具执行出错：${err.message}`, status: 'error' }

@@ -426,6 +426,31 @@ flowchart TD
 
 ---
 
+## ⑬ 体验平面改进(2.16.0):complex 预设 + vfs JSON 感知 + 三池分池 + offload 元数据
+
+> 面向**多步复杂任务 / 大 JSON 操作 / 长流程编排**场景的四项体验平面改进。不改契约、不动数据流,在现有「上下文压缩 / vfs 工作区 / 大结果外存」三个机制上做面向使用者的增强。
+
+```mermaid
+flowchart LR
+  P["contextPreset<br/>auto/conservative/aggressive/+complex(2.16)"] --> S["summarization 中间件<br/>windowRatio/summaryThresholdRatio/recallTopK"]
+  VFS["vfs store"] --> POOLS["三池分池(2.16)<br/>large_results / drafts / userFiles<br/>各自 LRU,读写跨池透明"]
+  JTOOLS["vfs_json_read<br/>vfs_json_patch<br/>vfs_write(jsonString)"] --> VFS
+  OFF["工具结果外存<br/>>6000 字符"] --> OR["OffloadResult(2.16)<br/>>10000 附 suggestedReadPlan"]
+  OR -. "分块消费指引" .-> JTOOLS
+```
+
+**① `complex` 上下文预设**(与 `auto`/`conservative`/`aggressive` 并列):比例制 `windowRatio=0.6` / `summaryThresholdRatio=0.7` / `recallTopK=5` / `enableLLMSummary=true`,`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`。动机:复杂任务工具结果体积大、跨轮关联强、字段描述需保留,`auto` 的窗口比偏小易把关键字段摘要掉。`inspect().contextPreset`(新增字段)反映生效档;`contextOptions` 仍可逐字段覆盖。
+
+**② vfs JSON 感知工具**:`vfs_json_read({path, jsonPath?})` 按 jsonPath 读 vfs 文件内 JSON 子树(省略读整体);`vfs_json_patch({path, patches})` 在 clone 上原子应用多 patch(`op:set/remove/merge/append`),任一失败整体不写回(`PATCH_FAILED`,原文件不变);`vfs_write({path, content, jsonString?})` 的 `jsonString:true` 写前校验合法 JSON(`VFS_JSON_INVALID` 不写入)。动机:大 JSON 整体 `vfs_read` + `vfs_write` 重写易被 `max_tokens` 截断致文件不完整;局部 jsonPath patch 与主数据侧 `write({patch})` 同构,只发改动规避截断。
+
+**③ vfs 三池分池**:`large_results/*`(offload 自动,4MB)、`drafts/*`(2MB)、`userFiles`(2MB)三个**独立 LRU 池**。动机:单池 LRU 下工具结果外存会挤掉 Agent/用户的草稿与文件(误删),分池后各池只淘汰本池最旧文件,互不影响。`vfs.maxBytes` 默认 8MB(总)、`vfs.poolBytes` 单池配;读写跨池透明(按路径前缀路由)。
+
+**④ offload 结构化元数据**:工具结果外存返回值升级为 `OffloadResult`,大结果(>10000 字符)附 `suggestedReadPlan`(vfs_read 分页/分段读取建议)。动机:外存后 LLM 面对一个大文件不知从何读起、易一次塞满上下文;`suggestedReadPlan` 给出分块消费指引,引导 Agent 分页 `vfs_read` 而非整体加载。
+
+> 四项均**默认可用、零配置**,集成方按需通过 `contextPreset:'complex'` / `vfs.{maxBytes,poolBytes}` / 调用 vfs JSON 工具采用;不调用 = 现状。详见 `doc/usage-guide.md` §6.8「complex 预设 + vfs JSON 感知工具」。
+
+---
+
 ## 关键特性
 
 | 维度 | 设计 |

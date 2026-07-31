@@ -6,17 +6,28 @@
  */
 import type { ContextManagerOptions } from '../composables/useContextManager'
 
-export type ContextPreset = 'auto' | 'conservative' | 'aggressive'
+export type ContextPreset = 'auto' | 'conservative' | 'aggressive' | 'complex'
 
 /**
  * - auto:默认,按模型窗口自适应;LLM 摘要 + 召回 Top-3;触发阈值 0.5、窗口 0.4
  * - conservative:大模型/省成本;更晚触发(0.7)、保留更多近期(0.5)、召回 Top-2、用零成本索引摘要(关 LLM)
  * - aggressive:小模型/省上下文;更早触发(0.3)、保留少(0.3)、召回 Top-5、LLM 摘要更连贯压缩
+ * - complex:多步复杂任务/大 JSON/长流程;最大窗口(0.6)、最晚触发(0.7)、召回 Top-5、LLM 摘要
  */
 export const CONTEXT_PRESETS: Record<ContextPreset, Partial<ContextManagerOptions>> = {
   auto: { summaryThresholdRatio: 0.5, windowRatio: 0.4, recallTopK: 3, enableRecall: true },
   conservative: { summaryThresholdRatio: 0.7, windowRatio: 0.5, recallTopK: 2, enableRecall: true, enableLLMSummary: false },
   aggressive: { summaryThresholdRatio: 0.3, windowRatio: 0.3, recallTopK: 5, enableRecall: true, enableLLMSummary: true },
+  // complex:多步复杂任务 / 大 JSON / 长流程 → 最大窗口 + 最晚触发 + 最多召回 + LLM 摘要
+  complex: { summaryThresholdRatio: 0.7, windowRatio: 0.6, recallTopK: 5, enableRecall: true, enableLLMSummary: true },
+}
+
+/** 各预设的 preserveLastToolResults 默认值(complex 扩 query/search,跨轮保留更多工具结果);contextOptions.preserveLastToolResults 可覆盖 */
+export const PRESET_PRESERVE: Record<ContextPreset, string[]> = {
+  auto: ['describe_data', 'read'],
+  conservative: ['describe_data'],
+  aggressive: ['describe_data', 'read'],
+  complex: ['describe_data', 'read', 'query_data', 'search_data'],
 }
 
 export interface ContextOptionsInput {

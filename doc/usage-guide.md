@@ -173,7 +173,7 @@ createChatSdk({
   session: { id?, autoResume?, title? },  // 会话控制
 
   /* ===== 容量与鲁棒性 ===== */
-  vfs: { initialFiles?, maxBytes? },      // 虚拟工作区(默认内存上限 4MB,LRU 淘汰)
+  vfs: { initialFiles?, maxBytes?, poolBytes? },      // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 单轮最多工具调用轮次(默认 10)
@@ -183,7 +183,7 @@ createChatSdk({
 
   /* ===== UI 与其他 ===== */
   streaming: true,              // 流式逐字输出(默认 true)
-  contextPreset: 'auto',        // 压缩预设:auto(默认)/conservative(省成本)/aggressive(省上下文)
+  contextPreset: 'auto',        // 压缩预设:auto(默认)/conservative(省成本)/aggressive(省上下文)/complex(多步复杂任务/大 JSON/长流程,2.16.0+)
   contextOptions: {...},        // 压缩细参,覆盖 preset 个别字段(false 关闭压缩)
   summaryLlm: { apiKey, baseUrl, model },  // 摘要专用模型(不配用主 llm)
   summaryTemperature: 0.3,      // 摘要 LLM 温度(默认 0.3)
@@ -587,9 +587,10 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
   - `auto`:自适应,LLM 摘要 + 召回 Top-3,触发阈值 0.5、窗口 0.4
   - `conservative`:大模型/省成本,阈值 0.7、窗口 0.5,召回 Top-2,关 LLM 摘要用索引摘要
   - `aggressive`:小模型/省上下文,阈值 0.3、窗口 0.3,召回 Top-5
+  - `complex`(2.16.0+):多步复杂任务/大 JSON/长流程,比例制:窗口 0.6、触发阈值 0.7、召回 Top-5、开 LLM 摘要;`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`(大 JSON 场景防字段描述被摘要丢)。详见下文「complex 预设 + vfs JSON 感知工具」
 - **摘要专用模型**:`summaryLlm` 可指定更便宜的小模型做摘要(不配用主 `llm`);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM。
 - **对话历史上限**:`maxMemoryRounds`(默认 50)超限把最旧轮次压缩为一条摘要 system 消息。
-- **vfs 工作区上限**:`vfs.maxBytes`(默认 4MB)超限按 LRU 淘汰最旧文件。
+- **vfs 工作区上限**:`vfs.maxBytes`(默认 8MB,2.16.0+)超限按 LRU 淘汰最旧文件。2.16.0+ **三池分池**:`large_results/*`(工具结果外存,自动)、`drafts/*`(草稿)、`userFiles`(用户文件)各自独立 LRU 互不挤占(默认单池 2MB,large_results 4MB),`vfs.poolBytes` 可单池配,读写跨池透明。
 
 这些在 `storage: false`(纯内存)下也生效,防 OOM。
 
@@ -609,6 +610,92 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 - `maxMemoryRounds` ≠ `windowRounds`:前者是「历史最多存多少轮」(超限压缩归档),后者是「每轮给 LLM 看多少轮原文」(更老的摘要化)。例:`maxMemoryRounds=50, windowRounds=6` = 最多存 50 轮历史,但每轮 LLM 只看最近 6 轮原文 + 更老的摘要。
 - `contextPreset`(`auto`/`conservative`/`aggressive`)是 `contextOptions` 的预设档,改 preset 等于批量调 `windowRounds`/`summaryThresholdRounds` 等阈值;`contextOptions` 显式字段覆盖 preset。
 - 关 `capabilities.summarization` 后,`contextOptions` 全部失效(中间件不装载),只剩 `maxMemoryRounds` 硬截断 —— 适合「上下文由接口方管理,SDK 不压缩」的场景。
+
+#### complex 预设 + vfs JSON 感知工具(2.16.0+)
+
+面向**多步复杂任务 / 大 JSON 操作 / 长流程编排**场景,2.16.0 新增 `complex` 上下文预设 + vfs JSON 感知工具 + 三池分池 + offload 结构化元数据,提升长流程的上下文稳定性与大文件局部编辑能力。
+
+**① `complex` 上下文预设**
+
+`auto`/`conservative`/`aggressive` 面向普通对话,而多步复杂任务(低代码页面搭建、大型配置编排、长文档处理)的特点是:工具结果体积大、单轮上下文需求高、关键字段描述需跨轮保留。`complex` 用**比例制**适配这类场景:
+
+| 字段 | complex | auto(对比) | 说明 |
+|---|---|---|---|
+| `windowRatio` | 0.6 | 0.4 | 每轮保留最近 60% 上下文窗口给原文(大 JSON 工具结果需更多原文) |
+| `summaryThresholdRatio` | 0.7 | 0.5 | 上下文用量达 70% 才触发压缩(晚压缩,减少丢细节) |
+| `recallTopK` | 5 | 3 | 召回更多旧轮次(复杂任务上下文关联性强) |
+| `enableLLMSummary` | true | true | 用 LLM 摘要(保证摘要质量) |
+| `preserveLastToolResults` | `['describe_data','read','query_data','search_data']` | `['describe_data','read']` | 额外保留 query/search 结果摘要(大 JSON 查询场景防丢) |
+
+```ts
+createChatSdk({
+  contextPreset: 'complex',   // 一键启用多步复杂任务档
+  // 也可逐字段覆盖(与 auto/conservative/aggressive 相同)
+  contextOptions: { recallTopK: 8 },  // 例:任务特别长,召回更多旧轮次
+  // ...
+})
+```
+
+> `inspect().contextPreset`(2.16.0+)可在 DebugDrawer 查看 Agent 实际生效的预设档。
+
+**② vfs JSON 感知工具**(`vfs_json_read` / `vfs_json_patch` / `vfs_write` jsonString)
+
+vfs 工作区常用于存大 JSON(抓取的 API 响应、组件库快照、配置树草稿)。2.16.0 之前只能整体 `vfs_read` 读 + `vfs_write` 整体覆盖重写,大 JSON 整体重传易被 `max_tokens` 截断。新增两个工具支持**按 jsonPath 局部读写**:
+
+```ts
+// vfs_json_read:按 jsonPath 读 vfs 文件内 JSON 子树(省略读整体)
+vfs_json_read({ path: 'drafts/config.json' })                          // 读整体
+vfs_json_read({ path: 'drafts/config.json', jsonPath: 'components.0' }) // 只读某子树(省 token)
+
+// vfs_json_patch:在 vfs 文件内原子 jsonPath patch(在 clone 上应用,任一失败整体不写回)
+vfs_json_patch({
+  path: 'drafts/config.json',
+  patches: [
+    { op: 'set',    jsonPath: 'title',         value: '新标题' },
+    { op: 'append', jsonPath: 'items',         value: { id: 99 } },
+    { op: 'merge',  jsonPath: 'style',         value: { color: 'red' } },
+    { op: 'remove', jsonPath: 'deprecated' },
+  ],
+})
+// 任一 patch 失败 → 返回 PATCH_FAILED,原文件不变(原子)
+
+// vfs_write jsonString:true → 写入前校验 content 是合法 JSON(非法返 VFS_JSON_INVALID,不写入)
+vfs_write({ path: 'drafts/config.json', content: '{"a":1}', jsonString: true })
+```
+
+| 工具 / 错误 | 含义 |
+|---|---|
+| `vfs_json_read` 返 `VFS_JSON_INVALID` | 文件内容不是合法 JSON |
+| `vfs_json_read` 返 `VFS_PATH_NOT_FOUND` | jsonPath 在 JSON 中不存在 |
+| `vfs_json_patch` 返 `PATCH_FAILED` | patch 应用失败,原文件未改(原子) |
+| `vfs_write(jsonString:true)` 返 `VFS_JSON_INVALID` | content 非合法 JSON,不写入 |
+
+> 动机:大 JSON 局部编辑走 jsonPath patch,只发改动、不重传整文件,规避 `max_tokens` 截断导致整体 JSON 不完整。配合主数据侧的 `write({patch})` 同构语义。
+
+**③ vfs 三池分池**
+
+2.16.0 前 vfs 是单池 LRU,工具结果外存(`large_results/*`)与用户草稿(`drafts/*`)/用户文件(`userFiles`)抢同一配额,大结果挤掉草稿(误删用户数据)。现分三池独立 LRU:
+
+| 池 | 前缀 | 默认配额 | 用途 |
+|---|---|---|---|
+| `large_results` | `large_results/*` | 4MB | 工具结果自动外存(>6000 字符;>10000 附 `suggestedReadPlan`) |
+| `drafts` | `drafts/*` | 2MB | Agent / 集成方写入的草稿 |
+| `userFiles` | `userFiles`(无固定前缀) | 2MB | 用户文件 |
+
+`vfs.maxBytes`(总,默认 8MB)、`vfs.poolBytes`(单池,可覆盖)。读写跨池透明(路径前缀自动路由)。
+
+```ts
+createChatSdk({
+  vfs: {
+    maxBytes: 16 * 1024 * 1024,            // 总上限调大(默认 8MB)
+    poolBytes: { drafts: 4 * 1024 * 1024 }, // 单池配:草稿池给 4MB(其余默认)
+  },
+})
+```
+
+**④ offload 结构化元数据 + suggestedReadPlan**
+
+工具结果外存(>阈值)的返回值升级为 `OffloadResult`,附结构化元数据。**大结果(>10000 字符)附 `suggestedReadPlan`**——给 LLM 一份 `vfs_read` 分页/分段读取建议(如先读哪段、分几页),引导 Agent 分块消费而非一次塞满上下文。集成方无需配置,自动生效。
 
 ### 6.9 子 agent(委派与并行)
 

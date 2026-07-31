@@ -2,6 +2,22 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.16.0] - 2026-07-31
+
+### Added
+- **complex 上下文预设**:新增 `contextPreset: 'complex'`(与 auto/conservative/aggressive 并列),面向多步复杂任务 / 大 JSON 操作 / 长流程编排 —— 最大保留窗口(`windowRatio=0.6`)+ 最晚触发压缩(`summaryThresholdRatio=0.7`)+ 最多召回(`recallTopK=5`)+ LLM 摘要;`preserveLastToolResults` 默认扩为 `['describe_data','read','query_data','search_data']`(跨轮保留更多工具结果)。预设机制为比例制(complex 按比例字段配置)
+- **vfs JSON 感知工具**:新增 `vfs_json_read({ path, jsonPath? })`(vfs 文件内按 jsonPath 读 JSON 子树,文件非合法 JSON 返 `VFS_JSON_INVALID`)与 `vfs_json_patch({ path, patches })`(vfs 文件内原子 jsonPath patch:set/remove/merge/append 在 clone 上应用,任一失败整体不写回,原文件不污染);`vfs_write` 增 `jsonString?` 参数(true 时校验 content 合法 JSON,非法 `VFS_JSON_INVALID`)。适合在 vfs 内结构化读写大 JSON
+- **vfs 三池分池**:vfs 内部按 path 前缀分三池独立 LRU —— `large_results/*`(offload 自动,4MB)/ `drafts/*`(draft_write 自动,2MB,前序 change 未实现,池空占位)/ userFiles(vfs_write 显式,2MB)。三池互不挤占(防 offload 大结果挤掉进行中草稿);`vfs.maxBytes` 默认 8MB(三池之和),`vfs.poolBytes` 可单独配置每池。读写跨池透明(API 不变)
+- **offload 结构化元数据**:`offloadLargeResult` 返回 `OffloadResult`(`{ offloaded, content, path?, totalChars?, preview?, suggestedReadPlan? }`);大结果(>10000 字符)附 `suggestedReadPlan` 引导 LLM 分页 `vfs_read` 回读而非盲读
+- **inspect().contextPreset**:`AgentInfo` 新增 `contextPreset` 字段,inspect 反映当前预设档位
+
+### Changed
+- vfs 工具族(`vfs_read`/`vfs_write`/`vfs_edit`/`vfs_ls`/`vfs_glob`/`vfs_grep`/`vfs_json_read`/`vfs_json_patch`)source 标记由 `'user'` 修正为 `'builtin'`(vfs 是内置中间件,此前经 middleware.tools 注入,inspect().tools 里误标 'user')
+
+### Tests
+- selftest 新增 `sec-33`(vfs JSON 工具 + 三池分池独立 LRU + offload 结构化元数据);`sec-21` 补 complex 预设 + `PRESET_PRESERVE`;`sec-02` offload 断言适配 `OffloadResult`。断言计数 642→680
+- e2e inspect().tools 含 vfs_json_read/vfs_json_patch(source=builtin)+ inspect().contextPreset(auto/complex)。计数 212→217
+
 ## [2.15.1] - 2026-07-31
 
 ### Fixed

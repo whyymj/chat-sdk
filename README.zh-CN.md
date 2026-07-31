@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-642%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-680%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -132,6 +132,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🤖 子 agent | 委派子任务，过程不占主上下文 | `subagent` |
 | 🔌 MCP | 连远程 MCP server 动态注入工具 | `mcp` |
 | 📦 上下文压缩 | 4 层自适应压缩，预设档位 + LLM 摘要 | `contextPreset` |
+| 🧪 复杂任务调优 | `complex` 上下文预设（更大窗口 + 更晚压缩 + 更多召回，适合多步 / 大 JSON / 长流程编排）；vfs JSON 感知工具（`vfs_json_read` / `vfs_json_patch`）在 vfs 内结构化操作大 JSON；vfs 三池分池（large_results / drafts / userFiles 隔离 LRU，互不挤占） | `contextPreset:'complex'`、`capabilities.vfs` |
 | 🛡️ 压缩不丢信息 | 摘要内嵌当前 data 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 
@@ -208,7 +209,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck`（读回根对象自动取 `data.bind`，适配 `sdk.setData` 运行时替换） |
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
-| **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · 默认 `auto` | 压缩预设档位 |
+| **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · 默认 `auto` | 压缩预设档位（`complex` 面向多步 / 大 JSON / 长流程编排任务） |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `50` | 对话历史内存上限轮次（`0` 关裁剪） |
@@ -363,7 +364,7 @@ createChatSdk({
   humanConfirm: true,           // 主动征询（默认开；AI 不确定/多方案主动问你）
   approval: { tools: ['write'] }, // 被动确认白名单（默认关）
   checkpoint: true,
-  contextPreset: 'auto',       // auto/conservative/aggressive
+  contextPreset: 'auto',       // auto/conservative/aggressive/complex
   summaryLlm: { ... },         // 摘要专用 LLM（不配用主 llm）
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
@@ -453,8 +454,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 642 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 212 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 680 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 217 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

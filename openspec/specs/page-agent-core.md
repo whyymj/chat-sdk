@@ -161,3 +161,19 @@ system prompt 的「可操作数据」段(从 `data.schema` 字段 `.describe()`
 ## Requirement: 白名单严格写(未声明字段一律丢弃)
 
 当 `data.schema` 为 `ZodObject` 时,`set_data` / `write(set)` 整体写入只接受 schema 声明的顶层字段(`safeMerge` 语义);LLM 原始输入(`parsed`)里的未声明字段一律丢弃,即便经 `interceptors.write` 补充或用户显式传入也不写回 bind。可写字段须在 schema 声明(白名单由 schema 派生)。`interceptors.write` 仍可转换 / 审计 / 拒绝已声明字段的值,但不能作为绕过白名单塞入未声明字段的通道。该收紧闭合了原先"未声明字段经写回块无校验进入 bind"的安全口子,与 `read` 投影 / `isPathAllowed` 的白名单语义一致。
+
+## Requirement: complex 上下文预设
+
+`contextPreset` 新增 `'complex'` 选项(与 `auto`/`conservative`/`aggressive` 并列),配置为比例制 `summaryThresholdRatio=0.7`、`windowRatio=0.6`、`recallTopK=5`、`enableLLMSummary=true`(经 `unify-context-compression` 重构为比例制,非旧绝对值 `windowRounds`/`summaryThreshold`),适用于多步复杂任务、大 JSON 操作、长流程编排。`preserveLastToolResults` 默认按 preset 取(complex 扩为 `['describe_data','read','query_data','search_data']`,在 `createChatSdk.ts`;其余预设保持 `['describe_data','read']` 或更少)。`contextOptions` 显式配置时逐字段覆盖预设(不整体替换)。不传 `contextPreset` = `auto`(现状)。
+
+## Requirement: vfs JSON 感知工具
+
+系统提供 `vfs_json_read({ path, jsonPath? })` 工具在 vfs 文件内按 jsonPath 读 JSON 子树(先 parse 整文件再 getByPath;文件非合法 JSON 返回 `VFS_JSON_INVALID`),与 `vfs_json_patch({ path, patches })` 工具在 vfs 文件内做原子 jsonPath patch(set/remove/merge/append,在 clone 上 patch 后校验写回,失败不污染原文件)。`vfs_write` 支持 `jsonString?: boolean` 参数(true 时校验 content 是合法 JSON,非法返回 `VFS_JSON_INVALID`;省略/false 时写纯文本不校验)。
+
+## Requirement: vfs 三池分池存储
+
+vfs 内部按 path 前缀分三池独立 LRU:`large_results/*`(offload 自动,默认 4MB)、`drafts/*`(draft_write 自动,默认 2MB,前序 change 未实现)、其他(userFiles,vfs_write 显式,默认 2MB)。三池独立 LRU 互不挤占(防 offload 大结果挤掉进行中草稿);`vfs.maxBytes`(默认 8MB)为三池之和总上限;`vfs.poolBytes` 可单独配置每池。`vfs_read`/`vfs_ls`/`vfs_glob`/`vfs_grep`/`vfs_json_read`/`vfs_json_patch` 跨池透明(按 path 前缀自动路由)。
+
+## Requirement: offload 大结果结构化元数据
+
+工具结果外存 vfs 时 `offloadLargeResult` 返回结构化 `OffloadResult` `{ offloaded: true, content, path, totalChars, preview(1000 字符), suggestedReadPlan? }`(`content` 写入 ToolMessage,其余为元数据),其中 `suggestedReadPlan` 在 `totalChars > 10000` 时建议分页 `vfs_read({ path, offset, limit })` 读取策略,使 LLM 基于元数据决定读取策略而非盲读。

@@ -30,7 +30,7 @@ import {
 } from '../../backends/storage'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
 import { useContextManager } from '../../composables/useContextManager'
-import { resolveContextOptions } from '../../sdk/contextPreset'
+import { resolveContextOptions, PRESET_PRESERVE } from '../../sdk/contextPreset'
 import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
@@ -66,6 +66,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(agg.windowRatio === 0.3, 'preset aggressive: window=0.3')
     assert(agg.recallTopK === 5, 'preset aggressive: recallTopK=5')
     assert(agg.enableLLMSummary === true, 'preset aggressive: enableLLMSummary=true')
+
+    // complex:多步复杂任务/大 JSON/长流程 → 最大窗口 + 最晚触发 + 最多召回 + LLM 摘要(add-complex-preset-and-vfs-json)
+    const cmp = resolveContextOptions({ contextPreset: 'complex' }, 131072)
+    assert(cmp.summaryThresholdRatio === 0.7, 'preset complex: threshold=0.7(最晚触发)')
+    assert(cmp.windowRatio === 0.6, 'preset complex: window=0.6(最大保留窗口)')
+    assert(cmp.recallTopK === 5, 'preset complex: recallTopK=5(最多召回)')
+    assert(cmp.enableLLMSummary === true, 'preset complex: enableLLMSummary=true')
+    // PRESET_PRESERVE:complex 扩 query/search(跨轮保留更多工具结果);其余预设保持少
+    assert(PRESET_PRESERVE.complex.length === 4 && PRESET_PRESERVE.complex.includes('query_data') && PRESET_PRESERVE.complex.includes('search_data'), 'PRESET_PRESERVE: complex 含 describe_data/read/query_data/search_data')
+    assert(PRESET_PRESERVE.auto.includes('read') && !PRESET_PRESERVE.auto.includes('query_data'), 'PRESET_PRESERVE: auto 仅 describe_data/read(不含 query/search)')
+    assert(PRESET_PRESERVE.conservative.length === 1, 'PRESET_PRESERVE: conservative 仅 describe_data(最省)')
 
     // 细参覆盖 preset:aggressive 但单独把召回调到 8
     const override = resolveContextOptions({ contextPreset: 'aggressive', contextOptions: { recallTopK: 8 } }, 32768)

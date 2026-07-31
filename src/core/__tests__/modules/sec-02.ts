@@ -191,23 +191,24 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     // 小结果原样
     const small = offloadLargeResult('hello', { toolName: 't', vfsAvailable: true, files: {} })
-    assert(small === 'hello', '小结果(≤阈值)原样返回')
+    assert(small.content === 'hello' && small.offloaded === undefined, '小结果(≤阈值)原样返回(.content,无 offloaded 标记)')
 
-    // 大结果 + vfs 可用 → 外存 + 预览引用
+    // 大结果 + vfs 可用 → 外存 + 预览引用 + 结构化元数据
     const big = 'x'.repeat(10000)
     const files: Record<string, { content: string; updatedAt: number }> = {}
     const offloaded = offloadLargeResult(big, { toolName: 'get_x', vfsAvailable: true, files, threshold: 6000 })
     const keys = Object.keys(files)
-    assert(/已转存到虚拟工作区/.test(offloaded) && keys.length === 1, '大结果+vfs可用 → 外存并返回预览引用')
+    assert(offloaded.offloaded === true && offloaded.path?.includes('get_x') && offloaded.totalChars === 10000, '大结果+vfs可用 → offloaded=true + path + totalChars 结构化元数据')
+    assert(/已转存到虚拟工作区/.test(offloaded.content) && keys.length === 1, '大结果+vfs可用 → .content 含预览引用 + 外存 1 文件')
     assert(files[keys[0]].content === big && /get_x/.test(keys[0]), '外存内容完整 + 文件名含工具名')
 
     // 大结果 + vfs 不可用 → 按放行上限
     const passThrough = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000, passThroughChars: 20000 })
-    assert(passThrough === big, 'vfs 不可用 + 结果 ≤ 放行上限 → 完整放行(不截断)')
+    assert(passThrough.content === big && passThrough.offloaded === undefined, 'vfs 不可用 + 结果 ≤ 放行上限 → 完整放行(.content 原样)')
     const stillTruncated = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000, passThroughChars: 5000 })
-    assert(/已截断/.test(stillTruncated) && stillTruncated.length < big.length, 'vfs 不可用 + 结果 > 放行上限 → 截断兜底')
+    assert(/已截断/.test(stillTruncated.content) && stillTruncated.content.length < big.length && stillTruncated.offloaded === false, 'vfs 不可用 + 结果 > 放行上限 → 截断兜底(offloaded=false)')
     const defaultTrunc = offloadLargeResult(big, { toolName: 't', vfsAvailable: false, threshold: 6000 })
-    assert(/已截断/.test(defaultTrunc), 'vfs 不可用 + 未传 passThrough → 默认截断(= threshold)')
+    assert(/已截断/.test(defaultTrunc.content), 'vfs 不可用 + 未传 passThrough → 默认截断(= threshold)')
 
     // 内容寻址去重:相同内容 → 相同文件名,反复外存不新增文件
     const files2: Record<string, { content: string; updatedAt: number }> = {}

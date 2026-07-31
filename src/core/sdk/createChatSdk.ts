@@ -45,8 +45,8 @@ import { createConflictManager } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
 import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
-import { resolveContextOptions, type ContextPreset } from './contextPreset'
-import { createVfs, createVfsMiddleware, type VfsStore } from '../backends/vfs'
+import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
+import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState } from '../harness/state'
 import { createInitialState } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
@@ -575,6 +575,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         } }
       : undefined,
     maxBytes: options.vfs?.maxBytes,
+    poolBytes: options.vfs?.poolBytes,
   })
 
   const todosMw = createTodosMiddleware()
@@ -696,6 +697,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const usePlanning = caps?.planning !== false
   const useSkills = caps?.skills !== false
   const useVfs = caps?.vfs !== false
+  // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
+  if (useVfs) {
+    for (const n of VFS_TOOL_NAMES) toolSources.set(n, 'builtin')
+  }
   const useSummarization = caps?.summarization !== false
   const useMemory = caps?.memory !== false
   const useSubagent = caps?.subagent !== false
@@ -869,7 +874,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);用户可在 contextOptions 覆盖
             preserveLastToolResults:
               (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
-              ['describe_data', 'read'],
+              PRESET_PRESERVE[options.contextPreset ?? 'auto'],
           }),
         ]
       : []),
@@ -1152,6 +1157,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
+        contextPreset: options.contextPreset ?? 'auto',
         memory: memoryMw.get(),
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),

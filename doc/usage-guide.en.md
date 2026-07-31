@@ -162,11 +162,11 @@ createChatSdk({
   subagents: [{ id, description, ... }],  // pre-declared → generates use_<id> tool
 
   // context
-  contextPreset: 'auto',           // auto / conservative / aggressive
+  contextPreset: 'auto',           // auto / conservative / aggressive / complex (2.16.0+)
   contextOptions: { ... },         // fine params (false disables compression)
   summaryLlm: { ... },             // summary-dedicated LLM (defaults to main llm)
   maxMemoryRounds: 50,             // dialog history memory cap (0 disables trim)
-  vfs: { maxBytes: 4*1024*1024 },  // in-memory workspace cap (LRU evict)
+  vfs: { maxBytes: 8*1024*1024, poolBytes? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU)
 
   // persistence
   storage: 'indexed',              // 'indexed'|'session'|'local'|'memory'|config|false (default off)
@@ -425,8 +425,94 @@ The Agent sees only name+description upfront; `load_skill` fetches the full body
 
 ### 6.8 Context & memory caps
 
-- 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive)
-- vfs `maxBytes` (default 4MB) LRU evict; dialog `maxMemoryRounds` (default 50) trim
+- 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex)
+- vfs `maxBytes` (default 8MB; 2.16.0+ three independent pools) LRU evict; dialog `maxMemoryRounds` (default 50) trim
+
+#### complex preset + vfs JSON-aware tools (2.16.0+)
+
+For **multi-step complex tasks / large JSON edits / long-running workflows**, 2.16.0 adds a `complex` context preset, vfs JSON-aware tools, three-pool vfs partitioning, and structured offload metadata — improving context stability and large-file partial-edit capability.
+
+**① `complex` context preset**
+
+`auto`/`conservative`/`aggressive` target ordinary chat. Multi-step complex tasks (low-code page building, large config orchestration, long-doc processing) have bulky tool results, high per-round context needs, and must keep field descriptions across rounds. `complex` uses **ratio-based** tuning for these scenarios:
+
+| Field | complex | auto (compare) | Notes |
+|---|---|---|---|
+| `windowRatio` | 0.6 | 0.4 | Keep 60% of the context window for recent verbatim text (large JSON tool results need more original text) |
+| `summaryThresholdRatio` | 0.7 | 0.5 | Compress only at 70% usage (compress later, lose less detail) |
+| `recallTopK` | 5 | 3 | Recall more old rounds (complex tasks have strong cross-round context linkage) |
+| `enableLLMSummary` | true | true | Use LLM summary (quality) |
+| `preserveLastToolResults` | `['describe_data','read','query_data','search_data']` | `['describe_data','read']` | Also preserve query/search result snippets (large-JSON query scenarios) |
+
+```ts
+createChatSdk({
+  contextPreset: 'complex',   // one-line: complex-task preset
+  // any field can override (same as auto/conservative/aggressive)
+  contextOptions: { recallTopK: 8 },  // e.g. very long task, recall more
+  // ...
+})
+```
+
+> `inspect().contextPreset` (2.16.0+) exposes the effective preset in DebugDrawer.
+
+**② vfs JSON-aware tools** (`vfs_json_read` / `vfs_json_patch` / `vfs_write` jsonString)
+
+The vfs workspace often stores large JSON (fetched API responses, component snapshots, config-tree drafts). Before 2.16.0 you could only `vfs_read` the whole file + `vfs_write` the whole thing back — re-sending large JSON is easily truncated by `max_tokens`. Two new tools support **jsonPath partial read/write**:
+
+```ts
+// vfs_json_read: read a JSON subtree from a vfs file via jsonPath (omit to read whole)
+vfs_json_read({ path: 'drafts/config.json' })                          // whole file
+vfs_json_read({ path: 'drafts/config.json', jsonPath: 'components.0' }) // only a subtree (saves tokens)
+
+// vfs_json_patch: atomic jsonPath patch inside a vfs file (applied on a clone; any failure → nothing written back)
+vfs_json_patch({
+  path: 'drafts/config.json',
+  patches: [
+    { op: 'set',    jsonPath: 'title',         value: 'New title' },
+    { op: 'append', jsonPath: 'items',         value: { id: 99 } },
+    { op: 'merge',  jsonPath: 'style',         value: { color: 'red' } },
+    { op: 'remove', jsonPath: 'deprecated' },
+  ],
+})
+// any patch fails → PATCH_FAILED, original file unchanged (atomic)
+
+// vfs_write jsonString:true → validate content is valid JSON before writing (invalid → VFS_JSON_INVALID, not written)
+vfs_write({ path: 'drafts/config.json', content: '{"a":1}', jsonString: true })
+```
+
+| Tool / error | Meaning |
+|---|---|
+| `vfs_json_read` returns `VFS_JSON_INVALID` | File content is not valid JSON |
+| `vfs_json_read` returns `VFS_PATH_NOT_FOUND` | jsonPath does not exist in the JSON |
+| `vfs_json_patch` returns `PATCH_FAILED` | A patch failed to apply; original file unchanged (atomic) |
+| `vfs_write(jsonString:true)` returns `VFS_JSON_INVALID` | content is not valid JSON; not written |
+
+> Motivation: editing a large JSON via jsonPath patch sends only the delta, avoiding `max_tokens` truncation that would leave the whole JSON incomplete. Mirrors the on-data `write({patch})` semantics.
+
+**③ vfs three-pool partitioning**
+
+Before 2.16.0 vfs was a single LRU pool — offloaded tool results (`large_results/*`) competed for quota with user drafts (`drafts/*`) / user files (`userFiles`), and large results could evict drafts (losing user data). Now three independent LRU pools:
+
+| Pool | Prefix | Default quota | Purpose |
+|---|---|---|---|
+| `large_results` | `large_results/*` | 4MB | Tool-result auto-offload (>6000 chars; >10000 attaches `suggestedReadPlan`) |
+| `drafts` | `drafts/*` | 2MB | Drafts written by Agent / integrator |
+| `userFiles` | `userFiles` (no fixed prefix) | 2MB | User files |
+
+`vfs.maxBytes` (total, default 8MB), `vfs.poolBytes` (per-pool override). Reads/writes route transparently across pools.
+
+```ts
+createChatSdk({
+  vfs: {
+    maxBytes: 16 * 1024 * 1024,            // raise total cap (default 8MB)
+    poolBytes: { drafts: 4 * 1024 * 1024 }, // per-pool: drafts pool 4MB (others default)
+  },
+})
+```
+
+**④ Structured offload metadata + suggestedReadPlan**
+
+The return value for offloaded tool results (above threshold) is upgraded to `OffloadResult` with structured metadata. **Large results (>10000 chars) include `suggestedReadPlan`** — a `vfs_read` paging/segmenting plan advising the LLM how to consume the result in chunks (which section first, how many pages), guiding the Agent to consume in blocks instead of stuffing the whole thing into context. No integrator config; automatic.
 
 ### 6.9 onEvent callback (subscribe to common moments)
 

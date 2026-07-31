@@ -12,6 +12,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { Middleware } from '../harness/middleware'
 import type { VfsFile } from '../harness/state'
 import { toolError } from '../tools/toolError'
+import { getByPath, applyPatchToClone, deepClone } from '../tools/jsonUtils'
 
 /** 持久化钩子(可选):由 createChatSdk 注入,工具层无感 */
 export interface VfsPersist {
@@ -19,17 +20,29 @@ export interface VfsPersist {
   save?: (files: Record<string, VfsFile>) => void
 }
 
+/** vfs 分池键(按 path 前缀路由:large_results/* / drafts/* / 其他) */
+export type VfsPoolKey = 'largeResults' | 'drafts' | 'userFiles'
+
 /** createVfs 选项 */
 export interface VfsOptions {
   /** 持久化钩子(可选) */
   persist?: VfsPersist
-  /** 工作区内存字节上限(默认 4MB);超限按 updatedAt 最旧 LRU 淘汰。纯内存(storage:false)也生效 */
+  /** 工作区总内存上限(默认 8MB,三池之和);纯内存(storage:false)也生效 */
   maxBytes?: number
+  /** 单池上限(可选,覆盖默认 largeResults=4MB / drafts=2MB / userFiles=2MB);三池独立 LRU 互不挤占 */
+  poolBytes?: Partial<Record<VfsPoolKey, number>>
 }
 
-/** 工作区默认内存上限(大结果外存累积的 OOM 兜底) */
-export const DEFAULT_VFS_MAX_BYTES = 4 * 1024 * 1024
-/** 淘汰水位:淘汰到 maxBytes*0.9 留余量(与 storage 口径一致) */
+/** 工作区默认总内存上限(三池之和;大结果外存累积的 OOM 兜底) */
+export const DEFAULT_VFS_MAX_BYTES = 8 * 1024 * 1024
+/** 三池默认上限:large_results(offload 自动)/drafts(draft_write 自动,前序 change 未实现)/userFiles(vfs_write 显式) */
+export const DEFAULT_POOL_BYTES: Record<VfsPoolKey, number> = {
+  largeResults: 4 * 1024 * 1024,
+  drafts: 2 * 1024 * 1024,
+  userFiles: 2 * 1024 * 1024,
+}
+const POOL_KEYS: readonly VfsPoolKey[] = ['largeResults', 'drafts', 'userFiles']
+/** 淘汰水位:淘汰到 池上限*0.9 留余量(与 storage 口径一致) */
 const DEFAULT_VFS_WATERMARK = 0.9
 
 export interface VfsStore {
@@ -61,19 +74,52 @@ export function createVfs(
 
   const { persist } = opts
   const maxBytes = opts.maxBytes ?? DEFAULT_VFS_MAX_BYTES
+  // 三池独立上限(可经 poolBytes 覆盖);三池独立 LRU 互不挤占(防 offload 大结果挤掉进行中草稿)
+  const poolMaxBytes: Record<VfsPoolKey, number> = { ...DEFAULT_POOL_BYTES, ...(opts.poolBytes ?? {}) }
+
+  /** path → 池:large_results/* / drafts/* / 其他(userFiles)。读写跨池透明,仅 LRU 按池隔离 */
+  function poolOf(path: string): VfsPoolKey {
+    const p = normalize(path)
+    if (p.startsWith('large_results/')) return 'largeResults'
+    if (p.startsWith('drafts/')) return 'drafts'
+    return 'userFiles'
+  }
+  /** 单池当前字节数 */
+  function poolBytesOf(pool: VfsPoolKey): number {
+    let total = 0
+    for (const [k, f] of Object.entries(files)) {
+      if (poolOf(k) === pool) total += encodeLength(f.content)
+    }
+    return total
+  }
 
   /**
-   * 内存上限淘汰:总字节超 maxBytes → 按 updatedAt 最旧 LRU 删到 ≤ maxBytes*watermark。
-   * 直接操作 raw target(不触发 Proxy 拦截,避免递归)。
-   * 纯内存(storage:false)也生效 —— 大结果外存累积的 OOM 兜底。
+   * 内存上限淘汰:按池独立 LRU —— 每池超各自 poolMaxBytes → 仅在该池内按 updatedAt 最旧删到 ≤ 池上限*watermark。
+   * 三池互不挤占(关键:offload 的 large_results 大结果不会挤掉 drafts/ 进行中草稿)。
+   * 最后总上限 maxBytes 兜底(默认 = 三池之和;用户配 poolBytes 之和超过时仍约束)。
+   * 直接操作 raw target(不触发 Proxy 拦截,避免递归)。纯内存(storage:false)也生效。
    */
   function enforceLimit(): void {
-    if (estimateFileBytes(files) <= maxBytes) return
-    const target = maxBytes * DEFAULT_VFS_WATERMARK
-    const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
-    for (const [k] of ordered) {
-      delete files[k]
-      if (estimateFileBytes(files) <= target) break
+    for (const pool of POOL_KEYS) {
+      const limit = poolMaxBytes[pool]
+      if (poolBytesOf(pool) <= limit) continue
+      const target = limit * DEFAULT_VFS_WATERMARK
+      const ordered = Object.entries(files)
+        .filter(([k]) => poolOf(k) === pool)
+        .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+      for (const [k] of ordered) {
+        delete files[k]
+        if (poolBytesOf(pool) <= target) break
+      }
+    }
+    // 总上限兜底(默认 = 三池之和)
+    if (estimateFileBytes(files) > maxBytes) {
+      const target = maxBytes * DEFAULT_VFS_WATERMARK
+      const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+      for (const [k] of ordered) {
+        delete files[k]
+        if (estimateFileBytes(files) <= target) break
+      }
     }
   }
 
@@ -138,11 +184,15 @@ export function createVfs(
 }
 
 let _vfsEncoder: TextEncoder | null = null
+/** 单文件 UTF-8 字节长度(与 storage.estimateBytes 口径一致) */
+function encodeLength(s: string): number {
+  if (!_vfsEncoder) _vfsEncoder = new TextEncoder()
+  return _vfsEncoder.encode(s).length
+}
 /** 工作区总字节估算(文件内容 UTF-8 长度,与 storage.estimateBytes 口径一致) */
 function estimateFileBytes(files: Record<string, VfsFile>): number {
-  if (!_vfsEncoder) _vfsEncoder = new TextEncoder()
   let total = 0
-  for (const f of Object.values(files)) total += _vfsEncoder.encode(f.content).length
+  for (const f of Object.values(files)) total += encodeLength(f.content)
   return total
 }
 
@@ -177,6 +227,9 @@ function now(): number {
   return Date.now()
 }
 
+/** vfs 内置工具名(供 createChatSdk 标 source=builtin;经 createVfsMiddleware 注入,默认会落到 'user' 语义错)。新增 vfs 工具时同步此处 */
+export const VFS_TOOL_NAMES = ['vfs_read', 'vfs_write', 'vfs_edit', 'vfs_ls', 'vfs_glob', 'vfs_grep', 'vfs_json_read', 'vfs_json_patch'] as const
+
 /** 基于 store 构建 vfs 工具集 */
 export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
   const vfsRead = tool(
@@ -203,16 +256,25 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
   )
 
   const vfsWrite = tool(
-    async ({ path, content }) => {
+    async ({ path, content, jsonString }) => {
+      // jsonString=true:写入前校验 content 是合法 JSON(非法 VFS_JSON_INVALID,不写入)
+      if (jsonString) {
+        try {
+          JSON.parse(content)
+        } catch (e) {
+          return toolError({ code: 'VFS_JSON_INVALID', path, message: `content 非合法 JSON: ${(e as Error).message}`, hint: 'jsonString=true 要求 content 是合法 JSON;检查引号/逗号/括号配对;或省略 jsonString 写纯文本' })
+        }
+      }
       store.files[normalize(path)] = { content, updatedAt: now() }
-      return `已写入 ${path}(${content.length} 字符)`
+      return `已写入 ${path}(${content.length} 字符)${jsonString ? '(JSON 校验通过)' : ''}`
     },
     {
       name: 'vfs_write',
-      description: '写入/覆盖虚拟工作区文件,作为中间工作记忆。',
+      description: '写入/覆盖虚拟工作区文件,作为中间工作记忆。jsonString=true 时校验 content 是合法 JSON(配合 vfs_json_read/vfs_json_patch 操作 JSON 文件)。',
       schema: z.object({
         path: z.string().describe('文件路径'),
         content: z.string().describe('完整内容'),
+        jsonString: z.boolean().optional().describe('true 时校验 content 是合法 JSON(非法返回 VFS_JSON_INVALID 不写入);省略/false 写纯文本不校验'),
       }),
     },
   )
@@ -327,7 +389,82 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
     },
   )
 
-  return [vfsRead, vfsWrite, vfsEdit, vfsLs, vfsGlob, vfsGrep]
+  const vfsJsonRead = tool(
+    async ({ path, jsonPath }) => {
+      const key = normalize(path)
+      const f = store.files[key]
+      if (!f) {
+        return toolError({ code: 'NOT_FOUND', path, message: `未找到文件 "${path}"`, hint: '用 vfs_ls 查看虚拟工作区文件列表' })
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(f.content)
+      } catch (e) {
+        return toolError({ code: 'VFS_JSON_INVALID', path, message: `文件内容非合法 JSON: ${(e as Error).message}`, hint: 'vfs_json_read 要求文件内容是合法 JSON;先 vfs_read 查看实际内容,或 vfs_write({jsonString:true}) 重写为合法 JSON' })
+      }
+      if (jsonPath) {
+        const sub = getByPath(parsed, jsonPath)
+        if (sub === undefined) {
+          return toolError({ code: 'VFS_PATH_NOT_FOUND', path, message: `jsonPath "${jsonPath}" 不存在`, hint: '不传 jsonPath 整体读查看结构,或核对路径段' })
+        }
+        return `${path}#${jsonPath} (JSON):\n${JSON.stringify(sub)}`
+      }
+      return `${path} (JSON):\n${JSON.stringify(parsed)}`
+    },
+    {
+      name: 'vfs_json_read',
+      description: '把虚拟工作区文件当 JSON 读取:先 parse 整文件,再按 jsonPath 取子树(省略返整体)。文件非合法 JSON 报 VFS_JSON_INVALID。适合结构化读取 vfs 内大 JSON。',
+      schema: z.object({
+        path: z.string().describe('文件路径(内容须为合法 JSON)'),
+        jsonPath: z.string().optional().describe('点分隔子路径(如 components.0.title);省略读整体'),
+      }),
+    },
+  )
+
+  const vfsJsonPatch = tool(
+    async ({ path, patches }) => {
+      const key = normalize(path)
+      const f = store.files[key]
+      if (!f) {
+        return toolError({ code: 'NOT_FOUND', path, message: `未找到文件 "${path}"`, hint: '用 vfs_ls 查看虚拟工作区文件列表' })
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(f.content)
+      } catch (e) {
+        return toolError({ code: 'VFS_JSON_INVALID', path, message: `文件内容非合法 JSON: ${(e as Error).message}`, hint: 'vfs_json_patch 要求文件内容是合法 JSON' })
+      }
+      // 在 clone 上 patch:任一 patch 失败则整体不写回(原子性,原文件不污染)
+      const clone = deepClone(parsed)
+      const affectedPaths: string[] = []
+      for (const p of patches) {
+        const err = applyPatchToClone(clone, p.op, p.jsonPath, p.value)
+        if (err) {
+          return toolError({ code: 'PATCH_FAILED', path, message: err, hint: '修正 patches 后重试(原文件未改动)', details: { failedPatch: p } })
+        }
+        affectedPaths.push(p.jsonPath || '(根)')
+      }
+      const serialized = JSON.stringify(clone)
+      store.files[key] = { content: serialized, updatedAt: now() }
+      return `已对 ${path} 应用 ${patches.length} 个 patch(影响 ${affectedPaths.length} 处:${affectedPaths.join(', ')}),文件现 ${serialized.length} 字符`
+    },
+    {
+      name: 'vfs_json_patch',
+      description: '在虚拟工作区 JSON 文件内做原子 jsonPath patch(set/remove/merge/append)。先 parse → clone 上应用全部 patches → 任一失败或 JSON 非法则整体不写回(原文件不变)。',
+      schema: z.object({
+        path: z.string().describe('文件路径(内容须为合法 JSON)'),
+        patches: z.array(
+          z.object({
+            op: z.enum(['set', 'remove', 'merge', 'append']).describe('操作'),
+            jsonPath: z.string().describe('点分隔路径(如 components.0.title);merge/append 目标可为根(空串)'),
+            value: z.any().optional().describe('set/merge/append 的值(remove 不需要)'),
+          }),
+        ).describe('按顺序应用的 patch 列表(原子:任一失败整体不写回)'),
+      }),
+    },
+  )
+
+  return [vfsRead, vfsWrite, vfsEdit, vfsLs, vfsGlob, vfsGrep, vfsJsonRead, vfsJsonPatch]
 }
 
 /** vfs 中间件:beforeAgent 把 store.files 注入 state(共享引用,工具改即 state 改) */

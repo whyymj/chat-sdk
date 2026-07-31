@@ -128,6 +128,35 @@ Example: `write({ value: 9.9, patch: { op: 'set', jsonPath: 'items.0.price' } })
 
 `fetch_document` — GET a URL, return cleaned text (HTML→markdown, truncated, offloaded to vfs if large).
 
+## Built-in vfs tools (`capabilities.vfs`, default on)
+
+The virtual file workspace holds tool-result offloads (>6000 chars), agent/integrator drafts, and user files. 2.16.0+ partitions it into three independent LRU pools (`large_results/*` / `drafts/*` / `userFiles`), so offloaded results can't evict drafts or user files.
+
+| Tool | Signature | Purpose |
+|---|---|---|
+| `vfs_read` | `({ path }) => string` | Read a file (path may be returned by a prior offload). |
+| `vfs_write` | `({ path, content, jsonString? }) => meta` | Write/overwrite a file. `jsonString:true` (2.16.0+) validates `content` is valid JSON before writing (invalid → `VFS_JSON_INVALID`, not written). |
+| `vfs_grep` | `({ pattern, paths? }) => matches` | Grep across workspace files. |
+| `vfs_json_read` (2.16.0+) | `({ path, jsonPath? }) => json\|string` | Read a JSON subtree from a vfs file via jsonPath (omit for the whole file). Returns `VFS_JSON_INVALID` if the file isn't valid JSON; `VFS_PATH_NOT_FOUND` if jsonPath doesn't exist. |
+| `vfs_json_patch` (2.16.0+) | `({ path, patches: [{op:'set'\|'remove'\|'merge'\|'append', jsonPath, value?}] }) => meta` | Atomic jsonPath patch inside a vfs file. Applied on a clone; any patch failure → `PATCH_FAILED`, original file unchanged. Avoids re-sending large JSON (delta only). |
+
+## Context compression presets (`contextPreset`)
+
+`contextPreset` is a one-line knob over the `summarization` middleware (ratio-based); `contextOptions` overrides individual fields.
+
+| Preset | When | Profile |
+|---|---|---|
+| `auto` (default) | General chat | window 0.4 / threshold 0.5 / recall Top-3 / LLM summary |
+| `conservative` | Big models / cost | window 0.5 / threshold 0.7 / recall Top-2 / index summary (no LLM) |
+| `aggressive` | Small models / save context | window 0.3 / threshold 0.3 / recall Top-5 |
+| `complex` (2.16.0+) | Multi-step complex tasks / large JSON / long workflows | windowRatio 0.6 / summaryThresholdRatio 0.7 / recall Top-5 / LLM summary; `preserveLastToolResults` defaults to `['describe_data','read','query_data','search_data']` |
+
+```ts
+createChatSdk({ contextPreset: 'complex', contextOptions: { recallTopK: 8 } })
+```
+
+`inspect().contextPreset` (2.16.0+) exposes the effective preset.
+
 ## SdkEvent types (for `onEvent` / `sdk.hook`)
 
 | `type` | Payload | When |

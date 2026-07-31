@@ -35,6 +35,7 @@ import { run as run_sec_29 } from './modules/sec-29'
 import { run as run_sec_30 } from './modules/sec-30'
 import { run as run_sec_31 } from './modules/sec-31'
 import { run as run_sec_32 } from './modules/sec-32'
+import { run as run_sec_33 } from './modules/sec-33'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -93,6 +94,7 @@ const ctx = { assert, invoke, byName }
   await run_sec_30(ctx)
   await run_sec_31(ctx)
   await run_sec_32(ctx)
+  await run_sec_33(ctx)
   console.log(`\n==== ${passed} passed, ${failed} failed ====`)
   if (failed > 0) process.exit(1)
 })()

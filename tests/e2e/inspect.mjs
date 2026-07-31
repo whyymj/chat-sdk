@@ -53,6 +53,32 @@ export async function run() {
     const toolsOff = sdkOff.inspect().tools.map((t) => t.name)
     assert(!toolsOff.some((n) => n.endsWith('_data') || n.endsWith('_data_snapshots') || n === 'eval_script' || n === 'read' || n === 'write'), 'dataOps:false → 不含任何数据工具(含 read/write)')
     sdkOff.unmount()
+
+    // vfs 开启 → 含 vfs 工具族(含新增 vfs_json_read/vfs_json_patch,add-complex-preset-and-vfs-json)
+    const sdkVfs = createChatSdk({
+      ui: false, id: 'e2e-vfs-json', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, vfs: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkVfs.mount()
+    const toolsVfs = sdkVfs.inspect().tools.map((t) => t.name)
+    assert(['vfs_read', 'vfs_write', 'vfs_edit', 'vfs_ls', 'vfs_glob', 'vfs_grep', 'vfs_json_read', 'vfs_json_patch'].every((n) => toolsVfs.includes(n)), 'vfs 开启 → 含 vfs 工具族(8 个,含新增 vfs_json_read/vfs_json_patch)')
+    const vfsJsonRead = sdkVfs.inspect().tools.find((t) => t.name === 'vfs_json_read')
+    assert(vfsJsonRead && vfsJsonRead.source === 'builtin', 'vfs_json_read → source=builtin')
+    const vfsJsonPatch = sdkVfs.inspect().tools.find((t) => t.name === 'vfs_json_patch')
+    assert(vfsJsonPatch && vfsJsonPatch.source === 'builtin', 'vfs_json_patch → source=builtin')
+    assert(sdkVfs.inspect().contextPreset === 'auto', 'inspect().contextPreset 默认 auto')
+    sdkVfs.unmount()
+
+    // inspect().contextPreset 反映 complex(add-complex-preset-and-vfs-json)
+    const sdkComplex = createChatSdk({
+      ui: false, id: 'e2e-complex-preset', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      contextPreset: 'complex',
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkComplex.mount()
+    assert(sdkComplex.inspect().contextPreset === 'complex', 'inspect().contextPreset 反映 complex 预设')
+    sdkComplex.unmount()
   }
 
   console.log('[e2e:inspect] inspect().middleware 反映 capabilities 开关')

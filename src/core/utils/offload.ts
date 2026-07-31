@@ -41,17 +41,33 @@ function contentHash(s: string): string {
   return (h >>> 0).toString(36)
 }
 
+/** offload 结果:content 为最终写入 ToolMessage 的文案;其余为结构化元数据(供测试/DebugDrawer/未来扩展) */
+export interface OffloadResult {
+  /** true=外存到 vfs;false=vfs 不可用已截断;undefined=原样(未超阈值或放行) */
+  offloaded?: boolean
+  /** 最终写入 ToolMessage 的 content(给 LLM 看) */
+  content: string
+  /** 外存 vfs 路径(仅 offloaded=true) */
+  path?: string
+  /** 原始结果总字符数(offloaded 时) */
+  totalChars?: number
+  /** 预览(外存时,前 1000 字符) */
+  preview?: string
+  /** 建议读取计划(外存 + totalChars > 10000 时,引导 LLM 分页回读而非盲读) */
+  suggestedReadPlan?: string
+}
+
 /**
  * 处理工具结果:超阈值则外存 vfs 或按放行上限放行,否则原样。
  * 三态:
  *  - content > 阈值 且 vfs 可用 → 写 vfs(内容寻址:相同内容复用同一文件,只更新 updatedAt),返回「预览 + vfs_read 引用」(完整可回读,不截断)
  *  - content > 阈值 但 vfs 不可用 → 按放行上限:≤ 上限完整放行(信任大上下文,避免丢信息),> 上限才截断兜底
  *  - content ≤ 阈值 → 原样返回
- * 返回最终写入 ToolMessage 的 content 字符串。
+ * 返回 OffloadResult:.content 写 ToolMessage;.offloaded/path/totalChars/preview/suggestedReadPlan 为结构化元数据。
  */
-export function offloadLargeResult(content: string, ctx: OffloadCtx): string {
+export function offloadLargeResult(content: string, ctx: OffloadCtx): OffloadResult {
   const threshold = ctx.threshold ?? DEFAULT_OFFLOAD_THRESHOLD
-  if (content.length <= threshold) return content
+  if (content.length <= threshold) return { content }
 
   // vfs 可用 → 外存(内容寻址去重),返回预览 + vfs_read 引用
   if (ctx.vfsAvailable && ctx.files) {
@@ -59,19 +75,26 @@ export function offloadLargeResult(content: string, ctx: OffloadCtx): string {
     const relPath = `large_results/${ctx.toolName}-${contentHash(content)}.txt`
     const path = normalize(relPath)
     ctx.files[path] = { content, updatedAt: Date.now() }
-    const head = content.slice(0, 1000)
-    return [
-      head,
-      `…[结果过大(共 ${content.length} 字符),已转存到虚拟工作区:${relPath}]`,
+    const preview = content.slice(0, 1000)
+    const totalChars = content.length
+    // 大结果(>10000 字符)附建议读取计划,引导 LLM 分页回读而非盲读整块
+    const suggestedReadPlan = totalChars > 10000
+      ? `结果较大(共 ${totalChars} 字符),建议分页读取:vfs_read({ path: "${relPath}", offset: 0, limit: 100 }) 起步,按需 offset += 100 续读,或 vfs_grep({ pattern, path: "${relPath}" }) 局部检索`
+      : undefined
+    const contentStr = [
+      preview,
+      `…[结果过大(共 ${totalChars} 字符),已转存到虚拟工作区:${relPath}]`,
       `需要完整或局部数据时:用 vfs_read({ path: "${relPath}", offset, limit }) 分页回读,或 vfs_grep({ pattern, path: "${relPath}" }) 局部检索。`,
+      ...(suggestedReadPlan ? [suggestedReadPlan] : []),
     ].join('\n')
+    return { offloaded: true, content: contentStr, path: relPath, totalChars, preview, suggestedReadPlan }
   }
 
   // vfs 不可用 → 按放行上限:小则完整放行(不截断,信任大上下文),大才截断兜底
   const passThrough = ctx.passThroughChars ?? threshold
-  if (content.length <= passThrough) return content
-  return (
+  if (content.length <= passThrough) return { content }
+  const truncated =
     content.slice(0, passThrough) +
     `\n…[结果过大(共 ${content.length} 字符),vfs 未启用无法外存,已截断,仅显示前 ${passThrough} 字符。建议开启 vfs(capabilities.vfs 默认开启)以完整外存可回读]`
-  )
+  return { offloaded: false, content: truncated, totalChars: content.length }
 }

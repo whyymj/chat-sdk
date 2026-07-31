@@ -135,6 +135,8 @@ export interface AgentInfo {
   tools: ToolInfo[];
   skills: SkillInfo[];
   data?: DataInfo;
+  /** 当前上下文压缩预设(默认 auto;complex 为多步复杂任务/大 JSON 场景) */
+  contextPreset: 'auto' | 'conservative' | 'aggressive' | 'complex';
   memory: string;
   middleware: string[];
   todos: { content: string; status: string }[];
@@ -464,8 +466,8 @@ export interface ChatSdkOptions {
   mcp?: McpServerConfig[];
   /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
   contextOptions?: any;
-  /** 上下文压缩预设档位(默认 'auto'):auto / conservative / aggressive;提供合理默认,contextOptions 细参可覆盖 */
-  contextPreset?: 'auto' | 'conservative' | 'aggressive';
+  /** 上下文压缩预设档位(默认 'auto'):auto / conservative / aggressive / complex(多步复杂任务/大 JSON);提供合理默认,contextOptions 细参可覆盖 */
+  contextPreset?: 'auto' | 'conservative' | 'aggressive' | 'complex';
   /** 摘要压缩专用 LLM(BaseChatModel 实例或 LLMConfig);不传则默认用主 agent 模型(llm) */
   summaryLlm?: any;
   /** 摘要 LLM 温度(默认 0.3) */

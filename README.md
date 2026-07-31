@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-642%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-680%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -132,6 +132,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🤖 subagents | Delegate subtasks; process stays out of main context | `subagent` |
 | 🔌 MCP | Connect remote MCP servers, inject tools dynamically | `mcp` |
 | 📦 context compression | 4-layer adaptive compression, presets + LLM summary | `contextPreset` |
+| 🧪 complex-task tuned | `complex` context preset (larger window + later compress + more recall, for multi-step / large-JSON / long-workflow tasks); vfs JSON-aware tools (`vfs_json_read` / `vfs_json_patch`) for structured big-JSON ops inside vfs; vfs three-pool LRU (large_results / drafts / userFiles isolated, no mutual eviction) | `contextPreset:'complex'`, `capabilities.vfs` |
 | 🛡️ compression-safe | Live data snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
 | 💾 persistence | IndexedDB multi-session + quota eviction + switch | `storage` |
 
@@ -208,7 +209,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | | `verify` | `{check?,maxAttempts?,adversarial?}` | Needs `capabilities.verify:true`; `check` omitted → `createWriteBackCheck` (read-back root auto-bound to `data.bind`, adapts to `sdk.setData` runtime swap) |
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
-| **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive'` · default `auto` | Compression preset |
+| **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · default `auto` | Compression preset (`complex` for multi-step / large-JSON / long-workflow tasks) |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `50` | Dialog history memory round cap (`0` disables trim) |
@@ -418,7 +419,7 @@ createChatSdk({
   humanConfirm: true,           // proactive inquiry (default on)
   approval: { tools: ['write'] }, // passive confirm whitelist (default off)
   checkpoint: true,
-  contextPreset: 'auto',       // auto/conservative/aggressive
+  contextPreset: 'auto',       // auto/conservative/aggressive/complex
   summaryLlm: { ... },         // summary-dedicated LLM (defaults to main llm)
   maxRetries: 2, maxParallelTools: 1,
   subagent: { allowedTools: [...] },
@@ -508,8 +509,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 642 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 212 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 680 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 217 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test
