@@ -60,6 +60,14 @@ export async function run(ctx: TestCtx): Promise<void> {
     const gpt = resolveModelCaps({ model: 'gpt-4o' })
     assert(gpt.contextWindow === 131072 && gpt.maxOutputTokens === 16384, 'resolveModelCaps: gpt-4o 128K/16K')
 
+    // longest-match(harden-model-caps-matching):多命中取 pattern 最具体的条目,锁死"已知模型名 → 预期 caps"(顺序无关)
+    const glm46 = resolveModelCaps({ model: 'glm-4.6' })
+    assert(glm46.maxOutputTokens === 131072, 'longest-match: glm-4.6 命中 glm-4.[6-9](128K 输出),非更宽泛 glm-4(4K 输出)')
+    const qwen1m = resolveModelCaps({ model: 'qwen2.5-1m' })
+    assert(qwen1m.contextWindow === 1048576, 'longest-match: qwen2.5-1m 命中 1m 条目(1M),非 qwen2.5(32K)')
+    const unknown = resolveModelCaps({ model: 'totally-unknown-model' })
+    assert(unknown.contextWindow === 32768 && unknown.maxOutputTokens === 4096, '未知模型 → DEFAULT_CAPS(32K/4K)')
+
     // 修正后的 2026 实测档(GLM/Kimi/Qwen 旧档曾失真)
     const glm52 = resolveModelCaps({ model: 'glm-5.2' })
     assert(glm52.contextWindow === 1048576 && glm52.maxOutputTokens === 65536, 'resolveModelCaps: glm-5.2 1M/64K')

@@ -16,7 +16,7 @@ export interface ModelCaps {
 }
 
 /**
- * 内置常见模型表(first-match,model 名子串匹配,大小写不敏感)。
+ * 内置常见模型表(longest-match:model 名子串匹配,大小写不敏感;多命中取 pattern 源字符串最长的条目 = 最具体)。
  * 数字随厂商升级会变,仅作兜底;集成方显式声明优先覆盖。
  */
 const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
@@ -64,8 +64,16 @@ export interface ResolveCapsOptions {
 export function resolveModelCaps(opts: ResolveCapsOptions = {}): ModelCaps {
   const fromTable = (() => {
     if (!opts.model) return undefined
-    const hit = MODEL_TABLE.find((e) => e.pattern.test(opts.model!))
-    return hit?.caps
+    // longest-match:按"实际匹配到的子串长度"降序取最具体的 —— 用匹配长度而非 pattern.source.length(后者会被 | 分支数虚高,如 `glm-4|glm4` source 长 9 但只匹配 `glm-4` 5 字符,反而压过更具体的 `glm-4.5`)。消除 first-match 顺序依赖(harden-model-caps-matching)
+    const hits = MODEL_TABLE
+      .map((e) => {
+        const m = e.pattern.exec(opts.model!)
+        return m ? { caps: e.caps, matchedLen: m[0].length } : null
+      })
+      .filter((x): x is { caps: ModelCaps; matchedLen: number } => x !== null)
+    if (!hits.length) return undefined
+    hits.sort((a, b) => b.matchedLen - a.matchedLen)
+    return hits[0].caps
   })()
   const contextWindow = opts.contextWindow ?? fromTable?.contextWindow ?? DEFAULT_CAPS.contextWindow
   const maxOutputTokens = opts.maxOutputTokens ?? fromTable?.maxOutputTokens ?? DEFAULT_CAPS.maxOutputTokens

@@ -7,8 +7,12 @@
 ### Fixed
 - **`inspect().systemPrompt` 残缺(漏中间件段)**:`getInfo` 另起炉灶拼 systemPrompt(只 `base + data + augmentSystem`),漏掉 `usageHints` / `todos` / `skills` / `memory` / `subagents` 等中间件 `augmentPrompt` 段,集成方 / DebugDrawer 看到的"系统提示词"残缺,排查 prompt 问题(如"LLM 为何不知道有这些 skill / 工具用法")时被误导。修复:`createAgent` 暴露 `getEffectiveSystemPrompt()`(复用内部权威 `buildSystemPrompt`,即实际发给 LLM 的内容),`getInfo.systemPrompt` 代理到它 —— prompt 拼装收敛为单一真相源。展示一致性修复,**LLM 实际收到的 prompt 本就对**(向后完全兼容)。
 
+### Changed
+- **模型能力表匹配 first-match → longest-match**:`resolveModelCaps` 对 `MODEL_TABLE` 的匹配从 first-match 改为按"实际匹配子串长度"(`RegExp.exec(model)[0].length`)降序取最具体条目,消除顺序依赖(未来新模型名是旧模型子串时不再被宽泛条目抢先匹配,拿到错的 `contextWindow`/`maxOutputTokens` 连锁影响 offload 阈值/压缩触发/maxTokens 缺省)。不用 `pattern.source.length` —— `|` 分支会虚高 source 长度(实测 `glm-4.5` 被 `glm-4|glm4` 误压)。**行为不变**(当前顺序下 longest=first 结果一致,向后兼容)
+
 ### Tests
 - e2e `systemprompt.mjs` 补 `inspect().systemPrompt` 完整性断言(配 skills/memory/dataOps 后含 usageHints `## 能力使用提示` / skills `## 可用 Skills` 段,修复前漏)。断言计数 217→221
+- selftest `sec-20` 补 longest-match 表驱动断言(glm-4.6 命中 `glm-4.[6-9]` / qwen2.5-1m 命中 1m 条目 / 未知模型走 DEFAULT_CAPS)。断言计数 680→683
 
 ## [2.16.0] - 2026-07-31
 

@@ -181,3 +181,7 @@ vfs 内部按 path 前缀分三池独立 LRU:`large_results/*`(offload 自动,�
 ## Requirement: inspect() 返回的 systemPrompt 与运行时实际注入一致
 
 `inspect()`(及 DebugDrawer 经 `getInfo()` 读取)返回的 `systemPrompt` 字段必须等于 agent 运行时实际注入 LLM 的完整 system prompt,即 base(用户 systemPrompt + 可靠写入规则)+ `buildDataPrompt`(可操作数据段)+ 所有已装载中间件的 `augmentPrompt` 段(usageHints 工具用法提示 / todos 任务清单 / skills 技能索引 / memory 持久指令 / subagents 预声明索引 / augmentSystem 用户钩子等)。该一致性经 `createAgent` 暴露 `getEffectiveSystemPrompt()`(复用内部 `buildSystemPrompt()` 权威拼装)实现,`getInfo` 的 `systemPrompt` 代理到该出口,消除"展示拼装"与"运行时拼装"两套逻辑分叉。agent 尚未构造时(initDone 未 resolve 的早期 inspect)回退 `base + buildDataPrompt`。
+
+## Requirement: 模型能力表 longest-match 匹配(去顺序依赖)
+
+`resolveModelCaps` 对内置 `MODEL_TABLE` 的匹配采用 longest-match:收集所有命中条目,按"实际匹配到的子串长度"(`RegExp.exec(model)[0].length`)降序,取最长(最具体)的命中;与 `MODEL_TABLE` 条目排列顺序无关。用匹配子串长度而非 `pattern.source.length`(后者会被 `|` 分支数虚高,如 `glm-4|glm4` source 长 9 但只匹配 `glm-4` 5 字符,误压更具体的 `glm-4.5`)。声明值(`contextWindow`/`maxOutputTokens`)优先于表,表未命中走保守缺省(DEFAULT_CAPS 32K/4K)。
