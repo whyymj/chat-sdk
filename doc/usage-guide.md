@@ -76,6 +76,21 @@ import { createChatSdk, z } from 'page-agent-sdk'
 </script>
 ```
 
+**按需引入(subpath exports)**:除顶层 `page-agent-sdk` 外,三个子路径入口让你只引特定能力(bundler 对未用部分 tree-shaking):
+
+| subpath | 主要导出 | 场景 |
+|---|---|---|
+| `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | 只要持久化层,不引 Agent |
+| `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils / schemaUtils 全部纯函数 | JSON 查询 / 沙箱 / 路径操作 |
+| `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | 防 apiKey 泄露的代理连接 |
+
+```js
+import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
+import { getByPath, setByPath, hashValue } from 'page-agent-sdk/query' // jsonUtils 纯函数
+```
+
+> 三个 subpath 当前指向同一份 dist + types(未拆多入口构建),语义清晰 + 便于 CDN 按入口拉取;未来切多入口构建时 import 路径零迁移。
+
 ## 3. 快速开始(3 分钟)
 
 最小可用例子 —— 让 Agent 能读写你的页面主数据:

@@ -2,6 +2,19 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.15.0] - 2026-07-31
+
+### Added
+- **浏览器 E2E 测试层(Playwright + mock LLM)**:新增 `tests/browser/` 目录,7 项确定性浏览器测试,覆盖 page-demo(read→write→read)/ human-confirm-demo(两层确认:主动征询→选方案→写前确认→允许/拒绝)/ complex-demo(列组件+edit patch 改 style+子路径读+fields 裁剪)。核心:`_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 OpenAI 兼容 SSE 流(tool_calls + 文本),使 agent ReAct 循环确定性走完,不依赖真 LLM,可进 CI。`playwright.config.ts` 已内置 `PLAYWRIGHT_BROWSERS_PATH`,零配置。新增 `npm run test:browser` / `test:browser:ui` 脚本
+- **`.claude/` 项目级 AI 工具链**:新增 12 个 skill(review-bugbot/review-security/create-skill/create-rule/create-hook/split-to-prs/babysit/webapp-testing/frontend-design/everything-claude-code/mcp-builder/check-res-urls/mermaid-to-png)+ 3 个 command(`/review` `/test-all` `/browser-test`)+ 更新 `browser-tester` agent(双模式:交互式探索 + 自动化回归)+ `.mcp.json` 新增 `fetch` MCP server(网页抓取,查文档用)
+- **`doc/refactor-selftest.md`**:refactor-module-extraction 自测记录文档(Step 1 自动化门禁 + Step 2 浏览器探索 + Step 3 高风险项验证,全部通过)
+
+### Fixed
+- **write 工具单 patch edit + 透传拦截器 → SCHEMA_INVALID**:`write({ value, patch })` 时,拦截器收到 `{ op, jsonPath, value }` 对象,若原样返回(透传),`payload = intercepted` 把整个对象当 value 写入 → schema 校验失败。修复:拦截器返回 `{ op, jsonPath, value }` 时取 `.value` 并同步 `patch.op/jsonPath`;返回纯值时直接用。新增 selftest 断言(sec-21.ts,631 项,原 630 +1)
+
+### Changed
+- **CLAUDE.md**:新增 §2.5 浏览器 E2E 测试层 + 测试矩阵加 `npm run test:browser` 列 + 发布前必跑顺序加 browser + Skills/Commands 表更新(含 browser-e2e-testing skill 和 /browser-test 命令)
+
 ## [2.14.0] - 2026-07-31
 
 ### Added

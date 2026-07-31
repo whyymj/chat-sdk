@@ -248,6 +248,16 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t7['write'], { value: 'b', patch: { op: 'append', jsonPath: 'items' } })
     assert(page7.items.length === 2 && page7.items[1] === 'B', 'write edit 模式拦截器 → 收到 value 并转换后落地(原 bug:edit 模式拦截器失效)')
 
+    // 修复 3:write edit 单 patch + 透传拦截器(返回 {op,jsonPath,value} 原样)→ 应取 .value 落地,不应把整个对象当 value(原 bug:payload=intercepted 导致 SCHEMA_INVALID)
+    const pagePassthrough: any = { title: 'old', components: [{ type: 'x', id: 'c1' }] }
+    const toolsPassthrough = createDataOps(
+      { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), id: z.string() })) }), bind: pagePassthrough, description: 'p-passthrough' },
+      { interceptors: { write: (payload) => payload } }, // 透传:原样返回 {op,jsonPath,value}
+    )
+    const tPassthrough = byName(toolsPassthrough)
+    r = await invoke(tPassthrough['write'], { value: '新标题', patch: { op: 'set', jsonPath: 'title' } })
+    assert(pagePassthrough.title === '新标题', '修复3: write edit 单 patch + 透传拦截器 → 取 .value 落地(原 bug:把 {op,jsonPath,value} 整个对象当 value 写入 → SCHEMA_INVALID)')
+
     // 修复 2:set 整对象 + interceptors.write 补充不可见字段 → 补充字段写回 bind(原 bug:schema strip + safeMerge 丢失补充)
     const pageSupp: any = { title: 'old', _internal: 'keep' }
     const toolsSupp = createDataOps(

@@ -380,6 +380,52 @@ stateDiagram-v2
 
 ---
 
+## ⑫ 模块抽离(源码组织 / 可维护性)
+
+> 单文件膨胀(createChatSdk 曾 1751 行 / dataOps 969 行)不利于维护与测试。`refactor-module-extraction` 把**纯函数**与**工厂/解析逻辑**抽到独立模块,原文件 import 复用,运行时行为零变化。纯重构,无契约改动。
+
+```mermaid
+flowchart TD
+  CCS["createChatSdk.ts<br/>(入口,1613 行)"]
+  DO["dataOps.ts (670)"]
+  UCM["useContextManager.ts (235)"]
+  subgraph sdkLayer["sdk/ 抽离(工厂 / 解析)"]
+    PB["promptBuilder"]
+    LR["llmResolver"]
+    CM["conflictManager"]
+    OR["optionsResolver"]
+    EV["events"]
+  end
+  subgraph toolsLayer["tools/ 抽离(纯函数)"]
+    JU["jsonUtils"]
+    SU["schemaUtils"]
+  end
+  CI["composables/contextIndex<br/>(纯函数)"]
+  CCS --> PB & LR & CM & OR & EV
+  DO --> JU & SU
+  UCM --> CI
+```
+
+| 抽离模块 | 来源 | 职责 | 关键导出 |
+|---|---|---|---|
+| `tools/jsonUtils.ts` | dataOps | 16 个零依赖纯函数(路径 / 克隆 / 序列化 / patch / hash) | `getByPath` / `setByPath` / `deepClone` / `hashValue` / `applyPatchToClone` ... |
+| `tools/schemaUtils.ts` | dataOps | 6 个 schema 白名单投影函数 | `getSchemaTopKeys` / `isPathAllowed` / `projectBySchema` ... |
+| `sdk/promptBuilder.ts` | createChatSdk | systemPrompt 拼装(身份 + data + rules) | `buildSystemPrompt` / `buildDataPrompt` / `DEFAULT_SYSTEM_PROMPT` |
+| `sdk/llmResolver.ts` | createChatSdk | LLM 能力解析 + 摘要 invoke | `resolveLlm` / `isChatModel` |
+| `sdk/conflictManager.ts` | createChatSdk | 冲突状态机(工厂) | `createConflictManager` / `ConflictManager` |
+| `sdk/optionsResolver.ts` | createChatSdk | storage / dialog 配置解析 | `resolveStorage` / `resolveDialogConfig` |
+| `sdk/events.ts` | createChatSdk | 事件系统(工厂) | `createSdkEvents` / `SdkEvents` |
+| `composables/contextIndex.ts` | useContextManager | 分词 / 估算 / 摘要 / 召回纯函数 | `tokenize` / `indexSummarize` / `recallRounds` |
+
+**要点:**
+- **纯函数模块**(jsonUtils / schemaUtils / contextIndex)零依赖,可独立 import + 白盒单测;为后续 change(cyrb53 / diffObjects / describeSchemaNode)建好骨架
+- **工厂模块**(conflictManager / events)用「emit getter 延迟求值」适配闭包时序(emit 晚于工厂定义);llmResolver 用结构化参数纯函数返回 `{modelCaps, summaryLlmInvoke}`,主 LLM 实例化 / `setLlm` 闭包仍留 createChatSdk(依赖运行时配置)
+- 顶层 `.` 入口导出不变;**subpath exports**(`./storage` / `./query` / `./llm`)开放按需引入(指向同一 dist + types,体积靠 bundler tree-shaking)
+- 行数变化:createChatSdk 1751→1613、dataOps 969→670、useContextManager 321→235;selftest 537→630、e2e 210 全过
+- **skillStore 桥接延后**:`userSkills` 被 12+ 处引用 + skillsMw / core.infoTick 闭包时序交错,完整抽离风险 > 收益,留独立 change
+
+---
+
 ## 关键特性
 
 | 维度 | 设计 |

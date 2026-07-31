@@ -34,6 +34,7 @@ npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,630 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,210 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读;不依赖真 LLM,可进 CI)
 ```
 
 ## 环境配置
@@ -51,13 +52,13 @@ src/core/                       # 通用 SDK 核心(框架无关)
 │   ├── middleware.ts           # Middleware 契约 + 执行器
 │   ├── todos.ts/skills.ts/memory.ts/permissions.ts/summarization.ts/retry.ts
 │   ├── subagent.ts/verify.ts/usageHints.ts
-├── sdk/                        # createChatSdk(命令式入口)/ defineTool
-├── tools/                      # dataOps / fetchDoc / dataSlotQuery
+├── sdk/                        # createChatSdk(命令式入口)/ defineTool / promptBuilder / llmResolver / conflictManager / optionsResolver / events(模块抽离,见 architecture ⑫)
+├── tools/                      # dataOps / fetchDoc / dataSlotQuery / jsonUtils / schemaUtils(纯函数抽离)
 ├── toolsets.ts                 # 内置工具集预设
 ├── backends/{vfs,storage,skillStore}.ts # 内存工作区 / 持久化存储 / skill 独立持久化
 ├── mcp/client.ts               # MCP client
 ├── llm/proxyLlm.ts              # 代理连接模块(防 apiKey 泄露:proxy 代理 / direct 直连)
-├── composables/                # useChat / useContextManager / useMarkdown
+├── composables/                # useChat / useContextManager / useMarkdown / contextIndex(压缩索引纯函数)
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 ├── presets.ts / types/index.ts / index.ts
 examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo/animation-demo/multi-agent-demo/proxy-demo)
@@ -180,6 +181,21 @@ npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),210 项断言
 
 覆盖 selftest 触不到的顶层 `return` 对象作用域(1.3.1 曾因顶层 return 引用 buildCore 内部变量致运行时 `ReferenceError`,由 e2e 捕获)。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。新增功能时按「新增功能测试同步约定」在对应模块文件追加用例,或新建模块并在 runner 注册。
 
+#### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
+```bash
+npm run test:browser  # Playwright + mock LLM,自动启 dev server,确定性 SSE 响应
+```
+> Claude Code 里也可用 `/browser-test` 斜杠命令一键跑(见 `.claude/commands/browser-test.md`);写新测试的模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
+
+**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 OpenAI 兼容 SSE 流(tool_calls + 文本),使 agent ReAct 循环确定性走完,不依赖真 LLM。`playwright.config.ts` 已内置 `PLAYWRIGHT_BROWSERS_PATH`,无需手动设 env。**与手动浏览器验证(下节 3)互补**:手动验体感,自动化验回归。
+**按 demo 拆分**:测试代码在 `tests/browser/<demo>.spec.ts`(7 项断言):
+- `page-demo.spec.ts`(2 项:read→write→read 标题 / theme 切换)
+- `human-confirm-demo.spec.ts`(2 项:两层确认——主动征询→选方案→写前确认→允许/拒绝)
+- `complex-demo.spec.ts`(3 项:列组件+edit patch 改 style+子路径读 / read 子路径→write 改 title / fields 裁剪)
+- 共享 mock/交互工具在 `tests/browser/_helpers.ts`(mockLlm SSE/fillInput/clickSend/clickByText/waitForAgentIdle/clearChat)
+
+覆盖 selftest/e2e 触不到的「浏览器 + ChatDialog + 真实 DOM 渲染」层。**改 ChatDialog 组件、dataOps 工具行为、确认/冲突 UI 后必跑**。新增 demo 时按「新增功能测试同步约定」新建 spec 文件。
+
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 ```bash
 npm run dev         # 启动(端口 3000;被占自动换)
@@ -212,16 +228,16 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 ```
 
 #### 测试矩阵(改 X → 必跑 Y)
-| 改动范围 | npm test | npm run test:e2e | 浏览器 demo | 真实 LLM |
-|---|---|---|---|---|
-| 核心模块(dataOps/vfs/中间件/存储) | ✅ | — | 改对应 demo 时 | — |
-| createChatSdk 顶层 API / AgentCore / 动态注册 / 默认提示词 | ✅ | ✅ | dynamic-demo | — |
-| UI 组件(ChatDialog/DebugDrawer) | — | — | ✅ | — |
-| 子 agent / MCP / verify 自纠 | ✅(逻辑层) | — | 对应 demo | ✅ |
-| 构建配置(vite/external) | — | ✅(用 dist) | plain.html(CDN) | — |
+| 改动范围 | npm test | npm run test:e2e | npm run test:browser | 浏览器 demo | 真实 LLM |
+|---|---|---|---|---|---|
+| 核心模块(dataOps/vfs/中间件/存储) | ✅ | — | 改 dataOps/确认流程时 | 改对应 demo 时 | — |
+| createChatSdk 顶层 API / AgentCore / 动态注册 / 默认提示词 | ✅ | ✅ | — | dynamic-demo | — |
+| UI 组件(ChatDialog/DebugDrawer) | — | — | ✅ | ✅ | — |
+| 子 agent / MCP / verify 自纠 | ✅(逻辑层) | — | — | 对应 demo | ✅ |
+| 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(630 全过) → `npm run test:e2e`(210 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(630 全过) → `npm run test:e2e`(210 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -288,17 +304,28 @@ createChatSdk({
 
 ## 项目 Skills(分发给使用者 + 维护者自用)
 
-本仓库提供两个 Agent Skill,供 Claude Code / Cursor 等 AI 工具加载使用。**注意公开范围不同**:
+本仓库提供多个 Agent Skill,供 Claude Code / Cursor 等 AI 工具加载使用。**注意公开范围不同**:
 
 | Skill | 位置 | 公开范围 | 触发场景 |
 |---|---|---|---|
 | `page-agent-sdk-integrate` | `skills/`(含入 npm 包 `files`) | ✅ **公开分发**(使用者 `npm i` 即可得) | 集成 SDK 进网页(选引入方式/声明 data+schema/配 llm/挂载/订阅事件/headless/排坑);含 `references/integration-prompt.md` 通用对接提示词模板(不装 skill 时复制给对接项目 AI) |
 | `page-agent-sdk-release` | `.claude/skills/`(不进 npm 包) | 🔒 **维护者自用**(仅仓库内) | 发布新版本(bump→build→test→推 gitee/github→npm publish→验证) |
+| `browser-e2e-testing` | `.claude/skills/`(不进 npm 包) | 🔒 **维护者自用**(仅仓库内) | 跑 Playwright 浏览器 E2E 测试(mock LLM,确定性);改 dataOps/ChatDialog/确认流程后主动使用 |
+| `openspec-*`(4 个) | `.claude/skills/`(不进 npm 包) | 🔒 **维护者自用**(仅仓库内) | OpenSpec 变更流程(propose/explore/apply/archive) |
 
 - **integrate** 面向集成方:使用者 `cp -R node_modules/page-agent-sdk/skills/page-agent-sdk-integrate ~/.claude/skills/` 或从 github 下载安装
 - **release** 面向维护者:含双远程职责/npm 2FA 凭据等内部信息,**不通过 npm 包分发**;留在仓库 `.claude/skills/` 供本项目 agent 工作时自用
+- **browser-e2e-testing** 面向维护者:文档化 `tests/browser/*.spec.ts` 的运行方式、mock LLM 原理、写新测试的模板;配套 `/browser-test` 命令一键跑
 - 二者均引用 `CLAUDE.md` / `doc/usage-guide*` / `examples/` / `demo/plain.html`,不重复正文,仅给操作流程
-- ⚠️ 区分:本仓库 `.claude/skills/openspec-*` = 开发本项目自用;`.claude/skills/page-agent-sdk-release` = 维护者发布自用;`skills/page-agent-sdk-integrate` = 分发给使用者
+- ⚠️ 区分:本仓库 `.claude/skills/openspec-*` = 开发本项目自用;`.claude/skills/page-agent-sdk-release` = 维护者发布自用;`.claude/skills/browser-e2e-testing` = 维护者测试自用;`skills/page-agent-sdk-integrate` = 分发给使用者
+
+### 项目 Commands(Claude Code 斜杠命令)
+
+| 命令 | 位置 | 用途 |
+|---|---|---|
+| `/browser-e2e` | `.claude/commands/browser-e2e.md` | 交互式浏览器探索(真 LLM,委派 browser-tester subagent,Playwright MCP 驱动);探索新功能/复现 bug 用 |
+| `/browser-test` | `.claude/commands/browser-test.md` | 自动化浏览器回归(mock LLM,跑 `tests/browser/*.spec.ts`);CI/发布前门禁用 |
+| `/opsx:*` | `.claude/commands/opsx/` | OpenSpec 变更流程命令 |
 
 ## 发布与引入
 

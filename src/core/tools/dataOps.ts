@@ -544,7 +544,20 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           } else if (intent === 'edit' && patches && patches.length) {
             // 批量:拦截器返回新 patches 数组(或原样)
             patchList = (intercepted && Array.isArray(intercepted)) ? (intercepted as any) : patches
+          } else if (intent === 'edit') {
+            // 单 patch edit:拦截器收到 { op, jsonPath, value },可能返回:
+            // ① 原样/修改后的 { op, jsonPath, value } → 取 .value,同步 patch.op/jsonPath
+            // ② 修改后的 value(非 { op, ... } 对象)→ 直接用
+            if (intercepted && typeof intercepted === 'object' && 'op' in (intercepted as any) && 'jsonPath' in (intercepted as any)) {
+              const ir = intercepted as any
+              if (ir.op) patch!.op = ir.op
+              if (ir.jsonPath !== undefined) patch!.jsonPath = ir.jsonPath
+              payload = ir.value
+            } else {
+              payload = intercepted
+            }
           } else {
+            // set 整体替换:拦截器收到完整 value,返回修改后的 value
             payload = intercepted
           }
         } catch (e) {

@@ -66,6 +66,21 @@ import { createChatSdk, z } from 'page-agent-sdk'
 </script>
 ```
 
+**Import only what you need (subpath exports)**: besides the top-level `page-agent-sdk`, three subpath entries scope your import to a single capability (the bundler tree-shakes the rest):
+
+| subpath | key exports | use case |
+|---|---|---|
+| `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | persistence layer only, no Agent |
+| `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + all jsonUtils / schemaUtils pure fns | JSON query / sandbox / path helpers |
+| `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | proxy connection to avoid leaking apiKey |
+
+```js
+import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
+import { getByPath, setByPath, hashValue } from 'page-agent-sdk/query' // jsonUtils pure fns
+```
+
+> All three subpaths currently resolve to the same dist + types (no multi-entry build yet) — clear semantics and per-entry CDN fetch; when a multi-entry build lands, your import paths won't change.
+
 ## 3. Quick start (3 min)
 
 Minimal example — let the Agent read/write `window.app`:

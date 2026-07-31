@@ -145,3 +145,11 @@ system prompt 的「可操作数据」段(从 `data.schema` 字段 `.describe()`
 ## Requirement: 运行时动态 memory 更新(memory)
 
 系统提供 `sdk.setMemory(text)`,集成方可在运行时更新持久指令 memory 文本。内部更新中间件持有的 memory 变量,下一轮 `augmentPrompt` 注入最新值;`setMemory('')` 清空(空串跳过注入)。`inspect().memory` 实时反映。不调用时 memory 保持创建时 `options.memory` 配置(向后兼容)。该机制支持「运行时切换业务上下文 / 追加业务约束」等场景,无需重建 agent。
+
+## Requirement: 通用工具模块独立可用(jsonUtils / schemaUtils / contextIndex)
+
+系统将 `dataOps.ts` 中零依赖的通用 JSON 操作纯函数(路径操作 / 克隆序列化 / 投影截断 / 原型污染防护 / patch 应用)抽离为独立模块 `tools/jsonUtils.ts`;将 schema 白名单投影逻辑抽离为 `tools/schemaUtils.ts`;将 `useContextManager.ts` 中的纯函数索引逻辑(分词 / 估算 / 摘要 / 召回)抽离为 `composables/contextIndex.ts`。抽出后的函数仍从顶层 `page-agent-sdk` 导出(现有 import 路径零改动),原文件改为从新模块 import。该抽离为纯重构,运行时行为零变化;抽出后的纯函数支持白盒单测(此前只能经工具调用间接黑盒测)。
+
+## Requirement: 按需引入 subpath exports(./storage / ./query / ./llm)
+
+系统在 `package.json` `exports` 中提供三个 subpath 入口:`./storage`(持久化存储模块:`createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError`)、`./query`(JSON 查询 / 沙箱模块:`jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils 纯函数)、`./llm`(代理连接模块:`createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` 类型)。三个 subpath 均指向同一 dist 文件 + 同一 types 文件(不动构建),实际体积靠 bundler tree-shaking(已设 `sideEffects: ["**/*.css"]`)。该机制提供语义清晰的按需入口;顶层 `.` 入口导出不变(向后兼容),subpath 为新增入口;未来切多入口构建时 import 路径零迁移。
