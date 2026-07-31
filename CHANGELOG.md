@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.15.1] - 2026-07-31
+
+### Fixed
+- **数组子项删除产生稀疏数组**:`delete_data` / `write(del)` / `edit(remove)` / `eval(patches remove)` 删数组元素(如 `components.0`)时,底层 `deleteByPath` 对数组元素用 `delete arr[i]`,留下 empty 槽(length 不减、元素不前移、`JSON.stringify` 渲染成 null,污染序列化 / `hashValue` / 持久化与 Vue reactive 渲染,LLM 删后 read 见 length 不符)。修复:父为数组且末段为数字索引时改用 `splice` 移除,一处改四入口自动修正;对象属性删除仍走 `delete`(语义不变)。schema `.min(n)` 约束此前因 length 不减形同虚设,修复后能正确拦截删过头
+- **白名单绕过(set_data / write(set) 未声明字段写回)**:schema 为 `ZodObject` 子集时顶层声明 key 是读写白名单(2.4+ 安全卖点),但 `set_data` / `write(set)` 在 `safeMerge`(只写声明字段)后,额外把 LLM 原始 `parsed` 里未声明字段直接赋值回 bind(无 schema 校验、无 `UNSAFE_KEYS` 过滤)—— LLM 在 value 里塞任意未声明字段就能写进 bind。修复:删除两处逐字相同的"未声明字段写回"块,bind 严格只接受 schema 声明字段;`interceptors.write` 转换/审计/拒绝已声明字段值的能力不变,但不再能绕白名单塞字段(可写字段请在 schema 声明)。安全默认收紧,属补漏校验(非破坏)
+
+### Tests
+- selftest:`sec-30.ts` 补 `deleteByPath` 数组 splice 白盒(length 递减 / 元素前移 / 无 empty 槽 + applyPatchToClone/Live remove 数组分支 + 对象 delete 语义不变);`sec-21.ts` 原白名单写回断言反转(未声明字段被挡,2.15.0 的"修复2"收窄)+ 三入口(delete_data / write del / edit remove)数组删除黑盒 + 连续删到 0 无空位。断言计数 630→642
+- e2e:`tests/e2e/data-slots.mjs` 补"数组子项删除 length 递减、连续删到 0 无空位"(dist 层)。断言计数 210→212
+
 ## [2.15.0] - 2026-07-31
 
 ### Added

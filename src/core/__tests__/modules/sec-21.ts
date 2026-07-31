@@ -258,7 +258,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(tPassthrough['write'], { value: '新标题', patch: { op: 'set', jsonPath: 'title' } })
     assert(pagePassthrough.title === '新标题', '修复3: write edit 单 patch + 透传拦截器 → 取 .value 落地(原 bug:把 {op,jsonPath,value} 整个对象当 value 写入 → SCHEMA_INVALID)')
 
-    // 修复 2:set 整对象 + interceptors.write 补充不可见字段 → 补充字段写回 bind(原 bug:schema strip + safeMerge 丢失补充)
+    // 白名单严格(fix-dataops-write-correctness):write(set) / set_data 的未声明字段一律丢弃,
+    // 即便 interceptors.write 补充或用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明;
+    // 拦截器改声明字段值仍生效,只是不能借机塞非声明字段)。2.15.0 曾把"补充字段写回"当修复,实为白名单绕过口子,此处收窄。
     const pageSupp: any = { title: 'old', _internal: 'keep' }
     const toolsSupp = createDataOps(
       { schema: z.object({ title: z.string() }), bind: pageSupp, description: 'p-supp' },
@@ -266,13 +268,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     )
     const tSupp = byName(toolsSupp)
     r = await invoke(tSupp['write'], { value: { title: 'new' } })
-    assert(pageSupp.title === 'new' && pageSupp._internal === 'auto-supplied', '修复2: write(set) 整对象 + 拦截器补充不可见字段 → 补充字段写回 bind(不丢)')
-    // set_data 同样行为(用户显式传不可见字段也写回,白名单 merge 语义防误删但不阻显式传值)
+    assert(pageSupp.title === 'new' && pageSupp._internal === 'keep', '白名单严格: write(set) + 拦截器补充非声明字段 → 补充字段被挡(_internal 保持 keep 而非 auto-supplied);声明字段 title 正常写入')
+    // set_data 同样:显式传非声明字段被挡(白名单语义一致)
     const pageSupp2: any = { title: 'old', _internal: 'keep' }
     const toolsSupp2 = createDataOps({ schema: z.object({ title: z.string() }), bind: pageSupp2, description: 'p-supp2' })
     const tSupp2 = byName(toolsSupp2)
     r = await invoke(tSupp2['set_data'], { value: { title: 'new2', _internal: 'user-supplied' } })
-    assert(pageSupp2.title === 'new2' && pageSupp2._internal === 'user-supplied', '修复2: set_data 整对象显式传不可见字段 → 写回 bind(白名单 merge 防误删,显式传值生效)')
+    assert(pageSupp2.title === 'new2' && pageSupp2._internal === 'keep', '白名单严格: set_data 显式传非声明字段 → 被挡(_internal 保持 keep 而非 user-supplied)')
 
     // 字符串 value parse 一致性(统一启发式)
     const page8: any = { count: 0, list: [] as any[] }
@@ -354,5 +356,28 @@ export async function run(ctx: TestCtx): Promise<void> {
     // edit 声明字段子路径 → 允许
     r = await invoke(wlt['edit_data'], { op: 'set', jsonPath: 'title', value: '"允许改"' })
     assert(bigJson.title === '允许改', '白名单 edit 声明字段子路径 → 允许写入')
+
+    // 数组子项删除 splice(fix-dataops-write-correctness):三入口删数组元素 → length 递减、元素前移、无稀疏空位
+    const arrSchema = z.object({ components: z.array(z.object({ id: z.number() })) })
+    const mkArr = () => ({ components: [{ id: 1 }, { id: 2 }, { id: 3 }] })
+    // delete_data
+    const ap1 = mkArr()
+    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap1, description: 'ap1' }))['delete_data'], { jsonPath: 'components.0' })
+    assert(ap1.components.length === 2 && ap1.components[0].id === 2 && ap1.components[1].id === 3, '数组删除 splice: delete_data components.0 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽')
+    // write del
+    const ap2 = mkArr()
+    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap2, description: 'ap2' }))['write'], { patch: { op: 'remove', jsonPath: 'components.0' }, del: true })
+    assert(ap2.components.length === 2 && ap2.components[0].id === 2, '数组删除 splice: write del components.0 → length 3→2、元素前移')
+    // edit remove
+    const ap3 = mkArr()
+    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap3, description: 'ap3' }))['edit_data'], { op: 'remove', jsonPath: 'components.0' })
+    assert(ap3.components.length === 2 && ap3.components[0].id === 2, '数组删除 splice: edit remove components.0 → length 3→2、元素前移')
+    // 连续删空到 0 个元素(length 一路递减,不留空位;schema 无 .min() 约束允许删空)
+    const ap4 = mkArr()
+    const at4 = byName(createDataOps({ schema: arrSchema, bind: ap4, description: 'ap4' }))
+    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
+    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
+    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
+    assert(ap4.components.length === 0, '数组连续删除: 3→2→1→0,length 一路递减无残留空位')
   }
 }

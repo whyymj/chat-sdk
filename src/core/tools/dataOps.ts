@@ -204,13 +204,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (allowKeys) {
           // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
           safeMerge(bindRef as Record<string, any>, res.data)
-          // 修复:写回 interceptors.write 补充的(或用户显式传入的)不可见字段 —— schema.safeParse 会 strip 未声明字段,safeMerge 也不会写入,导致补充无效。此处从原始 parsed 中取不在 allowKeys 的字段写回 bind(信任集成方拦截器/用户显式传值)
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            const setKeys = new Set(allowKeys)
-            for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
-              if (!setKeys.has(k)) (bindRef as Record<string, any>)[k] = v
-            }
-          }
         } else {
           restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
         }
@@ -635,13 +628,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (allowKeys) {
           // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
           safeMerge(bindRef as Record<string, any>, res.data)
-          // 修复:写回 interceptors.write 补充的(或用户显式传入的)不可见字段 —— schema.safeParse 会 strip 未声明字段,safeMerge 也不会写入,导致补充无效。此处从原始 parsed 中取不在 allowKeys 的字段写回 bind(信任集成方拦截器/用户显式传值)
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            const setKeys = new Set(allowKeys)
-            for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
-              if (!setKeys.has(k)) (bindRef as Record<string, any>)[k] = v
-            }
-          }
         } else {
           restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
         }

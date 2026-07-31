@@ -32,12 +32,28 @@ export async function run(ctx: TestCtx): Promise<void> {
   setByPath({}, '__proto__.polluted', 123)
   assert(({} as any).polluted === undefined, 'setByPath → 原型污染路径不写入(防护生效)')
 
-  // deleteByPath(对象路径;数组删除的 sparse-array 修复见 fix-dataops-write-correctness)
+  // deleteByPath(对象属性 → delete;数组元素 → splice 避免稀疏数组,fix-dataops-write-correctness)
   const d: any = { a: { b: 1 } }
   assert(deleteByPath(d, 'a.b') === true, 'deleteByPath → 删除存在路径返 true')
   assert(d.a.b === undefined, 'deleteByPath → 已删除')
   assert(deleteByPath(d, 'a.b') === false, 'deleteByPath → 删除不存在路径返 false')
   assert(deleteByPath({}, '__proto__.x') === false, 'deleteByPath → 原型污染路径返 false')
+  // 数组元素 → splice(length 递减、元素前移、无 empty 槽);原 delete 会留稀疏空位
+  const arr: any[] = [{ id: 1 }, { id: 2 }, { id: 3 }]
+  assert(deleteByPath(arr, '0') === true, 'deleteByPath → 数组元素删除返 true')
+  assert(arr.length === 2 && arr[0].id === 2 && arr[1].id === 3, 'deleteByPath → 数组 splice:删 [0] 后 length 3→2、元素前移([1,2,3]→[2,3])')
+  assert(0 in arr && 1 in arr && !(2 in arr), 'deleteByPath → 数组删除无稀疏空位(索引连续,无 empty 槽)')
+  // applyPatchToClone/Live remove 数组分支(edit/eval patches remove 两入口汇聚于此)
+  const cArr: any = { items: [1, 2, 3] }
+  assert(applyPatchToClone(cArr, 'remove', 'items.1') === null, 'applyPatchToClone(remove 数组) → 成功返 null')
+  assert(cArr.items.length === 2 && cArr.items[0] === 1 && cArr.items[1] === 3, 'applyPatchToClone(remove 数组) → splice 删中间项、前移')
+  const liveArrDel: any = { items: [1, 2, 3] }
+  applyPatchToLive(liveArrDel, 'remove', 'items.0', undefined)
+  assert(liveArrDel.items.length === 2 && liveArrDel.items[0] === 2, 'applyPatchToLive(remove 数组) → splice 删首项、前移')
+  // 对象属性删除仍走 delete(语义不变)
+  const obj: any = { x: 1, y: 2 }
+  deleteByPath(obj, 'x')
+  assert(!('x' in obj) && obj.y === 2, 'deleteByPath → 对象属性 delete 语义不变(x 删除,y 保留)')
 
   // maybeParseValue
   assert((maybeParseValue('{"a":1}').parsed as any)?.a === 1, 'maybeParseValue → JSON 对象字符串解析')

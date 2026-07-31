@@ -153,3 +153,11 @@ system prompt 的「可操作数据」段(从 `data.schema` 字段 `.describe()`
 ## Requirement: 按需引入 subpath exports(./storage / ./query / ./llm)
 
 系统在 `package.json` `exports` 中提供三个 subpath 入口:`./storage`(持久化存储模块:`createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError`)、`./query`(JSON 查询 / 沙箱模块:`jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils 纯函数)、`./llm`(代理连接模块:`createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` 类型)。三个 subpath 均指向同一 dist 文件 + 同一 types 文件(不动构建),实际体积靠 bundler tree-shaking(已设 `sideEffects: ["**/*.css"]`)。该机制提供语义清晰的按需入口;顶层 `.` 入口导出不变(向后兼容),subpath 为新增入口;未来切多入口构建时 import 路径零迁移。
+
+## Requirement: 数组子项删除用 splice(避免稀疏数组)
+
+当 `delete_data` / `write(del)` / `edit(remove)` / `eval(patches remove)` 删除数组元素(如 `components.0`)时,底层 `deleteByPath` 对「父为数组且末段路径为数字索引」的路径用 `Array.prototype.splice` 移除元素(length 递减、后续元素前移、无 empty 槽);对对象属性仍用 `delete`(原语义不变)。该修复消除原先 `delete arr[i]` 产生的稀疏数组(empty 槽导致 `JSON.stringify` 渲染为 null、`hashValue` / 持久化污染、Vue reactive 数组空位、LLM 删除后 read 见 length 不符的认知断裂)。schema 为 `z.array(...).min(n)` 时,删除后元素数 < n 会被整体 `safeParse` 拦截(集成方用 min 防删空);此前 `delete` 不减 length,min 约束形同虚设,修复后方能正确生效。
+
+## Requirement: 白名单严格写(未声明字段一律丢弃)
+
+当 `data.schema` 为 `ZodObject` 时,`set_data` / `write(set)` 整体写入只接受 schema 声明的顶层字段(`safeMerge` 语义);LLM 原始输入(`parsed`)里的未声明字段一律丢弃,即便经 `interceptors.write` 补充或用户显式传入也不写回 bind。可写字段须在 schema 声明(白名单由 schema 派生)。`interceptors.write` 仍可转换 / 审计 / 拒绝已声明字段的值,但不能作为绕过白名单塞入未声明字段的通道。该收紧闭合了原先"未声明字段经写回块无校验进入 bind"的安全口子,与 `read` 投影 / `isPathAllowed` 的白名单语义一致。

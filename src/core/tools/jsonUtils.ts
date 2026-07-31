@@ -57,8 +57,12 @@ export function deleteByPath(obj: unknown, path: string): boolean {
   }
   const last = keys[keys.length - 1]
   if (cur == null || !(last in cur)) return false
-  // 已知问题:数组元素用 delete 产生稀疏数组(不 shift 后续索引),由 fix-dataops-write-correctness 改为 splice
-  delete cur[last]
+  // 数组元素 → splice 移除(避免 delete 产生稀疏数组,元素前移、length 递减);对象属性 → delete(原语义)
+  if (Array.isArray(cur) && /^\d+$/.test(last)) {
+    cur.splice(Number(last), 1)
+  } else {
+    delete cur[last]
+  }
   return true
 }
 

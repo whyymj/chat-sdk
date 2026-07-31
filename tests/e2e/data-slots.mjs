@@ -56,5 +56,23 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:data] 数组子项删除 splice:length 递减、元素前移、无稀疏空位(fix-dataops-write-correctness)')
+  {
+    const { createDataOps } = await import('../../dist/page-agent-sdk.js')
+    const bind = { components: [{ id: 1 }, { id: 2 }, { id: 3 }] }
+    const tools = createDataOps({
+      schema: z.object({ components: z.array(z.object({ id: z.number() })) }),
+      bind,
+      description: '数组组件',
+    })
+    const byName = (xs) => Object.fromEntries(xs.map((t) => [t.name, t]))
+    const t = byName(tools)
+    await t.delete_data.invoke({ jsonPath: 'components.0' })
+    assert(bind.components.length === 2 && bind.components[0].id === 2 && bind.components[1].id === 3, 'delete_data 删数组首项 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽')
+    await t.delete_data.invoke({ jsonPath: 'components.0' })
+    await t.delete_data.invoke({ jsonPath: 'components.0' })
+    assert(bind.components.length === 0, 'delete_data 连续删 → 2→1→0,length 一路递减无残留空位')
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
