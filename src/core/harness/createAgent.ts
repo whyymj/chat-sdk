@@ -46,11 +46,17 @@ export interface DebugLog {
   data: any
 }
 
-/** 检测模型把工具调用写成文本(伪 XML/标签)而非走标准 tool_calls 通道的异常格式。导出供测试 */
+/** 检测模型把工具调用写成文本(伪 XML/标签/DeepSeek 内部标记)而非走标准 tool_calls 通道的异常格式。导出供测试。
+ *  实测:DeepSeek-v4 在长 tool-call 链(10+ 轮连续工具调用)下,function-calling 会退化成正文里的
+ *  <｜｜DSML｜｜>invoke 等内部标记(系统识别不到 → 未执行 → 静默当 final);此处一并捕获,触发格式自纠。 */
 export function detectGarbledToolCall(content: string): boolean {
   if (!content) return false
-  // 仅匹配明确的"伪工具调用标签",避免误判正常文本
-  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+  // 仅匹配明确的"伪工具调用标签 / DeepSeek 内部 tool 标记",避免误判正常文本:
+  //  - <｜tool_calls｜> / <｜｜xxx tool_call:DeepSeek tool_calls 标记
+  //  - <｜｜?DSML｜｜?>:DeepSeek-v4 DSML(内部 function-calling 格式)标记,长链下易退化泄漏
+  //  - <｜tool[_a-z]*｜>:DeepSeek tool 段标记变体(<｜tool｜>/<｜tool_begin｜> 等)
+  //  - <invoke name=> / <tool_call> / <function_call>:通用伪 XML 工具调用
+  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML｜｜?>|<｜tool[_a-z]*｜>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
 }
 
 export interface DebugLog {
@@ -435,17 +441,26 @@ export function createAgent(options: CreateAgentOptions) {
         }
 
         if (!response.toolCalls.length) {
-          // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / 伪 XML <invoke> 等)而非标准 tool_calls,
-          // 系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环
-          if (formatRetries < maxFormatRetries && detectGarbledToolCall(response.content)) {
+          const garbled = detectGarbledToolCall(response.content)
+          // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / <｜｜DSML｜｜> / 伪 XML <invoke> 等)
+          // 而非标准 tool_calls,系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环
+          if (garbled && formatRetries < maxFormatRetries) {
             formatRetries += 1
             log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
-            currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签,如 <｜tool_calls｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
+            currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签/DSML 标记,如 <｜tool_calls｜>、<｜｜DSML｜｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
             continue
           }
+          // 重试耗尽仍 garbled:不静默 final——emit observable error 让用户/集成方知晓任务可能未完成。
+          // 实测痛点:DeepSeek 长 tool-call 链持续退化,重试 maxFormatRetries 次仍 DSML,此前直接 done 无任何提示,
+          // UI 以为 agent "答完了"但其实没干活。此处 emit error(observable 不中断,仍 return content 让 UI 显示原文)。
+          if (garbled) {
+            const msg = `模型连续 ${maxFormatRetries} 次输出无法解析的工具调用格式(DSML/伪标签),任务可能未完成。请重试或换模型。`
+            log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
+            onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } })
+          }
           // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
-          // 预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
-          if (maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
+          // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
+          if (!garbled && maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
             const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
             if (feedback) {
               lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
