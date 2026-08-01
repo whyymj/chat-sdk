@@ -50,7 +50,9 @@
     "test:e2e": "node tests/e2e-integration.mjs",
     "test:exports": "node tests/exports-consistency.mjs",
     "test:types": "tsc --noEmit -p tsconfig.test.json",
-    "test:size": "node tests/size-check.mjs"
+    "test:size": "node tests/size-check.mjs",
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui"
   },
   "keywords": [
     "ai",

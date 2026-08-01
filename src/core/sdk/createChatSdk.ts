@@ -54,6 +54,8 @@ import type { VfsFile, HarnessState, Mission } from '../harness/state'
 import { createInitialState } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
+import { domTools } from '../tools/domTool'
+import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
@@ -136,6 +138,12 @@ export interface ChatSdkOptions {
   augmentSystem?: (ctx: SystemAugmentContext) => string | undefined
   /** 用户自定义工具(散工具 / 展开的预设数组 / 模块 default,皆可;与内置工具合并) */
   tools?: StructuredToolInterface[]
+  /**
+   * 宿主动作(胜任自动化):集成方注册的页面操作(保存/发布/预览/导出等),SDK 自动包成命名 tool 供 agent 调用。
+   * 每个动作 = { description, run, params? };LLM 直接看到 save_draft/publish 等命名 tool(无需 trigger_action 中转)。
+   * agent 改完数据 → 调 save_draft 保存 → publish 发布,配合 get_dom 形成"改数据→看 DOM→触发动作"闭环。
+   */
+  actions?: ActionMap
   /** 声明式 skill(渐进式披露) */
   skills?: SkillSpec[]
   /**
@@ -206,6 +214,7 @@ export interface ChatSdkOptions {
     memory?: boolean         // AGENTS.md 持久指令
     subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
+    domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -652,13 +661,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools)
+  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
   const userTools: StructuredToolInterface[] = [
     ...(options.tools || []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
+  // 宿主动作(actions):集成方注册的页面操作 → 自动包成命名 tool;异常隔离(run 抛错回灌 LLM 不崩)
+  const actionTools: StructuredToolInterface[] = actionsToTools(options.actions ?? {})
+  actionTools.forEach((t) => toolSources.set(t.name, 'action'))
   // mcpTools 可变:mount 时收集,setTools 重建 extraTools 时纳入
   const mcpTools: StructuredToolInterface[] = []
   // 人工确认(主动侧):默认开启(不猜测,不确定/多方案/高风险时主动征询);顶层 humanConfirm:false 或 approval.humanConfirmTool:false 关闭
@@ -695,14 +707,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   let allTools: StructuredToolInterface[] = [
     ...builtinTools,
     ...userTools,
+    ...actionTools,
     ...(humanConfirmTool ? [humanConfirmTool] : []),
     ...checkpointTools,
   ]
-  /** 重建 extraTools(传 createAgent 的 tools):builtin + userTools + humanConfirm + checkpoint + mcp */
+  /** 重建 extraTools(传 createAgent 的 tools):builtin + userTools + actions + humanConfirm + checkpoint + mcp */
   function rebuildExtraTools(): StructuredToolInterface[] {
     return [
       ...builtinTools,
       ...userTools,
+      ...actionTools,
       ...(humanConfirmTool ? [humanConfirmTool] : []),
       ...checkpointTools,
       ...mcpTools,
@@ -1190,6 +1204,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ id: t.id, content: t.content, status: t.status })),
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
+        actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
           enabled: !!subagentMw,
           maxDepth: options.subagent?.maxDepth ?? 1,

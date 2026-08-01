@@ -144,6 +144,8 @@ export interface AgentInfo {
   planPhase?: { inPlanning: boolean; rounds: number; limit: number };
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: Mission;
+  /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
+  actions?: Record<string, { description: string; hasParams: boolean }>;
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
@@ -391,6 +393,17 @@ export interface SystemAugmentContext {
   data?: DataConfig;
 }
 
+/** 宿主动作定义:集成方注册的页面操作(保存/发布/预览/导出等),SDK 自动包成命名 tool */
+export interface ActionDef {
+  /** 动作描述(给 LLM 看) */
+  description: string;
+  /** 执行函数;接收 params schema 解析的参数,返回值序列化回灌 LLM */
+  run: (args: Record<string, unknown>) => unknown | Promise<unknown>;
+  /** 可选参数 schema(ZodObject);不传 = 无参 tool */
+  params?: any;
+}
+/** actions 配置:动作名 → 定义(动作名即 tool 名,须合法标识符) */
+export type ActionMap = Record<string, ActionDef>;
 export interface ChatSdkOptions {
   container?: string | HTMLElement;
   /** UI:'default'(内置 ChatDialog)/ false(headless 不渲染,自建 UI) */
@@ -416,6 +429,8 @@ export interface ChatSdkOptions {
    */
   augmentSystem?: (ctx: SystemAugmentContext) => string | undefined;
   tools?: any[];
+  /** 宿主动作:集成方注册的页面操作(保存/发布/预览等),SDK 自动包成命名 tool;LLM 直接看到命名 tool */
+  actions?: ActionMap;
   skills?: SkillSpec[];
   /** 用户创建 skill 的独立持久化存储(与 storage 选项分离)。默认 `{ backend: 'indexed' }`(即使 storage:false 也持久化);`false` 关闭;`id` 手动指定同一 id 可跨页面/跨 agent 复用 */
   skillStorage?: SkillStoreConfig | false;
@@ -458,7 +473,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -725,9 +740,20 @@ export interface SdkEvents {
   hook(handler: (e: any) => void): () => void;
 }
 export declare function createSdkEvents(onEvent?: (e: any) => void): SdkEvents;
-export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean } | undefined, dataOps: any[], fetchDocs: any[]): any[];
+export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean; domInspect?: boolean } | undefined, dataOps: any[], fetchDocs: any[], dom?: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
 export declare const fetchDocTools: any[];
+/** DOM 读取工具 get_dom(随 capabilities.domInspect 装配,opt-in) */
+export declare const domTools: any[];
+export declare const domToolsStatic: any[];
+export declare const getDomTool: any;
+/** 纯函数:DOM Element → 结构化 DomNode(可单测,与浏览器解耦) */
+export declare function domToStructure(node: Element | null, opts: { depth: number; attrs?: string[]; includeText?: boolean }): DomNode | null;
+/** 把集成方注册的 actions 转成命名 tool 数组(每个 action 一个 tool) */
+export declare function actionsToTools(actions: ActionMap): any[];
+export declare function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean }>;
+export interface DomNode { tag: string; attrs: Record<string, string>; text?: string; children?: DomNode[]; childCount?: number }
+export interface DomReadOptions { depth: number; attrs?: string[]; includeText?: boolean }
 export declare const fetchTools: any[];
 export declare function defineDataToolset(config: DataConfig, opts?: DataOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;

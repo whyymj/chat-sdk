@@ -118,4 +118,47 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     const dialogText = await page.textContent('.chat-dialog')
     expect(dialogText).toContain('组件')
   })
+
+  /**
+   * 手动配置面板渲染 + agent publish action(胜任自动化):
+   * 配置面板可见(JSON 编辑器 + 发布按钮)→ agent 调 publish action → 发布状态条更新
+   */
+  test('配置面板渲染 + agent publish action → 发布状态更新', async ({ page }) => {
+    await expect(page.locator('.config-panel')).toBeVisible()
+    await expect(page.locator('.config-panel .json-editor')).toBeVisible()
+    await expect(page.locator('.config-panel button', { hasText: '发布' })).toBeVisible()
+
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'publish', arguments: {} }] },
+      { text: '已发布页面。' },
+    ])
+    await fillInput(page, '帮我发布页面')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // publish action 副作用:配置面板状态条显示「已发布」
+    const status = await page.textContent('.config-panel .status')
+    expect(status, 'publish action → publishStatus 更新为「已发布」').toContain('已发布')
+  })
+
+  /**
+   * agent save_draft(宿主动作)+ get_dom(读渲染 DOM)闭环:
+   * save_draft → 草稿写 localStorage;get_dom → 返回导航栏 DOM 结构(验证 agent 能"看"渲染结果)
+   */
+  test('agent save_draft → localStorage + get_dom 读渲染 DOM', async ({ page }) => {
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'save_draft', arguments: {} }] },
+      { tool_calls: [{ name: 'get_dom', arguments: { selector: '.navbar-title', depth: 0 } }] },
+      { text: '已保存草稿并查看了导航栏 DOM。' },
+    ])
+    await fillInput(page, '先保存草稿,再看看导航栏标题的 DOM 结构')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // save_draft action 副作用:草稿写入 localStorage(序列化 page)
+    const draft = await page.evaluate(() => localStorage.getItem('complex-demo-draft'))
+    expect(draft, 'save_draft action → 草稿写入 localStorage').toBeTruthy()
+    expect(draft).toContain('components')
+    // 两轮 tool 调用(save_draft + get_dom)都触发 → agent 能调宿主动作 + 读 DOM
+    expect(calls(), 'save_draft + get_dom 两轮 tool 调用都触发').toBeGreaterThanOrEqual(2)
+  })
 })

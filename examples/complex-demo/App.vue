@@ -13,6 +13,7 @@ import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
 import EditableBanner from '../_shared/EditableBanner.vue'
 import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
+import PageConfigPanel from './PageConfigPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
 console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
@@ -23,6 +24,25 @@ const pageObj = reactive({
   components: initialPage.components.map((c) => ({ ...c })),
 })
 ;(window as any).page = pageObj
+
+// 发布状态(发布后显示时间戳,PageConfigPanel + agent publish action 共用)
+const publishStatus = ref('')
+/** 保存草稿:序列化 page → localStorage(供 PageConfigPanel 保存按钮 + agent save_draft action 复用) */
+function saveDraft(): string {
+  try { localStorage.setItem('complex-demo-draft', JSON.stringify({ title: pageObj.title, components: pageObj.components })) } catch { /* localStorage 不可用时静默 */ }
+  return `草稿已保存(${pageObj.components.length} 个组件)。`
+}
+/** 发布页面(模拟):记录发布时间戳 */
+function publish(): string {
+  const ts = new Date().toLocaleString()
+  publishStatus.value = `已发布 @ ${ts}`
+  return `页面已发布(${pageObj.components.length} 个组件)@ ${ts}。`
+}
+/** 重置到 initialPage(splice 保留 reactive 引用) */
+function resetPage(): void {
+  pageObj.title = initialPage.title
+  pageObj.components.splice(0, pageObj.components.length, ...initialPage.components.map((c) => ({ ...c })))
+}
 
 const root = ref<HTMLElement>()
 const agentRef = ref<ChatSdk | null>(null)
@@ -47,6 +67,16 @@ onMounted(() => {
     appendReliableWriteRules: true,
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     data: { schema: pageSchema, bind: pageObj },
+    // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
+    capabilities: { domInspect: true },
+    actions: {
+      save_draft: { description: '保存当前页面为草稿(序列化 page 到 localStorage)。用户要求保存/存草稿时调用,无需参数。', run: saveDraft },
+      publish: { description: '发布当前页面(模拟发布,记录发布时间戳)。用户要求发布/上线/生效时调用,无需参数。', run: publish },
+      refresh_preview: {
+        description: '返回当前页面概况(标题 + 组件数)。用户询问页面状态/有多少组件时调用。',
+        run: () => `当前页面「${pageObj.title}」共 ${pageObj.components.length} 个组件。`,
+      },
+    },
     // interceptors.write:agent push 新组件时自动补 id(若未设)—— agent 无需关心 id 生成,拦截器兜底
     // (演示拦截器补充能力:即使 agent 只传 { type:'heading', props:{...} },落地时也有稳定 id 供锚点/调试)
     interceptors: {
@@ -88,6 +118,7 @@ onUnmounted(() => agent?.unmount())
   <div class="layout">
     <aside class="pane pane-left">
       <DynamicReconfigPanel :agent="agentRef" />
+      <PageConfigPanel :page="pageObj" :on-save="saveDraft" :on-publish="publish" :on-reset="resetPage" :publish-status="publishStatus" />
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
         <PageRenderer />
       </EditableBanner>
