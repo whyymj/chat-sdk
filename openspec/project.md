@@ -23,12 +23,30 @@
 3. **归档**:实现完成后将 `specs/` 增量合入 `openspec/specs/`(系统真相源),change 移入 `openspec/changes/archive/`。
 
 ## 进行中的 change
-- `2026-07-31-evolve-default-toolset/`:默认(simple)数据工具集演进(合并原总纲 Change 11/12/13)—— ① 精简:`snapshot_data` + `list_data_snapshots` 从 simple 移 advanced(被自动快照 + restore_data + history_data 覆盖);② 补缺:新增 `history_data`(只读查看快照,填 list 元信息 / restore 破坏性之间的空档)进 simple、新增 `diff_data`(差异对比,verify/冲突诊断)进 advanced;③ 增强:`read` 多路径(`jsonPaths`)、`write` dryRun 预检。simple 从 8→7 工具(去低价值补高价值),advanced 全暴露。minor,向后兼容(advanced/minimal 不受影响;精简与补缺配套防 simple 丢"看历史"能力)。三期:精简+history_data(核心配套)→ read/write 增强 → diff_data。
-- `2026-07-31-unify-error-model/`:错误处理三档模型(`recoverable` 回灌 LLM / `fatal` emit+中断 / `observable` 记 trace 不中断)+ 各层(工具/中间件/agent/emit)按 `routeError` 纯函数路由 + `onEvent('error')` payload 结构化(severity/code,向后兼容)。期一 patch(内部路由)/ 期二 minor(payload 扩展)。与 observability 协同。
-- `2026-07-31-observability-structured-tracing/`:可观测性升级 —— `debugLogs` 扁平数组升级为结构化 `TraceSpan` 树(round/model/tool/compression,带 timing/status/attributes)+ `getTraceMetrics` 纯函数聚合(轮延迟/工具成功率/token/重试/压缩);`inspect().trace` + `onEvent('trace')` 外发;DebugDrawer 树形渲染。`debugLogs` 保留作兼容视图。minor(新增可观测,向后兼容)。建议 unify-error-model 之后(span status 复用 severity)。
-- `2026-07-31-expose-schema-constraints/`:字段约束可见性(evolve 留的后续)—— `describeSchemaNode` 纯函数结构化提取 zod 约束(类型/min/max/enum/optional/default/嵌套 shape);三处消费:`extractSchemaHint` 升级(systemPrompt「可操作数据」段带约束)+ `read` 概览段带约束(子路径读值不带)+ `schema_data` 工具(advanced)查任意路径完整约束。让 LLM 写前即知规则,减试错轮次。minor(信息增强)。建议 evolve 之后。
+
+(无。真 LLM 审计收口完成,见最近完成 `followup-from-live-llm-audit`。暂缓项见下;新需求另行立项。)
+
+## 已评估暂缓的 change
+
+> 经 2026-08-01 评估,以下 change **暂缓 / 缩水 / 拆分**实施(不占进行中心智)。决策依据、核心理由、重启触发条件、缩水替代方案见 [`deferred.md`](./deferred.md);各 change proposal 顶部亦加 `⏸` 标注。
+>
+> 核心判断:这些多为「复杂任务 + 超大 JSON 编排」方向的规划,与 SDK「轻量页面 JSON 操作 Agent」定位有张力,或属绑定一坨的重型演进 —— 无真需求驱动前止损暂缓。
+
+| change | 结论 | 一句话理由 |
+|---|---|---|
+| `observability-structured-tracing` | ❌ 缩水 | TraceSpan 树 + APM 是后端框架需求,debugLogs 已够调试;只留 `getTraceMetrics` 想法 |
+| `add-mission-anchor` | ⏸ 暂缓 | LLM 自律问题非框架 invariant;4-Phase 重型路线,启发式 capture 误判风险高 |
+| `add-cross-round-working-memory` | ⏸ 暂缓 | 绑定 C 组;先扩 `preserveLastToolResults` 默认(软改进)替代 |
+| `add-structured-todos-and-subagent-writes` | ⏸ 暂缓 | 「子 agent 可写」动只读隔离安全边界;todos 依赖图 LLM 难可靠维护 |
+| `add-data-paging-and-chunked-write`(draft 部分) | 🟡 部分完成 | read 分页/eval 子树**已并入 evolve-default-toolset**;`draft_write/commit` 暂缓(超大 JSON 场景存疑) |
 
 ## 最近完成的 change(已归档)
+- `archive/2026-08-01-followup-from-live-llm-audit/`:真 LLM 全覆盖审计(4 agent:complex/人工确认+嵌套/子agent+多agent/RAG)收口 —— ① 修 `isPathAllowed`/`getSchemaAtPath` discriminatedUnion pre-existing bug(误当 ZodArray 致 `components.N.props.X` 深层路径误 PATH_DENIED;严格判 + union 降级开放,safeParse 兜底;sec-31 +8 断言);② browser flaky 修(`_helpers` clearStorage 入 clearChat + waitForAgentIdle timeout 30→60s,跨 spec 状态污染);③ usageHints 补 history_data/diff_data 提示;④ 补 `nested-demo.spec.ts` + `error-recovery.spec.ts` + `rag-demo.spec.ts` + page-demo offset 翻页用例(browser 7→15,连跑 2 次稳);⑤ planner-demo systemPrompt 加"收到方案必须 write 落地"。selftest 780→782、browser 7→15(2 次稳)。
+- `archive/2026-08-01-refine-dataops-reachability/`:dataOps 精修(内部,未发布)—— read 概览去约束(与 systemPrompt 去重复,约束靠 systemPrompt + schema_data)+ usageHints 补分页/多路径/dryRun(让 evolve 能力 LLM 可达)+ describeSchemaNode zod 版本防御(adapter 集中声明 + dev warn 去重)。微行为变化。
+- `archive/2026-08-01-fix-unify-error-half-done/`:unify-error 缩水(内部,未发布)—— routeError 降级为导出工具 + 扩展口注释(框架内置 catch 未消费),middleware 删空头契约承诺。零行为变化,为未来 wrapToolCall 自动路由补全留低改动面。
+- `archive/2026-07-31-expose-schema-constraints/`:字段约束可见性(minor,未发布)—— `describeSchemaNode` 纯函数结构化提取 zod 4 字段约束;zod 4.4+ adapter。两处消费(refine 后):`extractSchemaHint` → systemPrompt「可操作数据」段带约束 + `schema_data({ jsonPath? })` 工具(advanced)。LLM 写前即知规则,减试错轮次。新增导出 describeSchemaNode/renderSchemaHint/renderSchemaOverview/formatConstraints + SchemaNodeDesc。
+- `archive/2026-07-31-evolve-default-toolset/`:默认(simple)工具集演进(minor,未发布)—— ① 精简:`snapshot_data`/`list_data_snapshots` 移 advanced(simple 8→7,被自动快照+restore_data+history_data 覆盖);② 补缺:`history_data({ id?, jsonPath? })` 只读查看快照进 simple(填 list 元信息/restore 破坏性之间的空档);③ 增强:`read` 多路径(`jsonPaths`)+ 数组分页(`offset`/`limit`,切片+total/hasMore),`write` `dryRun`(四意图预检不落盘),`eval_script` `jsonPath`(子树模式);④ 新增 `diff_data({ snapshotId?, against? })`(advanced,纯函数 `diffObjects` 导出)。**同时落地 `add-data-paging` 的 ✅ 部分**(read 分页/eval 子树);draft_write/commit 部分仍暂缓。
+- `archive/2026-07-31-unify-error-model/`:三档错误模型(minor,未发布)—— 显式化隐式三档 `AgentError.severity`(recoverable 回灌 / fatal emit+中断 / observable 记录不中断)+ `routeError`/`asAgentError` 纯函数(默认 Error=fatal,保守暴露问题);各 catch 点(coreExecTool/afterAgent/emit/invoke)按档归一化。`onEvent('error')` payload 扩展 `{ severity?, code?, context? }`(向后兼容)。新增导出 ErrorSeverity/AgentError/ErrorRouting/routeError/asAgentError/agentError。
 - `archive/2026-07-31-declarative-middleware-ordering/`:中间件声明式 priority 排序(**期一**,patch,未发布)—— `composeMiddlewareStack` 纯函数 + `MIDDLEWARE_PRIORITY` 常量稳定排序 + selftest 断言锁死顺序约束;修了初版 `sdk-events=9999` bug(用户中间件 Infinity 排到其后,破坏"最后观察",e2e 不断言顺序所以漏网)。行为不变(排序=原硬编码)。**期二(`createReconfigurable` setter 收敛)DEFERRED** —— 纯内部重构量大收益低,推迟到频繁加可配置项时再做(设计见 archive design.md §2.2)。selftest 696→699。期一规范已合入。
 - `archive/2026-07-31-unify-context-compression/`:双摘要合并协议统一(patch,未发布)—— 抽 `SummarySegment` 协议 + `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 纯函数(single source of truth);`trimMemoryMessagesImpl`(`rounds.ts`)与 `useContextManager.compress` 的"提取头部旧摘要"改调共享 `parseSummarySegment`(消除两处逐字重复的提取补丁)。内部重构,行为不变(两套压缩保留各自触发时机与产出格式,只统一合并逻辑)。selftest 692→696。规范已合入 `openspec/specs/page-agent-core.md`。
 - `archive/2026-07-31-harden-react-loop-budget/`:ReAct 循环预算语义加固(patch,未发布)—— `rounds` 回归"只计工具轮"(自纠不耗 rounds,有独立预算 formatRetries/verifyAttempts);新增 `iterations` 总循环计数 + `maxIterations` 硬上限(默认 max(maxToolRounds*3, 30),经纯函数 computeMaxIterations 推导)防自纠死循环;wrap-up 兜底文案改进展引导(不再让用户"简化问题")。向后兼容(语义修正,更符合直觉)。selftest 688→692。规范已合入 `openspec/specs/page-agent-core.md`。

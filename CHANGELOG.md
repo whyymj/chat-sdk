@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+(暂无未发布项)
+
+## [2.17.0] - 2026-08-01
+
+### Added
+- **字段约束可见性(expose-schema-constraints)**:新增 `describeSchemaNode(schema)` 纯函数结构化提取 zod 字段约束(类型/min/max/enum/必填/默认/嵌套 shape,针对 zod 4 `_def`/`_zod.def`),三处消费:① `extractSchemaHint` 升级 → systemPrompt「可操作数据」段带 `key (Type)[约束]: desc`;② 新增 `schema_data({ jsonPath? })` 工具(advanced)查任意路径完整约束。LLM 写前即知规则,减少"写错→校验失败→重试"轮次。`describeSchemaNode` 是 zod 4.4+ adapter(结构探测失败返 type-only 兜底 + dev warn)。新增导出 `describeSchemaNode`/`renderSchemaHint`/`renderSchemaOverview`/`formatConstraints` + 类型 `SchemaNodeDesc`
+- **默认工具集演进(evolve-default-toolset)**:① 精简 —— `snapshot_data`/`list_data_snapshots` 从 simple 移到 advanced(被自动快照 + restore_data + history_data 覆盖),simple 8→7 工具;② 补缺 —— 新增 `history_data({ id?, jsonPath? })`(simple,只读查看快照,填 list 元信息 / restore 破坏性之间的空档);③ 增强 —— `read` 增 `jsonPaths`(多路径一次读,非法路径单项标错不整批失败)+ `offset`/`limit`(数组分页,返回切片 + total/hasMore),`write` 增 `dryRun`(四意图预检:走完整校验链但不落盘/入快照,乐观锁冲突照常检测不挂起),`eval_script` 增 `jsonPath`(子树模式,降低大 JSON 深拷贝/执行成本;transform 返回值作为子树新值);④ 新增 `diff_data({ snapshotId?, against? })`(advanced,差异对比,纯函数 `diffObjects` 顶层导出)
+- **三档错误模型(unify-error-model)**:显式化已有的隐式三档 —— `AgentError.severity`(recoverable 回灌 LLM 自纠 / fatal emit+中断 / observable 记录不中断)+ `routeError`/`asAgentError` 纯函数(普通 Error 默认 fatal,保守暴露问题)。内置 catch 点用简化硬编码路由(coreExecTool recoverable / afterAgent observable / emit observable / invoke fatal)经 `asAgentError` 归一化;`routeError` 作为公共工具导出(供集成方自定义 catch + 为未来 `wrapToolCall` 自动路由预留扩展口,框架内置 catch 当前未消费)。`onEvent('error')` payload 扩展 `{ severity?, code?, context? }`(向后兼容,旧监听器读 message 不破)。新增导出 `ErrorSeverity`/`AgentError`/`ErrorRouting`/`routeError`/`asAgentError`/`agentError`
+
 ### Fixed
 - **`inspect().systemPrompt` 残缺(漏中间件段)**:`getInfo` 另起炉灶拼 systemPrompt(只 `base + data + augmentSystem`),漏掉 `usageHints` / `todos` / `skills` / `memory` / `subagents` 等中间件 `augmentPrompt` 段,集成方 / DebugDrawer 看到的"系统提示词"残缺,排查 prompt 问题(如"LLM 为何不知道有这些 skill / 工具用法")时被误导。修复:`createAgent` 暴露 `getEffectiveSystemPrompt()`(复用内部权威 `buildSystemPrompt`,即实际发给 LLM 的内容),`getInfo.systemPrompt` 代理到它 —— prompt 拼装收敛为单一真相源。展示一致性修复,**LLM 实际收到的 prompt 本就对**(向后完全兼容)。
 
@@ -13,6 +22,8 @@
 - **ReAct 循环预算语义加固(工具轮 vs 总迭代)**:`rounds` 回归"只计工具轮"(有 tool_calls 执行才 +1);格式自纠 / verify 自纠不再消耗 `rounds`(它们有独立预算 `formatRetries`/`verifyAttempts`)。新增 `iterations` 总循环计数 + `maxIterations` 硬上限(默认 `max(maxToolRounds*3, 30)`,经纯函数 `computeMaxIterations` 推导,防自纠死循环的总闸)。同等 `maxToolRounds` 下 agent 可用工具轮更多(自纠不再挤占工具预算,更符合直觉)。循环耗尽兜底文案改为进展引导(不再让用户"简化问题");`round_start` 事件的 round 字段改用迭代号(`iterations`,自纠轮新号,避免 UI 按工具轮号显示时同号卡顿)。**向后兼容**(语义修正)
 - **双摘要合并协议统一(unify-context-compression)**:抽 `SummarySegment` 协议 + `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 纯函数;`trimMemoryMessagesImpl`(`rounds.ts`)与 `useContextManager.compress` 的"提取头部旧摘要"改调共享 `parseSummarySegment`(消除两处逐字重复的提取补丁)。**内部重构,行为不变**(统一"提取";"合并"格式保留各自 —— summarization 新在前 / trim 旧在前,不强行统一)
 - **中间件声明式 priority 排序(declarative-middleware-ordering 期一)**:`createChatSdk` 中间件装载序从"数组字面量位置硬编码"改为声明式 `MIDDLEWARE_PRIORITY` 常量 + `composeMiddlewareStack` 纯函数稳定排序 + selftest 断言锁死已知约束(dataHint 最前 / sdk-events 最末 / verify 在用户前 / humanConfirm 在 approval 前);修了初版 `sdk-events=9999` bug(用户中间件 Infinity 会排到其后,破坏"最后观察"语义)。**行为不变**(排序结果与原硬编码一致)。期二(`createReconfigurable` setter 收敛)**DEFERRED** —— 纯内部重构量大收益低,推迟
+- **精修:能力可达性 + 去冗余 + 半成品诚实化(refine-dataops-reachability / fix-unify-error-half-done)**:① `read` 概览去约束(与 systemPrompt 去重复,约束靠 systemPrompt + `schema_data`);② `usageHints` 补分页/多路径/dryRun 用法提示(让 evolve 加的能力 LLM 可达);③ `describeSchemaNode` zod 版本防御(adapter 集中声明 + dev 模式 console.warn 去重);④ unify-error 缩水诚实化(`routeError` 降级为导出工具 + 扩展口注释,middleware 删空头契约承诺,零行为变化,为未来 `wrapToolCall` 补全留低改动面)
+- **真 LLM 审计收口(followup-from-live-llm-audit)**:4 agent 真 LLM 全覆盖审计(6 demo × 多场景)后 —— ① 修 `isPathAllowed`/`getSchemaAtPath` discriminatedUnion **pre-existing bug**(误当 ZodArray 致 `components.N.props.X` 深层路径误 PATH_DENIED;ZodArray 严格判 + union 降级开放交 safeParse 兜底;complex-demo 嵌套 schema 下 evolve patches 增量改单字段恢复可用);② browser 全跑 flaky 修(`_helpers` clearChat 含 `clearStorage` 清 indexedDB/cookies 防跨 spec 污染 + waitForAgentIdle timeout 30→60s);③ `usageHints` 补 `history_data`(simple)/`diff_data`(advanced)提示(真测:LLM 绕过 diff);④ `planner-demo` systemPrompt 加"收到方案必须 write 落地"(真测:主 agent 停在委派完)
 
 ### Tests
 - e2e `systemprompt.mjs` 补 `inspect().systemPrompt` 完整性断言(配 skills/memory/dataOps 后含 usageHints `## 能力使用提示` / skills `## 可用 Skills` 段,修复前漏)。断言计数 217→221
@@ -21,6 +32,12 @@
 - selftest `sec-21` 补 `computeMaxIterations` 白盒断言(默认 / 小 / 大 maxToolRounds / 显式覆盖)。断言计数 688→692
 - selftest `sec-21` 补 `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 白盒断言。断言计数 692→696
 - selftest `sec-21` 补 `composeMiddlewareStack` 排序白盒断言(含 sdk-events 最末,锁死 9999 bug 不回归)。断言计数 696→699
+- selftest `sec-19`/`sec-21`/`sec-24`/`sec-31` 补 expose-schema(`describeSchemaNode`/`extractSchemaHint`/`schema_data`)+ evolve(`history_data`/`read` 多路径+分页/`write` dryRun/`eval` 子树/`diffObjects`+`diff_data`)+ unify-error(`routeError`/`asAgentError`)断言;工具数 13→16。断言计数 699→768
+- e2e `systemprompt.mjs` 补「可操作数据」段字段约束标注;`inspect.mjs` 补 simple 7 工具集 + advanced 16(含 `schema_data`/`history_data`/`diff_data`)计数 221→228
+- selftest `sec-19`/`sec-31` 补 usageHints 分页提示 + read 概览去约束 + zod 兜底断言(refine);routeError 断言补扩展口注释(fix)。断言计数 768→772
+- **browser E2E 修复**:`playwright.config.ts` webServer.env 注入假 `VITE_AI_API_KEY`/`VITE_AI_MODEL`,让 browser test 自包含(不依赖 .env;ChatOpenAI 构造需 apiKey 非空才发请求被 mock 拦截)。7/7 全过
+- selftest `sec-31` 补 `isPathAllowed`/`getSchemaAtPath` discriminatedUnion 深层路径回归(8 断言)+ tags.0.name 严格 false(旧 bug 放行)。断言计数 780→782
+- browser 新增 `nested-demo.spec.ts`(嵌套子路径写 + 确认 gating + checkpoint 回滚)+ `error-recovery.spec.ts`(SCHEMA_INVALID 回灌自纠)+ `rag-demo.spec.ts`(memory 异步注入 + 切库替换)+ page-demo offset·limit 翻页用例;`_helpers` clearStorage 入 clearChat。browser 7→15(连跑 2 次稳)
 
 ## [2.16.0] - 2026-07-31
 

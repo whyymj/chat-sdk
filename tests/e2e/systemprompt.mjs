@@ -126,5 +126,28 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] 「可操作数据」段含字段类型 + 约束标注(expose-schema-constraints)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-schema-hint', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: {
+        schema: z.object({
+          title: z.string().min(1).max(100).describe('标题'),
+          count: z.number().int().min(0),
+          role: z.enum(['admin', 'user']),
+        }),
+        bind: { title: 't', count: 1, role: 'admin' },
+        description: '应用配置',
+      },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(/可操作数据/.test(sp), '「可操作数据」段存在')
+    assert(/\(string\)/.test(sp) && /\(number\)/.test(sp) && /\(enum\)/.test(sp), '「可操作数据」段含字段类型标注(string/number/enum)')
+    assert(/minLen=1/.test(sp), '「可操作数据」段含 string minLength 约束(expose-schema)')
+    assert(/enum=\[admin\|user\]/.test(sp), '「可操作数据」段含 enum 值约束')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

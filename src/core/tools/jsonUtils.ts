@@ -221,3 +221,39 @@ export function restoreInPlace(live: Record<string, unknown> | unknown[], snapsh
   for (const k of Object.keys(live)) if (!(k in snap)) delete live[k]
   for (const k of Object.keys(snap)) live[k] = snap[k]
 }
+
+/**
+ * 深度差异对比(对象/数组递归,叶子差异),返回结构化 {path, from, to}[]。
+ * 同为对象按 key 递归、同为数组按下标递归;类型不同或叶子不同直接记差异(只在 a!==b 时记录)。
+ * 供 diff_data 工具 / verify 自纠 / 冲突诊断 / 操作审计("刚才改了啥")复用。
+ */
+export function diffObjects(a: unknown, b: unknown, prefix = ''): { path: string; from: unknown; to: unknown }[] {
+  const out: { path: string; from: unknown; to: unknown }[] = []
+  const aObj = a !== null && typeof a === 'object'
+  const bObj = b !== null && typeof b === 'object'
+  // 任一非对象,或一个是数组一个是对象 → 叶子对比(只在值不同时记录)
+  if (!aObj || !bObj || Array.isArray(a) !== Array.isArray(b)) {
+    if (a !== b) out.push({ path: prefix || '(root)', from: a, to: b })
+    return out
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const max = Math.max(a.length, b.length)
+    for (let i = 0; i < max; i++) {
+      const p = prefix ? `${prefix}.${i}` : `${i}`
+      if (i >= a.length) out.push({ path: p, from: undefined, to: b[i] })
+      else if (i >= b.length) out.push({ path: p, from: a[i], to: undefined })
+      else out.push(...diffObjects(a[i], b[i], p))
+    }
+    return out
+  }
+  const ao = a as Record<string, unknown>
+  const bo = b as Record<string, unknown>
+  const keys = new Set([...Object.keys(ao), ...Object.keys(bo)])
+  for (const k of keys) {
+    const p = prefix ? `${prefix}.${k}` : k
+    if (!(k in ao)) out.push({ path: p, from: undefined, to: bo[k] })
+    else if (!(k in bo)) out.push({ path: p, from: ao[k], to: undefined })
+    else out.push(...diffObjects(ao[k], bo[k], p))
+  }
+  return out
+}

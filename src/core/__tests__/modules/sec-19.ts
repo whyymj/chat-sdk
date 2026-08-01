@@ -1,6 +1,8 @@
 import { z } from 'zod'
+import { routeError, asAgentError } from '../../tools/toolError'
 import { createDataOps, filterByToolMode } from '../../tools/dataOps'
 import { extractSchemaHint } from '../../presets'
+import { diffObjects } from '../../tools/jsonUtils'
 import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
@@ -62,7 +64,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // defineDataToolset 工厂(依赖 data 单主对象,故为工厂)
     const config = { schema: z.enum(['light', 'dark']), bind: { $dummy: true } as any, description: '主题' }
     const wt = defineDataToolset(config)
-    assert(wt.length === 13 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 13 个数据工具(11 基础 + read/write 高层入口)')
+    assert(wt.length === 16 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 16 个数据工具(11 基础 + read/write/schema_data/history_data/diff_data)')
 
     // selectBuiltinTools:默认全装(dataOps + fetch)
     const dataOps = createDataOps(config)
@@ -91,11 +93,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/write_todos/.test(segFull) && /restore_data/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
     // dataOps 开 + simple(默认)→ 主推 read/write(高层入口)
     assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 + simple → 注入 read/write 高层用法')
+    assert(/offset|分页/.test(segFull), 'dataOps 开 + simple → 注入分页(offset)用法(refine-dataops 可达性)')
+    assert(/history_data/.test(segFull), 'dataOps 开 + simple → 注入 history_data 提示(followup 可达性)')
     // advanced 模式 → 保留底层 get/describe 提示
     const mwAdv = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'advanced')
     const segAdv = mwAdv.augmentPrompt?.(createState()) || ''
     assert(/describe_data/.test(segAdv), 'dataOps 开 + advanced → 注入 describe 用法')
     assert(/get_data/.test(segAdv), 'dataOps 开 + advanced → 注入 get_data 读真实值再改用法')
+    assert(/offset|分页/.test(segAdv), 'dataOps 开 + advanced → 注入分页用法(refine-dataops 可达性)')
+    assert(/diff_data/.test(segAdv), 'dataOps 开 + advanced → 注入 diff_data 提示(followup 可达性)')
 
     // planning 关 → 无 write_todos 提示
     const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
@@ -118,23 +124,123 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[filterByToolMode]')
   {
     const config = { schema: z.any(), bind: { x: 1 } as any, description: 'd' }
-    const all = createDataOps(config)  // 13 个工具
+    const all = createDataOps(config)  // 16 个工具
     const names = (ts: any[]) => ts.map((t) => t.name)
-    // advanced → 全暴露(13)
+    // advanced → 全暴露(16)
     const adv = filterByToolMode(all, 'advanced')
-    assert(adv.length === 13 && adv.length === all.length, 'advanced → 全暴露(13 工具)')
-    // simple → 隐藏底层 describe/get/set/edit/delete(5),保留 read/write + query/search/eval/snapshot/list/restore(8)
+    assert(adv.length === 16 && adv.length === all.length, 'advanced → 全暴露(16 工具)')
+    // simple → 隐藏 9 个底层(describe/get/set/edit/delete/schema_data/snapshot/list/diff),保留 read/write + query/search/eval/restore/history(7)
     const simple = filterByToolMode(all, 'simple')
     const simpleNames = names(simple)
-    assert(simple.length === 8, 'simple → 8 工具(隐藏 5 底层,保留 read/write + query/search/eval/snapshot/list/restore)')
-    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'snapshot_data', 'list_data_snapshots', 'restore_data'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + 高级查询/快照工具')
-    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 describe/get/set/edit/delete')
+    assert(simple.length === 7, 'simple → 7 工具(evolve 精简:去 snapshot/list,补 history_data;diff_data 只 advanced)')
+    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'restore_data', 'history_data'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + query/search/eval/restore/history')
+    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 5 + schema_data + snapshot/list + diff_data(evolve 精简)')
     // minimal → 只 read/write
     const minimal = filterByToolMode(all, 'minimal')
     assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')
     // 默认(不传 mode)= simple
     const def = filterByToolMode(all)
-    assert(def.length === 8, '默认 toolMode = simple')
+    assert(def.length === 7, '默认 toolMode = simple')
+  }
+
+  // ============ history_data(只读查看快照,evolve-default-toolset 期一)============
+  console.log('\n[history_data 只读快照]')
+  {
+    const config = { schema: z.object({ name: z.string(), tags: z.array(z.string()) }), bind: { name: 'a', tags: ['x'] } as any, description: 'd' }
+    const tools = createDataOps(config)
+    const t = byName(tools)
+    // 无快照 → NO_SNAPSHOT
+    assert(/NO_SNAPSHOT/.test(await invoke(t.history_data, {})), 'history_data 无快照 → NO_SNAPSHOT')
+    // 写一次产生快照(写前值 a/x 入栈)
+    await invoke(t.write, { value: { name: 'b', tags: ['y'] } })
+    // 默认查最近快照 → 含写前值(name=a),且当前 bind 不变
+    const h = await invoke(t.history_data, {})
+    assert(/快照 #1/.test(h) && /"name":"a"/.test(h), 'history_data 默认最近快照 → 含写前值(name=a)')
+    assert(/"name":"b"/.test(await invoke(t.read, {})), 'history_data 只读 → 当前 bind 不变(仍 b/y)')
+    // 子路径查
+    const hsub = await invoke(t.history_data, { jsonPath: 'tags' })
+    assert(/\["x"\]/.test(hsub), 'history_data jsonPath → 只看子路径(快照 tags=[x])')
+    // id 不存在
+    assert(/SNAPSHOT_NOT_FOUND/.test(await invoke(t.history_data, { id: 999 })), 'history_data id 不存在 → SNAPSHOT_NOT_FOUND')
+  }
+
+  // ============ evolve 期二:read 多路径/分页 + write dryRun + eval 子树(paging 拆分)============
+  console.log('\n[evolve 期二:read 多路径/分页 + write dryRun + eval 子树]')
+  {
+    const config = {
+      schema: z.object({ title: z.string(), items: z.array(z.object({ id: z.number(), name: z.string() })), flag: z.boolean() }),
+      bind: { title: 't', items: [{ id: 1, name: 'a' }, { id: 2, name: 'b' }, { id: 3, name: 'c' }], flag: true },
+      description: 'd',
+    } as any
+    const tools = createDataOps(config)
+    const t = byName(tools)
+
+    // read 多路径:一次读多个不相关子路径
+    const mp = await invoke(t.read, { jsonPaths: ['title', 'flag'] })
+    assert(/多路径读取/.test(mp) && /- title = "t"/.test(mp) && /- flag = true/.test(mp), 'read jsonPaths → 多路径读取各值')
+    // 多路径含非法路径 → 单项标错不整批失败
+    const mpErr = await invoke(t.read, { jsonPaths: ['title', 'nope'] })
+    assert(/PATH_DENIED/.test(mpErr) && /- title = "t"/.test(mpErr), 'read jsonPaths 非法路径 → 单项标错,合法路径仍返回')
+
+    // read 数组分页
+    const pg = await invoke(t.read, { jsonPath: 'items', offset: 1, limit: 1 })
+    assert(/数组分页\[offset=1,limit=1\]/.test(pg) && /total=3/.test(pg) && /hasMore=true/.test(pg), 'read offset/limit → 数组分页切片 + total/hasMore')
+    const pgLast = await invoke(t.read, { jsonPath: 'items', offset: 2, limit: 5 })
+    assert(/hasMore=false/.test(pgLast), 'read 分页到末尾 → hasMore=false')
+
+    // write dryRun(set):校验通过但不落盘
+    const dr = await invoke(t.write, { value: { title: 'new', items: [], flag: false }, dryRun: true })
+    assert(/dryRun\(set\)/.test(dr) && /未实际写入/.test(dr), 'write dryRun(set) → 预检通过返回预览')
+    assert(/"title":"t"/.test(await invoke(t.read, {})), 'write dryRun(set) → bind 未变(title 仍 t)')
+    // dryRun 校验失败也不写入
+    const drFail = await invoke(t.write, { value: { title: 123 }, dryRun: true })
+    assert(/SCHEMA_INVALID|invalid_type/.test(drFail), 'write dryRun 校验失败 → 返回 schema 错误')
+    assert(/"title":"t"/.test(await invoke(t.read, {})), 'write dryRun 校验失败 → bind 仍不变')
+    // dryRun(edit patch)
+    const drEdit = await invoke(t.write, { patch: { op: 'set', jsonPath: 'title' }, value: 'X', dryRun: true })
+    assert(/dryRun\(edit\)/.test(drEdit), 'write dryRun(edit) → 预检通过返回预览')
+    assert(/"title":"t"/.test(await invoke(t.read, {})), 'write dryRun(edit) → bind 未变')
+    // dryRun(delete)
+    const drDel = await invoke(t.write, { patch: { op: 'remove', jsonPath: 'flag' }, del: true, dryRun: true })
+    assert(/dryRun\(delete\)/.test(drDel), 'write dryRun(delete) → 预检返回预览')
+    assert(/"flag":true/.test(await invoke(t.read, {})), 'write dryRun(delete) → bind 未变(flag 仍 true)')
+    // dryRun 去掉 dryRun 必成功写入(set 同值)
+    const real = await invoke(t.write, { value: { title: 'new2', items: config.bind.items, flag: false } })
+    assert(/已 write\(set\)/.test(real), 'write 非 dryRun → 实际写入')
+    assert(/"title":"new2"/.test(await invoke(t.read, {})), 'write 非 dryRun → bind 已变(title=new2)')
+
+    // eval_script 子树:jsonPath 路径校验(node 无 Worker,不实际跑脚本,只验子树分支)
+    const evBad = await invoke(t.eval_script, { script: 'data', jsonPath: 'nope' })
+    assert(/PATH_DENIED/.test(evBad), 'eval_script jsonPath 非法 → PATH_DENIED(子树路径校验)')
+    const evOk = await invoke(t.eval_script, { script: 'data', jsonPath: 'items' })
+    assert(!/PATH_DENIED/.test(evOk), 'eval_script jsonPath 合法 → 不 PATH_DENIED(进入子树执行分支)')
+  }
+
+  // ============ diffObjects + diff_data(evolve 期三)============
+  console.log('\n[diffObjects + diff_data]')
+  {
+    // diffObjects 白盒
+    assert(diffObjects({ a: 1, b: 2 }, { a: 1, b: 3 }).length === 1, 'diffObjects → 对象叶子差异(仅 b 变)')
+    assert(diffObjects({ a: 1 }, { a: 1 }).length === 0, 'diffObjects → 相同对象无差异')
+    assert(diffObjects([1, 2, 3], [1, 2]).length === 1, 'diffObjects → 数组末尾元素差异')
+    assert(diffObjects({ a: 1 }, { b: 1 })[0].path === 'a', 'diffObjects → key 删除+新增(a from 1 to undefined)')
+    assert(diffObjects(1, 2)[0].from === 1 && diffObjects(1, 2)[0].to === 2, 'diffObjects → 叶子不同记 from/to')
+    assert(diffObjects('x', 'x').length === 0, 'diffObjects → 叶子相同无差异')
+
+    // diff_data 工具(advanced;对比当前 vs 快照/against)
+    const cfg = { schema: z.object({ name: z.string(), age: z.number() }), bind: { name: 'a', age: 1 }, description: 'd' } as any
+    const tools = createDataOps(cfg)
+    const t = byName(tools)
+    await invoke(t.write, { value: { name: 'b', age: 2 } })  // 产生快照(写前 a/1),当前变 b/2
+    const d1 = await invoke(t.diff_data, {})
+    assert(/差异/.test(d1) && /name.*"a".*"b"/.test(d1) && /age.*1.*2/.test(d1), 'diff_data 默认最近快照 → 列出 name/age 差异')
+    const d2 = await invoke(t.diff_data, { against: { name: 'b', age: 2 } })
+    assert(/无差异/.test(d2), 'diff_data against=当前值 → 无差异')
+    const d3 = await invoke(t.diff_data, { against: { name: 'X', age: 9 } })
+    assert(/差异/.test(d3) && /name.*"X".*"b"/.test(d3), 'diff_data against 不同 JSON → 列出差异(from=against X → 当前 b)')
+    // 无快照 + 不传 against → NO_SNAPSHOT
+    const t2 = byName(createDataOps({ schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'd' } as any))
+    assert(/NO_SNAPSHOT/.test(await invoke(t2.diff_data, {})), 'diff_data 无快照 + 不传 against → NO_SNAPSHOT')
   }
 
   // ============ extractSchemaHint(io 契约注入 systemPrompt 用)============
@@ -143,7 +249,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // zod object:提取字段名 + description
     const schema = z.object({ title: z.string().describe('页面标题'), count: z.number() })
     const hint = extractSchemaHint(schema)
-    assert(/- title: 页面标题/.test(hint) && /- count/.test(hint), 'extractSchemaHint: object → 提取字段名 + description')
+    assert(/- title \(string\): 页面标题/.test(hint) && /- count \(number\)/.test(hint), 'extractSchemaHint: object → 提取字段名 + 类型 + description')
     // 无 description 的字段:只显示字段名(或 typeName)
     const schema2 = z.object({ name: z.string() })
     assert(/- name/.test(extractSchemaHint(schema2)), 'extractSchemaHint: 无 description → 仍含字段名')
@@ -151,7 +257,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const scalar = z.string().describe('一个字符串')
     assert(/一个字符串/.test(extractSchemaHint(scalar)), 'extractSchemaHint: 非 object → 用 description 兜底')
     // 无 description 的非 object:兜底提示
-    assert(/read/.test(extractSchemaHint(z.string())), 'extractSchemaHint: 无 description 非 object → 兜底提示用 read')
+    assert(/\(root\)/.test(extractSchemaHint(z.string())), 'extractSchemaHint: 无 description 非 object → fallback 根节点类型标注')
     // 空/undefined
     assert(extractSchemaHint(undefined) === '', 'extractSchemaHint: undefined → 空串')
   }
@@ -211,5 +317,23 @@ export async function run(ctx: TestCtx): Promise<void> {
     const seg = mw.augmentPrompt?.(createState()) || ''
     assert(/use_researcher.*调研专家/.test(seg), 'augmentPrompt 注入子 agent 索引(use_<id>: desc)')
     assert(mw.name === 'subagents', '中间件 name=subagents')
+  }
+
+  // ============ unify-error-model:routeError / asAgentError(三档错误模型)============
+  // 注:routeError 框架内置 catch 点当前未消费(用简化硬编码路由);此处验证导出可用 + 行为正确,
+  // 为未来 wrapToolCall 自动路由扩展锁行为(见 change fix-unify-error-half-done)。
+  console.log('\n[unify-error-model: routeError / asAgentError]')
+  {
+    // routeError 纯函数:severity → 路由
+    assert(routeError({ severity: 'recoverable', message: 'x' }) === 'feedback', 'routeError → recoverable=feedback(回灌 LLM)')
+    assert(routeError({ severity: 'fatal', message: 'x' }) === 'abort', 'routeError → fatal=abort(emit+中断)')
+    assert(routeError({ severity: 'observable', message: 'x' }) === 'log', 'routeError → observable=log(记录不中断)')
+    // asAgentError 归一化:普通 Error 用 defaultSeverity;已是 AgentError 不覆盖
+    assert(asAgentError(new Error('boom'), 'fatal').severity === 'fatal', 'asAgentError → 普通 Error 用 defaultSeverity')
+    assert(asAgentError(new Error('boom'), 'fatal').message === 'boom', 'asAgentError → 提取 Error.message')
+    assert(asAgentError({ severity: 'recoverable', message: 'x' }, 'fatal').severity === 'recoverable', 'asAgentError → 已是 AgentError 不覆盖')
+    assert(asAgentError('string err', 'observable').message === 'string err', 'asAgentError → 非 Error 字符串归一化')
+    assert(asAgentError(undefined, 'observable').severity === 'observable', 'asAgentError → undefined 用 defaultSeverity')
+    assert(asAgentError(new Error('x')).severity === 'fatal', 'asAgentError → 不传 defaultSeverity 默认 fatal')
   }
 }

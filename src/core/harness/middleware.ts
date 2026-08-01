@@ -7,6 +7,11 @@
  *
  * before 类正序,after 类逆序,wrap 类洋葱(reduceRight 包裹)。
  * 中间件可贡献工具、维护 state 字段、增强 system prompt、包裹模型/工具调用。
+ *
+ * 错误契约(unify-error-model):**规划中,未实现** —— 中间件抛普通 Error 当前按原状冒泡(fatal 语义);
+ *   未来计划在 `wrapToolCall` 执行器实现 `AgentError(recoverable)→feedback` 自动路由(消费 `routeError`,
+ *   见 toolError.ts)。当前集成方需自行在中间件 catch 处理。observable 错误(清理/副作用)由各 catch 点
+ *   `asAgentError` 归一化不中断。
  */
 import type { BaseMessage } from '@langchain/core/messages'
 import type { StructuredToolInterface } from '@langchain/core/tools'

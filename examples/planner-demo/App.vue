@@ -68,6 +68,7 @@ onMounted(() => {
       '你是界面设计执行助手。',
       '遇到创作/设计类需求,按"规划-反思-执行"流程:先委派 planner 出方案,再据需要委派 reflector 审查,最后落地。',
       '简单明确的改动(如"标题改红色")直接执行,不必编排。',
+      '收到 planner 方案后,必须调 write 从中选定一套落地成 appConfig(不要只描述方案、不要停在"委派完了"等用户再决定);选定有困难用 request_human_confirmation 让用户选。',
     ].join('\n'),
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,

@@ -47,11 +47,12 @@ export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlot
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
   deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
+  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects,
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数(refactor-module-extraction 从 dataOps 抽离;expose-schema-constraints 的 describeSchemaNode 归宿)
-export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema } from './tools/schemaUtils'
+export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, formatConstraints } from './tools/schemaUtils'
+export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数(refactor-module-extraction 期二 从 useContextManager 抽离;白盒可测)
 export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds } from './composables/contextIndex'
 // LLM 解析(refactor-module-extraction 期二 从 createChatSdk 抽离;isChatModel 实例判定 + resolveLlm 初始装配入口)
@@ -64,8 +65,8 @@ export { resolveStorage, resolveDialogConfig } from './sdk/optionsResolver'
 // SDK 事件系统工厂(refactor-module-extraction 期三 从 createChatSdk 抽离;高级复用:自建事件分发)
 export { createSdkEvents } from './sdk/events'
 export type { SdkEvents } from './sdk/events'
-export { toolError, zodError, jsonParseError, formatZodIssues } from './tools/toolError'
-export type { ToolErrorInput } from './tools/toolError'
+export { toolError, zodError, jsonParseError, formatZodIssues, routeError, asAgentError, agentError } from './tools/toolError'
+export type { ToolErrorInput, ErrorSeverity, AgentError, ErrorRouting } from './tools/toolError'
 export { fetchDocTools } from './tools/fetchDoc'
 export { fetchTools, defineDataToolset, selectBuiltinTools } from './toolsets'
 export { createUsageHintsMiddleware } from './harness/usageHints'

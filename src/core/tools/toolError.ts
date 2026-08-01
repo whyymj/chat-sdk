@@ -66,3 +66,50 @@ export function jsonParseError(path: string | undefined, raw: string, err: unkno
     hint: `检查引号/逗号/括号是否闭合;字符串值需双引号包裹(如 '"dark"' 表示字符串 dark,数字直接写如 5);预览前 80 字符:${raw.slice(0, 80)}`,
   })
 }
+
+// ============ 统一错误模型(unify-error-model)============
+// 三档 severity,把"错误该不该中断/回灌/外发"做成显式 AgentError.severity,各 catch 点按档路由。
+// 默认 Error = fatal(保守:未显式分类的错误视为需中断,暴露问题优于静默吞);observable 必须显式声明。
+// toolError 产出的 ERROR: 字符串本身就是 recoverable 载体(工具返回内容回灌 LLM),协议不变。
+
+/** 错误严重程度三档:recoverable(回灌 LLM 自纠)/ fatal(emit error + 中断)/ observable(记日志不中断) */
+export type ErrorSeverity = 'recoverable' | 'fatal' | 'observable'
+
+/** 统一错误对象(结构化,跨层传递;普通 Error 经 asAgentError 归一化) */
+export interface AgentError {
+  severity: ErrorSeverity
+  message: string
+  code?: string
+  context?: unknown
+}
+
+/** 错误路由:recoverable→feedback(回灌)/ fatal→abort(中断)/ observable→log(记录不中断) */
+export type ErrorRouting = 'feedback' | 'abort' | 'log'
+
+/**
+ * 路由纯函数:据 severity 返回 feedback / abort / log。
+ *
+ * ⚠️ 框架内置 catch 点(coreExecTool / afterAgent / emit / invoke)当前用**简化硬编码路由**,**未消费本函数**。
+ *   本函数作为公共工具导出:① 供集成方自定义中间件 catch 按 severity 决策;② 为未来 `wrapToolCall` 执行器
+ *   实现 `AgentError(recoverable)→feedback` 自动路由预留扩展口(届时在执行器接通,catch 点/接口零改动)。
+ *   保留导出(不删)= 为后续功能升级留低改动面接通路径(见 change fix-unify-error-half-done)。
+ */
+export function routeError(err: AgentError): ErrorRouting {
+  if (err.severity === 'recoverable') return 'feedback'
+  if (err.severity === 'fatal') return 'abort'
+  return 'log'
+}
+
+/** 把任意错误归一化为 AgentError:已是 AgentError(含 severity+message)则原样返回不覆盖;普通 Error 用 defaultSeverity(默认 fatal) */
+export function asAgentError(err: unknown, defaultSeverity: ErrorSeverity = 'fatal'): AgentError {
+  if (err && typeof err === 'object' && 'severity' in err && typeof (err as AgentError).severity === 'string' && 'message' in err) {
+    return err as AgentError
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  return { severity: defaultSeverity, message, context: err }
+}
+
+/** AgentError 便捷工厂 */
+export function agentError(severity: ErrorSeverity, message: string, code?: string, context?: unknown): AgentError {
+  return { severity, message, code, context }
+}

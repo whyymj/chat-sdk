@@ -63,7 +63,7 @@ export type SdkEvent =
   | { type: 'conflict'; conflict: import('../sdk/createChatSdk').PendingConflict }
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; severity?: import('../tools/toolError').ErrorSeverity; code?: string; context?: unknown }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {

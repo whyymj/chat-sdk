@@ -21,6 +21,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatOpenAI } from '@langchain/openai'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
+import { asAgentError } from '../tools/toolError'
 import { z } from 'zod'
 import { createTodosMiddleware } from '../harness/todos'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
@@ -991,8 +992,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         core.afterRound()
         if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
         return reply
-      } catch (err: any) {
-        emit({ type: 'error', message: err?.message || String(err) })
+      } catch (err) {
+        // invoke 抛错 = fatal(emit 结构化 error + 重新抛中断);asAgentError 归一化提取 severity/code/context
+        const ae = asAgentError(err, 'fatal')
+        emit({ type: 'error', message: ae.message, severity: ae.severity, ...(ae.code ? { code: ae.code } : {}), ...(ae.context !== undefined ? { context: ae.context } : {}) } as any)
         throw err
       }
     },

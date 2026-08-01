@@ -20,6 +20,7 @@ import {
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { AgentMessage, StreamHandler } from '../types'
+import { asAgentError } from '../tools/toolError'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
@@ -316,8 +317,9 @@ export function createAgent(options: CreateAgentOptions) {
         passThroughChars: offloadPassThrough,
       }).content
       return { content, status: 'done' }
-    } catch (err: any) {
-      return { content: `工具执行出错：${err.message}`, status: 'error' }
+    } catch (err) {
+      // 工具执行错 = recoverable(回灌 LLM 自纠);asAgentError 归一化提取 message(已是 AgentError 不覆盖)
+      return { content: `工具执行出错：${asAgentError(err, 'recoverable').message}`, status: 'error' }
     }
   }
 
@@ -531,7 +533,9 @@ export function createAgent(options: CreateAgentOptions) {
       try {
         await runAfterAgent(middlewares, state)
       } catch (e) {
-        console.warn('[Agent] afterAgent 清理出错(已忽略):', e)
+        // afterAgent 清理错 = observable(不中断主流程);归一化 + warn(显式 severity,为 trace 预留)
+        const ae = asAgentError(e, 'observable')
+        console.warn(`[Agent] afterAgent 清理出错(observable,已忽略):`, ae.message)
       }
     }
   }

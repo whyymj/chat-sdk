@@ -151,7 +151,7 @@ export async function clickByText(page: Page, text: string): Promise<void> {
 }
 
 /** 等待 agent 处理完成:先等「停止生成」出现(开始处理),再等它消失(完成) */
-export async function waitForAgentIdle(page: Page, timeout = 30_000): Promise<void> {
+export async function waitForAgentIdle(page: Page, timeout = 60_000): Promise<void> {
   // 阶段 1:等 agent 开始处理(停止生成按钮出现)
   await page.waitForFunction(() => {
     const btns = Array.from(document.querySelectorAll('.chat-dialog button'))
@@ -175,5 +175,22 @@ export async function clearChat(page: Page): Promise<void> {
     const confirm = btns.find((b) => (b.textContent || '').trim() === '确认' && !b.disabled)
     if (confirm) confirm.click()
   }).catch(() => {})
+  await clearStorage(page)  // 清持久化,防跨 spec/同 id(如 page-demo + error-recovery 共用 page-demo demo)storage 污染(followup P0)
   await page.waitForTimeout(200)
+}
+
+/** 清 indexedDB + localStorage/sessionStorage + cookies,防跨 spec storage 残留(followup P0 flaky 诊断) */
+export async function clearStorage(page: Page): Promise<void> {
+  try {
+    await page.evaluate(() => {
+      try { localStorage.clear() } catch { /* ignore */ }
+      try { sessionStorage.clear() } catch { /* ignore */ }
+      // indexedDB:尽力清所有库(chromium 支持 indexedDB.databases();不支持则跳过 —— 每 test 新 context 已隔离)
+      const anyIdb = (globalThis as any).indexedDB
+      if (anyIdb && typeof anyIdb.databases === 'function') {
+        anyIdb.databases().then((dbs: any[]) => dbs.forEach((d) => { try { indexedDB.deleteDatabase(d.name) } catch { /* ignore */ } })).catch(() => {})
+      }
+    })
+  } catch { /* ignore */ }
+  try { await page.context().clearCookies() } catch { /* ignore */ }
 }

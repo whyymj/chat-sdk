@@ -203,3 +203,27 @@ ReAct 循环维护双计数:`rounds`(工具轮,只在有 tool_calls 执行后 +1
 ## Requirement: 乐观锁 hash 强度(cyrb53)与并发语义文档化
 
 乐观锁的 `hashValue`(整体 bind 值的 hash,用于 `expectedHash`/`autoLock` 比对)采用 cyrb53(53-bit 非加密 hash,碰撞空间 2^53,替代旧 djb2 32-bit),降低"不同值 hash 恰等 → 误判无冲突 → 静默覆盖外部修改"的概率。hash 算法不持久化、不跨会话(同会话内 read→write 用同一算法即自洽,换算法无兼容负担)。`autoLock`(默认 true)在 `maxParallelTools>1` 并发工具下语义为"整体快照":多个 read 并发写共享 `lastReadHash`(完成顺序不定),后续 write 比对"最后完成的 read 的整体 bind hash";并发场景下若需精确乐观锁,LLM 应显式传 `expectedHash`(取自它自己那次 read 的返回值 hash)绕开共享态竞态。
+
+## Requirement: 字段约束对 LLM 可见(expose-schema-constraints;refine 后 read 概览不带约束)
+
+系统通过纯函数 `describeSchemaNode(schema)` 结构化提取 zod 字段约束(返回 `{ type, constraints?, optional?, nullable?, default?, description? }`),覆盖 ZodString/ZodNumber/ZodBoolean/ZodEnum/ZodLiteral/ZodArray/ZodObject/ZodUnion + Optional/Default/Nullable 标注;**zod 4.4+ adapter**(集中 readCheckDefs/describeSchemaNode,未来 zod5/别的库扩展于此,接口与消费不变;结构探测失败返 type-only 兜底,dev 模式 console.warn 提醒版本不兼容)。约束经**两处**消费(refine-dataops 去读概览重复):① `extractSchemaHint` 注入 systemPrompt「可操作数据」段(带 `key (Type)[约束]: description`);② `schema_data({ jsonPath? })` 工具(advanced)查任意路径完整约束。`read` 概览段不带约束(与 systemPrompt 去重复,引导用 schema_data 查);约束提取与消费解耦,`renderSchemaOverview` 纯函数保留供未来扩展。simple 经 systemPrompt 段获顶层约束;深入嵌套切 advanced 用 schema_data。写路径校验不变。新增导出 `describeSchemaNode`/`renderSchemaHint`/`renderSchemaOverview`/`formatConstraints` + `SchemaNodeDesc`。
+
+## Requirement: simple 工具集构成(精简 + 补只读历史,evolve-default-toolset)
+
+`toolMode: 'simple'`(默认)数据工具集为 7 个:`read` / `write` / `query_data` / `search_data` / `eval_script` / `restore_data` / `history_data`。`snapshot_data` / `list_data_snapshots` 从 simple 移除(归 advanced):自动快照(write/set/edit/delete 自动入栈)+ restore_data(回退)+ history_data(只读查看)已覆盖手动命名快照场景,移除以降 LLM 工具选择负担。advanced 仍暴露全部(16);minimal(只 read/write)不受影响。
+
+## Requirement: history_data 只读查看快照(evolve-default-toolset)
+
+`history_data({ id?, jsonPath? })`(归 simple):返回指定快照(默认最近一次)内容;可选 jsonPath 返子路径(经 schema 白名单投影)。**只读,不改当前主数据**(不写回 / 不入快照栈),填 list_data_snapshots(仅元信息,不可见值)与 restore_data(破坏性回退)之间的空档。空快照 `NO_SNAPSHOT`、指定 id 不存在 `SNAPSHOT_NOT_FOUND`。
+
+## Requirement: read 多路径/分页 + write dryRun + eval 子树(evolve-default-toolset + paging ✅ 部分)
+
+`read` 增 optional `jsonPaths: string[]`(与 jsonPath 互斥):一次读多个不相关子路径,各经 schema 投影 + 整体 hash;非法路径单项标 error 不整批失败。`read` 增 `offset`/`limit`(仅数组目标生效):切片返回 + total/hasMore(默认 limit=50,上限 200)。`write` 增 `dryRun: boolean`:走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘/入快照/写 bind,返回预览;四意图(value/patch/patches/del)均支持;乐观锁冲突照常检测(返回 VERSION_CONFLICT 不挂起)。`eval_script` 增 `jsonPath`(子树模式):仅 clone/执行子树(降低大 JSON 成本,子树 >100KB 超时自适应延至 8s);transform 时返回值作为子树新值(set 到子路径 + 整体 schema 校验)。单 jsonPath / 无 dryRun / 整体 eval 行为不变(向后兼容)。
+
+## Requirement: diff_data 差异对比(evolve-default-toolset)
+
+`diff_data({ snapshotId?, against? })`(归 advanced):对比当前主数据与指定快照(snapshotId)或一段 JSON(against),返回结构化 `{ path, from, to }[]`(对象按 key 并集递归、数组按下标递归、叶子/类型不同记差异;方向 from=基准(快照/against)→ to=当前)。由纯函数 `diffObjects` 实现(顶层导出,供集成方与测试复用)。用于 verify 自纠/冲突诊断/操作审计("刚才改了啥")。
+
+## Requirement: 三档错误模型(unify-error-model;fix 后:内置 catch 简化硬编码 + routeError 供扩展)
+
+错误采用显式三档 `AgentError.severity`:**recoverable**(工具校验失败/执行错/乐观锁冲突)→ feedback 回灌 LLM 不中断;**fatal**(LLM 配置错/持久化致命错/invariant 违反)→ emit('error') + 中断当前调用;**observable**(emit 回调抛/afterAgent 清理错/非关键 IO)→ warn 不中断。**内置 catch 点用简化硬编码路由**(coreExecTool 总 recoverable 回灌 / afterAgent·emit observable warn / invoke fatal emit),各用 `asAgentError(err, defaultSeverity)` 归一化(默认 Error=fatal)。`routeError` 纯函数(据 severity 返 feedback/abort/log)**框架内置 catch 当前未消费**——作为公共工具导出:① 供集成方自定义中间件 catch 决策;② 为未来 `wrapToolCall` 实现 recoverable→feedback 自动路由预留扩展口(届时仅改执行器,catch 点/接口零改动;无需求驱动前不补全)。`onEvent('error')` payload 携带 `{ message, severity?, code?, context? }`(向后兼容)。重试判定与 severity 正交。新增导出 `ErrorSeverity`/`AgentError`/`ErrorRouting`/`routeError`/`asAgentError`/`agentError`。

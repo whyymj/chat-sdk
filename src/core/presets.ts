@@ -9,6 +9,7 @@
  * container / llm / data 等依赖集成方环境的选项仍由调用方提供。
  */
 import type { ChatSdkOptions } from './sdk/createChatSdk'
+import { renderSchemaOverview } from './tools/schemaUtils'
 
 export const presets: Record<string, Partial<ChatSdkOptions>> = {
   /**
@@ -66,17 +67,9 @@ export const systemPromptHelpers = {
  */
 export function extractSchemaHint(schema: any): string {
   if (!schema) return ''
-  try {
-    const shape = schema.shape ?? (schema._def?.shape ? (typeof schema._def.shape === 'function' ? schema._def.shape() : schema._def.shape) : null)
-    if (shape && typeof shape === 'object') {
-      const fields = Object.entries(shape).map(([k, v]: [string, any]) => {
-        const desc = v?.description || ''
-        const typeName = v?._def?.typeName || ''
-        return `- ${k}${desc ? `: ${desc}` : typeName ? ` (${typeName})` : ''}`
-      })
-      return fields.join('\n')
-    }
-  } catch { /* ignore */ }
+  // 走 describeSchemaNode 结构化提取(带类型 + min/max/enum/必填/默认 等约束);非 object / 空 shape fallback 到根节点描述
+  const overview = renderSchemaOverview(schema)
+  if (overview) return overview
   return schema?.description || '(用 read 查看实际形状)'
 }
 

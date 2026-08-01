@@ -21,10 +21,10 @@ import { toolError, zodError, jsonParseError, formatZodIssues } from './toolErro
 import {
   isUnsafePath, safeMerge, getByPath, deleteByPath, deepClone, maybeParseValue,
   projectFields, limitDepth, safeStringify, hashValue,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
+  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects,
   type EditOp,
 } from './jsonUtils'
-import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema } from './schemaUtils'
+import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode } from './schemaUtils'
 
 /** 单主对象配置 */
 export interface DataConfig {
@@ -88,7 +88,7 @@ export interface DataOpsController {
 
 export type ToolMode = 'simple' | 'advanced' | 'minimal'
 
-const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'])
+const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data'])
 const MINIMAL_ALLOWED = new Set(['read', 'write'])
 
 export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
@@ -344,6 +344,34 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
   )
 
+  const historyData = tool(
+    async ({ id, jsonPath }) => {
+      // 只读查看快照(填 list_data_snapshots 元信息与 restore_data 破坏性回退之间的空档),不回退当前 bind
+      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无历史快照可查看', hint: 'set/edit/delete 会自动存快照;也可先 snapshot_data 手动创建检查点' })
+      const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
+      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '不传 id 查看最近一次;或用 list_data_snapshots(advanced) 查看可用序号' })
+      let val: unknown = deepClone(entry.value)
+      const jp = jsonPath || ''
+      if (jp) {
+        if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `history_data @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可读' })
+        val = getByPath(val, jp)
+        const subSchema = getSchemaAtPath(schema, jp)
+        if (subSchema) val = projectBySchemaDeep(val, subSchema)
+      } else if (allowKeys) {
+        val = projectBySchemaDeep(val, schema)
+      }
+      return `快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}${jp ? ` @ ${jp}` : ''} = ${safeStringify(val)}`
+    },
+    {
+      name: 'history_data',
+      description: '只读查看某次快照(默认最近一次)的内容,不回退当前主数据。看上一版长啥样而不影响当前(冲突诊断/verify 自纠/用户问"刚才改了啥")。可选 id 指定快照序号、jsonPath 只看子路径(按 schema 投影)。',
+      schema: z.object({
+        id: z.number().int().optional().describe('快照序号;不传则最近一次'),
+        jsonPath: z.string().optional().describe('只看快照的某子路径(相对主数据根);不传则整个快照'),
+      }),
+    },
+  )
+
   const queryData = tool(
     async ({ expr, limit }) => {
       if (bindRef == null || typeof bindRef !== 'object') {
@@ -396,16 +424,40 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   )
 
   const evalScript = tool(
-    async ({ script, mode }) => {
+    async ({ script, mode, jsonPath }) => {
       if (script.length > 8000) return toolError({ code: 'SCRIPT_TOO_LARGE', message: `脚本过长(${script.length} 字符,上限 8000)`, hint: '精简脚本;复杂逻辑可分步(先 query 探查再 transform 改),或拆成多次 eval' })
-      const data = deepClone(allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef)
-      const res = await runSandboxedScript(data, script, 3000)
+      // 子树模式(paging 拆分):仅 clone/执行 jsonPath 指向的子树,降低大 JSON 的深拷贝/执行成本
+      const jp = jsonPath || ''
+      let source: unknown
+      if (jp) {
+        if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `eval_script @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可作为子树' })
+        source = getByPath(bindRef, jp)
+        if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) source = projectBySchemaDeep(source, ss) }
+      } else {
+        source = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+      }
+      const data = deepClone(source)
+      const timeout = jp && JSON.stringify(data).length > 100000 ? 8000 : 3000  // 子树较大时延长超时(默认 3s,>100KB 延至 8s)
+      const res = await runSandboxedScript(data, script, timeout)
       if (!res.ok) {
         const isTimeout = /超时/.test(res.error || '')
         return toolError({ code: isTimeout ? 'SCRIPT_TIMEOUT' : 'SCRIPT_ERROR', message: `脚本执行失败: ${res.error}`, hint: isTimeout ? '脚本可能有死循环或过重计算;加边界检查/分批;transform 返回完整新值勿返回巨大中间结果' : '检查脚本语法与运行时错误;入参为 data(主数据深拷贝),沙箱内禁用 fetch/XHR/WebSocket', details: { elapsedMs: res.elapsedMs, scriptLen: script.length } })
       }
       if (mode === 'transform') {
         const result = res.result
+        // 子树 transform:返回值作为 jsonPath 子树的新值(set 到子路径 + 整体 schema 校验)
+        if (jp) {
+          const clone = deepClone(bindRef)
+          const patchErr = applyPatchToClone(clone, 'set', jp, result)
+          if (patchErr) return toolError({ code: 'PATCH_FAILED', message: `eval 子树 transform @ "${jp}" 失败: ${patchErr}`, hint: '检查子路径:set 需父为对象/数组' })
+          const chk = schema.safeParse(clone)
+          if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值作为子树 @ "${jp}" 后整体校验失败,未写入`, hint: `确认返回值符合 ${jp} 处的子 schema`, details: formatZodIssues(chk.error.issues) })
+          pushSnapshot('edit', 'eval_transform_subtree')
+          applyPatchToLive(bindRef, 'set', jp, result)
+          audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
+          lastReadHash = hashValue(bindRef)
+          return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
+        }
         // 增量模式:脚本返回 {patches:[{op,jsonPath,value},...]} → 按 patch 应用(避免大对象整体重传)
         const isPatches = result && typeof result === 'object' && !Array.isArray(result)
           && 'patches' in (result as any) && Array.isArray((result as any).patches)
@@ -465,17 +517,37 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'eval_script',
       description:
-        '在隔离的 Web Worker 沙箱里对主数据跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(主数据的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为主数据的新整体值,经 schema 校验后就地落地,适合批量重写)。transform 支持两种返回形式:① 完整新值(整体替换);② {patches:[{op,jsonPath,value},...]} 增量 patch(按 patch 应用,避免大对象整体重传,任一 patch 失败或整体 schema 校验失败则不写入)。query 不改主数据。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。',
+        '在隔离的 Web Worker 沙箱里对主数据跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(主数据的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为主数据的新整体值,经 schema 校验后就地落地,适合批量重写)。transform 支持两种返回形式:① 完整新值(整体替换);② {patches:[{op,jsonPath,value},...]} 增量 patch(按 patch 应用,避免大对象整体重传,任一 patch 失败或整体 schema 校验失败则不写入)。query 不改主数据。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。jsonPath(可选,子树模式):仅对 jsonPath 指向的子树执行(降低大 JSON 深拷贝/执行成本),transform 时返回值作为该子树的新值。',
       schema: z.object({
         script: z.string().describe('JS 脚本体,如 data.filter(c=>c.stock>0).map(c=>c.id);入参名 data;末尾表达式或 return 即返回值'),
         mode: z.enum(['query', 'transform']).optional().describe('query=只读返回结果(默认),transform=校验后落地为新值'),
+        jsonPath: z.string().optional().describe('子树模式:仅对 jsonPath 指向的子树执行(降低大 JSON 成本);transform 时返回值作为该子树新值'),
       }),
     },
   )
 
   // ============ 高层直观工具:read / write(合并 describe+get / set+edit+delete+自动锁+自动快照) ============
   const readSlot = tool(
-    async ({ jsonPath, fields, depth }) => {
+    async ({ jsonPath, jsonPaths, fields, depth, offset, limit }) => {
+      const h = hashValue(bindRef)  // 整体 hash(与 get_data 一致,乐观锁比对整体);多路径/分页/单路径统一取一次
+      lastReadHash = h
+      // 多路径模式:一次读多个不相关子路径(各路径独立投影/拦截/裁剪;非法路径单项标错,不整批失败),省多轮往返
+      if (jsonPaths && jsonPaths.length) {
+        const lines = jsonPaths.map((jpRaw) => {
+          const jp = jpRaw || ''
+          if (!isPathAllowed(jp, schema, allowKeys)) return `- ${jp || '(根)'}: [PATH_DENIED: 不在 schema 声明字段内]`
+          let target = jp ? getByPath(bindRef, jp) : bindRef
+          if (!jp) target = projectBySchema(target, allowKeys)
+          else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
+          let resolved = target
+          if (opts.interceptors?.read) { try { resolved = opts.interceptors.read(resolved) } catch (e) { return `- ${jp}: [READ_INTERCEPT: ${(e as Error).message}]` } }
+          if (fields && fields.length) resolved = projectFields(resolved, fields)
+          if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
+          if (resolved === undefined) return `- ${jp} = (undefined)`
+          return `- ${jp} = ${safeStringify(resolved)}`
+        })
+        return `多路径读取(共 ${jsonPaths.length} 项,hash=${h}):\n${lines.join('\n')}`
+      }
       const jp = jsonPath || ''
       if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
@@ -495,29 +567,39 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
-      const h = hashValue(bindRef)  // 整体 hash(与 get_data 一致,乐观锁比对整体)
-      lastReadHash = h
+      const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。\n\n` : ''
       const proj = fields && fields.length ? `(字段裁剪:${fields.join(',')})` : ''
       const dlim = depth !== undefined && depth !== null ? `(深度≤${depth})` : ''
       const meta = proj || dlim ? ` ${proj}${dlim}` : ''
-      const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。\n\n` : ''
-      if (resolved === undefined) return `${desc}主数据${jsonPath ? ` @ ${jsonPath}` : ''}${meta} = (undefined) (hash=${h})`
-      return `${desc}主数据${jsonPath ? ` @ ${jsonPath}` : ''}${meta} = ${safeStringify(resolved)} (hash=${h})`
+      // 数组分页(仅当 resolved 是数组 + 传了 offset/limit):切片 + total/hasMore,避免大数组一次性返回
+      if ((offset !== undefined || limit !== undefined) && Array.isArray(resolved)) {
+        const total = resolved.length
+        const off = Math.max(0, offset ?? 0)
+        const lim = Math.min(200, Math.max(1, limit ?? 50))
+        const items = resolved.slice(off, off + lim)
+        const hasMore = off + lim < total
+        return `${desc}主数据${jp ? ` @ ${jp}` : ''} 数组分页[offset=${off},limit=${lim}]${meta} = ${safeStringify(items)} (total=${total}, hasMore=${hasMore}) (hash=${h})`
+      }
+      if (resolved === undefined) return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = (undefined) (hash=${h})`
+      return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = ${safeStringify(resolved)} (hash=${h})`
     },
     {
       name: 'read',
       description:
-        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示;传 jsonPath → 返回该子路径当前值 + hash。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。fields(可选):字段裁剪,只返回对象(及数组元素)的指定字段,减少大对象返回体积;depth(可选):嵌套深度限制(0=只根占位,1=根+子,递归截断深层),减少深层结构返回体积。两者可组合,先裁字段再截深度。集成方可能经 read 拦截器对返回值脱敏/派生。',
+        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。集成方可能经 read 拦截器对返回值脱敏/派生。',
       schema: z.object({
         jsonPath: z.string().optional().describe('要读的子路径(相对主数据根,如 components.0.text);不传则读整个主数据并返回说明'),
+        jsonPaths: z.array(z.string()).optional().describe('多路径读取:一次读多个不相关子路径(与 jsonPath 互斥,优先于 jsonPath);返回各路径值,非法路径单项标错不整批失败'),
         fields: z.array(z.string()).optional().describe('字段裁剪:只返回指定字段(对对象/数组元素投影),减少返回体积,如 ["id","title"]'),
         depth: z.number().int().min(0).optional().describe('嵌套深度限制:0=只根占位,1=根+子,递归到 depth 层后用 {...}/[...] 占位截断,减少深层返回体积'),
+        offset: z.number().int().min(0).optional().describe('数组分页起始偏移(仅当读取目标是数组时生效,默认 0),配合 limit 分页读大数组'),
+        limit: z.number().int().min(1).max(200).optional().describe('数组分页每页条数(默认 50,上限 200;仅数组时生效),返回切片 + total/hasMore'),
       }),
     },
   )
 
   const writeSlot = tool(
-    async ({ value, patch, patches, del }) => {
+    async ({ value, patch, patches, del, dryRun }) => {
       let intent: 'set' | 'edit' | 'delete' = 'set'
       if (del) intent = 'delete'
       else if (patches && patches.length) intent = 'edit'
@@ -561,6 +643,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
       }
       const effHash = autoLock ? lastReadHash : undefined
+      // dryRun 预检:乐观锁手动比对(不调 onConflict 挂起,只返回冲突信息;dryRun 不实际写无需人工介入)
+      if (dryRun && effHash !== undefined) {
+        const curHash = hashValue(bindRef)
+        if (curHash !== effHash) return toolError({ code: 'VERSION_CONFLICT', message: `dryRun 预检发现乐观锁冲突: expectedHash=${effHash} 当前 hash=${curHash}(主数据在你 read 后被改)`, hint: '重新 read 拿最新 hash 再预检/写' })
+      }
 
       if (intent === 'delete') {
         if (!patch?.jsonPath) return toolError({ code: 'MISSING_VALUE', message: 'delete 需要 patch.jsonPath 指定要删的子路径(主数据整体不可删,用 write(value) 整体替换)', hint: '如 patch:{jsonPath:"components.0"}, del:true' })
@@ -570,6 +657,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
         const conflict = await handleConflict('delete', effHash)
         if (conflict !== null) return conflict
+        if (dryRun) {
+          const dClone = deepClone(bindRef)
+          const dOk = deleteByPath(dClone, patch.jsonPath)
+          return dOk ? `dryRun(delete): 将删除 @ ${patch.jsonPath}。预览剩余:${safeStringify(dClone, 600)}。未实际写入、未入快照。` : `dryRun(delete): @ ${patch.jsonPath} 不存在(无需删除)。未实际写入。`
+        }
         pushSnapshot('delete')
         const ok = deleteByPath(bindRef, patch.jsonPath)
         audit({ op: 'delete', detail: patch.jsonPath, timestamp: Date.now() })
@@ -607,6 +699,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
         const res = schema.safeParse(clone)
         if (!res.success) return zodError('', res.error.issues)
+        if (dryRun) {
+          return `dryRun(edit): ${applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(clone, 600)}。未实际写入、未入快照。`
+        }
         pushSnapshot('edit')
         for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
         audit({ op: 'edit', detail: `${applied.length} 个 patch${applied.length > 1 ? '(批量)' : ''}`, value: applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
@@ -623,6 +718,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (conflict !== null) return conflict
       const res = schema.safeParse(parsed)
       if (!res.success) return zodError('', res.error.issues)
+      if (dryRun) {
+        return `dryRun(set): schema 校验通过。预览新值:${safeStringify(res.data, 600)}。未实际写入、未入快照。`
+      }
       if (bindRef === null || typeof bindRef !== 'object') {
         return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),write(set) 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' })
       }
@@ -642,7 +740,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'write',
       description:
-        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四种意图:① 整体替换 write({ value }) value 为 JSON 对象(推荐)或字符串;② 单个增量 patch write({ value, patch:{op,jsonPath} }) op=set/remove/merge/append,jsonPath 相对主数据根(如 components.0.text),value 作为该 patch 的值;③ 批量增量 write({ patches:[{op,jsonPath,value},...] }) 一次原子应用多个 patch(任一失败整体不写入,适合一次改多处);④ 删除 write({ patch:{jsonPath}, del:true })。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝(批量模式拦截器收到 {patches},返回新 patches 数组或 {error})。',
+        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四种意图:① 整体替换 write({ value }) value 为 JSON 对象(推荐)或字符串;② 单个增量 patch write({ value, patch:{op,jsonPath} }) op=set/remove/merge/append,jsonPath 相对主数据根(如 components.0.text),value 作为该 patch 的值;③ 批量增量 write({ patches:[{op,jsonPath,value},...] }) 一次原子应用多个 patch(任一失败整体不写入,适合一次改多处);④ 删除 write({ patch:{jsonPath}, del:true })。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝(批量模式拦截器收到 {patches},返回新 patches 数组或 {error})。dryRun(可选):预检模式,走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘/入快照,返回预览(四意图均支持,复杂改动先看会改成啥、能否过 schema)。',
       schema: z.object({
         value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
         patch: z.object({
@@ -655,15 +753,50 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           value: z.unknown().optional().describe('JSON 值(推荐直传)或 JSON 字符串;set/merge/append 必填,remove 不需'),
         })).optional().describe('批量增量编辑:一次原子应用多个 patch(任一失败则整体不写入,clone 试跑全部 + schema 校验通过才落 live)。适合一次改多处,减少多轮往返'),
         del: z.boolean().optional().describe('true 则删除 patch.jsonPath 指定的子路径(等价 delete_data)'),
+        dryRun: z.boolean().optional().describe('预检模式:走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘、不入快照,返回预览。四意图(value/patch/patches/del)均支持;乐观锁冲突照常检测(返回 VERSION_CONFLICT 不挂起)'),
       }),
     },
   )
 
+  const schemaData = tool(
+    async ({ jsonPath }) => {
+      const jp = jsonPath || ''
+      const sub = jp ? getSchemaAtPath(schema, jp) : schema
+      if (!sub) return toolError({ code: 'PATH_DENIED', message: `schema @ "${jp}" 不存在`, hint: 'jsonPath 需在 schema 声明字段内(用 read() 不传 jsonPath 查看顶层字段)' })
+      return `schema${jp ? ` @ ${jp}` : ''} = ${safeStringify(describeSchemaNode(sub))}`
+    },
+    { name: 'schema_data', description: '查看主数据(或子路径)的字段约束:类型/min/max/enum/必填/默认值/嵌套 shape。写前查约束,避免写错重试。不传 jsonPath 查根;传子路径(如 components.0)查该位置约束。', schema: z.object({ jsonPath: z.string().optional().describe('要查约束的子路径;不传查根 schema') }) },
+  )
+
+  const diffData = tool(
+    async ({ snapshotId, against }) => {
+      const useAgainst = against !== undefined && against !== null
+      let base: unknown
+      let label: string
+      if (useAgainst) {
+        base = against
+        label = 'against'
+      } else {
+        if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可对比', hint: 'set/edit/delete 自动存快照;或传 against 一段 JSON 值直接对比' })
+        const entry = snapshotId !== undefined ? snapshots.find((s) => s.id === snapshotId) : snapshots[snapshots.length - 1]
+        if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${snapshotId}`, hint: '不传 snapshotId 用最近一次;或传 against' })
+        base = entry.value
+        label = `快照 #${entry.id}`
+      }
+      // 当前主数据按白名单投影(与快照/against 对比口径一致,隐藏未声明字段)
+      const cur = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+      const diffs = diffObjects(base, deepClone(cur))
+      if (!diffs.length) return `无差异:当前主数据与 ${label} 完全相同。`
+      return `差异(当前 vs ${label},共 ${diffs.length} 处):\n${diffs.map((d) => `  ${d.path}: ${safeStringify(d.from)} → ${safeStringify(d.to)}`).join('\n')}`
+    },
+    { name: 'diff_data', description: '对比当前主数据与某快照(默认最近)或一段 JSON(against)的差异,返回结构化 {path, from→to} 列表。供 verify 自纠/冲突诊断/操作审计("刚才改了啥")。snapshotId 指定快照;against 传一段 JSON 值(与 snapshotId 互斥,传则忽略快照)。', schema: z.object({ snapshotId: z.number().int().optional().describe('对比的快照序号;不传则最近一次'), against: z.unknown().optional().describe('对比的一段 JSON 值(与 snapshotId 互斥;传则忽略快照)') }) },
+  )
+
   const tools: StructuredToolInterface[] = [
     describeData, getData, setData, editData, deleteData,
-    snapshotData, listDataSnapshots, restoreData,
+    snapshotData, listDataSnapshots, restoreData, historyData,
     queryData, searchData, evalScript,
-    readSlot, writeSlot,
+    readSlot, writeSlot, schemaData, diffData,
   ]
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
   return tools

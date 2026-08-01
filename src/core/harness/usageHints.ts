@@ -38,6 +38,8 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         if (simple) {
           hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write({value}) 整体替换(value 直传 JSON 对象,如 {title:"x"},无需 stringify);write({value, patch:{op,jsonPath}}) 增量 patch(op=set/remove/merge/append);write({patch:{jsonPath}, del:true}) 删除子路径。写入自动经 schema 校验(失败不写)+ 自动存快照(出错可用 restore_data 回退)。')
           hints.push('修改大对象/数组优先用 write 的 patch 增量(只发改动部分),避免整体重传被 max_tokens 截断致 JSON 不完整。')
+          hints.push('读大数组(read 返回 hasMore=true)用 read({jsonPath,offset,limit}) 分页(offset+=limit 续读,默认 limit=50);一次读多个不相关子路径用 read({jsonPaths:[...]}) 省轮次;复杂 patches 改动先 write({patches,dryRun:true}) 预检(走完整校验不落盘)。')
+          hints.push('查历史快照值(看上一版长啥样 / 冲突诊断 / 用户问"刚才改了啥")用 history_data({id?,jsonPath?})(只读不改当前);对比当前与历史快照的差异需切 advanced 用 diff_data(返回结构化 path→from/to)。')
           hints.push('在大数组里按条件筛选用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素 path/index;定位后用 write patch 改。找名字记不清的元素用 search_data(substring/regex/fuzzy)。批量过滤/映射/聚合/重写大数组用 eval_script(沙箱脚本,mode=query 只读/transform 落地)。')
         } else {
           hints.push('改主数据前先 get_data({jsonPath}) 读其当前真实值与 hash(返回末尾 hash=xxx),基于真实值改,不要凭记忆。写入(set/edit/delete)时回传 expectedHash=该 hash 启用乐观锁——若主数据在你 get 之后被外部代码/其他 agent/用户手动改过,会触发冲突:集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值与 hash 再改。')
@@ -47,6 +49,8 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
           hints.push('在大数组里按条件筛选元素用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 edit_data 改。')
           hints.push('找名字记不清的元素用 search_data(支持 substring/regex/fuzzy 模糊搜索)。')
           hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
+          hints.push('读大数组用 read({jsonPath,offset,limit}) 分页(返回 hasMore=true 时 offset+=limit 续读);一次读多个不相关子路径用 read({jsonPaths});复杂改动先 write({...,dryRun:true}) 预检不落盘。')
+          hints.push('对比当前与历史快照(或一段 JSON against)的差异用 diff_data({snapshotId?,against?})(返回结构化 path→from/to,verify 自纠/操作审计/"刚才改了啥");只读查历史快照值用 history_data({id?,jsonPath?})。')
         }
       }
       if (caps?.subagent !== false) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')

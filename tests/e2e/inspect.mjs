@@ -7,7 +7,7 @@ export async function run() {
 
   console.log('[e2e:inspect] inspect().tools 反映 dataOps 开关 + 工具集完整性')
   {
-    // advanced 模式:全暴露(13 个数据工具)
+    // advanced 模式:全暴露(15 个数据工具;evolve 后含 history_data/schema_data)
     const sdkOn = createChatSdk({
       ui: false, id: 'e2e-tools-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
@@ -15,22 +15,22 @@ export async function run() {
     })
     await sdkOn.mount()
     const toolsOn = sdkOn.inspect().tools.map((t) => t.name)
-    const expectedDataTools = ['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'snapshot_data', 'list_data_snapshots', 'restore_data', 'query_data', 'search_data', 'eval_script', 'read', 'write']
+    const expectedDataTools = ['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'snapshot_data', 'list_data_snapshots', 'restore_data', 'history_data', 'query_data', 'search_data', 'eval_script', 'read', 'write', 'schema_data', 'diff_data']
     for (const name of expectedDataTools) {
       assert(toolsOn.includes(name), `dataOps 开启 + advanced → 含 ${name}`)
     }
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
-    // simple 模式(默认):隐藏底层 describe/get/set/edit/delete(5),主推 read/write + 高级查询/快照(8)
+    // simple 模式(默认):evolve 精简后 7 个(去 snapshot/list,补 history_data;仍隐藏底层 5 + schema_data)
     const sdkSimple = createChatSdk({
       ui: false, id: 'e2e-tools-simple', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
     })
     await sdkSimple.mount()
     const toolsSimple = sdkSimple.inspect().tools.map((t) => t.name)
-    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'snapshot_data', 'list_data_snapshots', 'restore_data'].every((n) => toolsSimple.includes(n)), 'simple → 含 read/write + 高级查询/快照(8 个)')
-    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !toolsSimple.includes(n)), 'simple → 隐藏底层 describe/get/set/edit/delete')
+    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'restore_data', 'history_data'].every((n) => toolsSimple.includes(n)), 'simple → 含 read/write + query/search/eval/restore/history(7 个,evolve 精简)')
+    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data'].every((n) => !toolsSimple.includes(n)), 'simple → 隐藏底层 5 + schema_data + snapshot/list + diff_data(evolve 精简)')
     sdkSimple.unmount()
 
     // minimal 模式:只 read/write

@@ -1,5 +1,13 @@
 # Change: observability-structured-tracing
 
+> ⏸ **状态:已评估暂缓(2026-08-01)**
+> **结论**:缩水 —— TraceSpan 树 + APM 上报不做,只保留 `getTraceMetrics` 纯函数想法
+> **理由**:TraceSpan 树 + timing + APM 上报是后端 agent 框架需求;SDK 用户是前端集成者,`debugLogs` 扁平数组 + DebugDrawer 调试已够。改动面大、收益人群窄。
+> **重启触发**:集成方明确提生产监控 / SLA / 分布式追踪需求。
+> 决策详情与缩水替代见 [`openspec/deferred.md`](../../deferred.md)。原规划内容保留作底稿,下方不变。
+
+---
+
 > 配套:本变更把可观测性从"`debugLogs` 扁平数组 + 无 metrics"升级为结构化 trace(span 树 + timing/status/usage),供 DebugDrawer 树形渲染 + 集成方监控。与 `unify-error-model`(错误 severity 支撑 span status)、`fix-introspection-consistency`(展示出口收敛)协同。跨 `createAgent.ts` + `types` + `DebugDrawer`,建议在 refactor 与 error-model 之后。
 
 ## Why

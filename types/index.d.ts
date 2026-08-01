@@ -75,7 +75,7 @@ export type SdkEvent =
   | { type: 'conflict'; conflict: PendingConflict }
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -639,6 +639,8 @@ export declare function applyPatchToClone(clone: any, op: EditOp, jsonPath: stri
 export declare function applyPatchToLive(bind: any, op: EditOp, jsonPath: string, value: unknown): void;
 export declare function restoreLive(bind: any, snapshotVal: unknown): void;
 export declare function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: unknown): void;
+/** 深度差异对比(对象/数组递归,叶子差异),返回 {path, from, to}[];供 diff_data / verify 自纠 / 审计复用 */
+export declare function diffObjects(a: unknown, b: unknown, prefix?: string): { path: string; from: unknown; to: unknown }[];
 // ============ schema 白名单投影纯函数(schemaUtils,refactor-module-extraction 从 dataOps 抽离)============
 export declare function getSchemaTopKeys(schema: any): string[] | null;
 export declare function isPathAllowed(jsonPath: string, schema: any | null, allowKeys: string[] | null): boolean;
@@ -646,6 +648,33 @@ export declare function unwrapSchema(schema: any): any;
 export declare function getSchemaAtPath(schema: any, jsonPath: string): any | null;
 export declare function projectBySchemaDeep(obj: unknown, schema: any | null): unknown;
 export declare function projectBySchema(obj: unknown, allowKeys: string[] | null): unknown;
+// ============ schema 约束结构化提取(expose-schema-constraints;供 systemPrompt「可操作数据」段 / read 概览 / schema_data 工具)============
+export interface SchemaNodeDesc {
+  type: string;
+  constraints?: {
+    minLength?: number; maxLength?: number; length?: number;
+    min?: number; max?: number; int?: boolean;
+    format?: string | string[];
+    values?: readonly (string | number)[];
+    value?: unknown;
+    item?: SchemaNodeDesc;
+    shape?: Record<string, SchemaNodeDesc>;
+    anyOf?: SchemaNodeDesc[];
+    valueType?: SchemaNodeDesc;
+  };
+  optional?: boolean;
+  nullable?: boolean;
+  default?: unknown;
+  description?: string;
+}
+/** 结构化提取单个 zod 节点的约束(type + 关键约束 + optional/default/nullable;zod 4 `_def`/`_zod.def` 读取) */
+export declare function describeSchemaNode(schema: any): SchemaNodeDesc;
+/** 把标量约束格式化为括号内短串(min/max/enum/format 等;shape/item/anyOf 不渲染) */
+export declare function formatConstraints(c: NonNullable<SchemaNodeDesc['constraints']>): string;
+/** 渲染单行字段标注 `- key (Type?)[约束]: description` */
+export declare function renderSchemaHint(key: string, desc: SchemaNodeDesc): string;
+/** 渲染 schema 顶层字段约束总览(非 object fallback 根节点;供 extractSchemaHint + read 概览复用) */
+export declare function renderSchemaOverview(schema: any): string;
 // ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
 export declare const STOP_WORDS: Set<string>;
 export declare function tokenize(text: string): string[];
@@ -770,6 +799,24 @@ export declare function zodError(path: string, issues: unknown[]): string;
 export declare function jsonParseError(path: string | undefined, raw: string, err: unknown): string;
 /** 提取 zod issues 为结构化 details(每条 path/expected/received/message) */
 export declare function formatZodIssues(issues: unknown[]): unknown[];
+// ============ 统一错误模型(unify-error-model:三档 severity,各 catch 点按档路由)============
+/** 错误严重程度三档:recoverable(回灌)/ fatal(中断)/ observable(记录不中断) */
+export type ErrorSeverity = 'recoverable' | 'fatal' | 'observable';
+/** 统一错误对象(结构化,跨层传递;普通 Error 经 asAgentError 归一化) */
+export interface AgentError {
+  severity: ErrorSeverity;
+  message: string;
+  code?: string;
+  context?: unknown;
+}
+/** 错误路由:recoverable→feedback / fatal→abort / observable→log */
+export type ErrorRouting = 'feedback' | 'abort' | 'log';
+/** 路由纯函数:据 severity 决定错误如何被处理 */
+export declare function routeError(err: AgentError): ErrorRouting;
+/** 把任意错误归一化为 AgentError(已是 AgentError 不覆盖;普通 Error 用 defaultSeverity,默认 fatal) */
+export declare function asAgentError(err: unknown, defaultSeverity?: ErrorSeverity): AgentError;
+/** AgentError 便捷工厂 */
+export declare function agentError(severity: ErrorSeverity, message: string, code?: string, context?: unknown): AgentError;
 
 // === 与 src/core/index.ts 导出对齐(消费者类型完整;复杂内部类型用宽松声明,消费者主要消费工厂返回值) ===
 // 上下文压缩预设
