@@ -16,13 +16,16 @@ import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
 import PageConfigPanel from './PageConfigPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
 import { generateHugePage } from './hugePage'
+import { generateDeepNestedPage } from './deepNestedPage'
 console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
 
 // 顶层(同步):先建响应式 page 挂到 window,供 PageRenderer 绑定(PageRenderer setup 在 onMounted 之前执行)
-// ?huge=1 → 加载 1M 大页面(generateHugePage ~800 实例,测 agent 大 JSON 场景);否则 initialPage
-const isHuge = typeof location !== 'undefined' && new URLSearchParams(location.search).get('huge') === '1'
-const basePage = isHuge ? generateHugePage() : initialPage
+// ?huge=1 → 1M 扁平大页面(800 实例,测体量/read 分页);?deep=1 → 深嵌套复杂专题页(多层 children,测深 jsonPath patch / workingMemory 跨压缩深路径);否则 initialPage
+const query = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null
+const isHuge = query?.get('huge') === '1'
+const isDeep = query?.get('deep') === '1'
+const basePage = isHuge ? generateHugePage() : isDeep ? generateDeepNestedPage() : initialPage
 const pageObj = reactive({
   title: basePage.title,
   components: basePage.components.map((c) => ({ ...c })),
