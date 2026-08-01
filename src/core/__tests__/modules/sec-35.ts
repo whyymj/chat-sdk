@@ -42,6 +42,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     }
   }
 
+  // 超长 goal 截断(capture >200 字 user → goal 取首 200 + …,防 mission pin 段过大)
+  {
+    const mw = createMissionMiddleware()
+    const longText = '帮我' + '设计一个活动页面'.repeat(30) // >200 字
+    const upd: any = mw.beforeAgent!(mkState([{ role: 'user', content: longText }]) as any)
+    assert(upd.mission?.goal.length <= 201 && /…$/.test(upd.mission?.goal), '✓ 超长 goal(>200 字)→ 截断首 200 + …(防 mission pin 段过大)')
+    assert(upd.mission?.sourceMessageIdx === 0, '✓ capture 记 sourceMessageIdx(0)')
+  }
+
   // 首条非任务、二条任务 → capture 二条(跳过非任务)
   {
     const mw = createMissionMiddleware()

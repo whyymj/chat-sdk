@@ -17,10 +17,27 @@ import CardComp from './components/CardComp.vue'
 import SpacerComp from './components/SpacerComp.vue'
 import DividerComp from './components/DividerComp.vue'
 import CarouselComp from './components/CarouselComp.vue'
+import NavbarComp from './components/NavbarComp.vue'
+import BannerComp from './components/BannerComp.vue'
+import CountdownComp from './components/CountdownComp.vue'
+import CouponComp from './components/CouponComp.vue'
+import AccordionComp from './components/AccordionComp.vue'
+import StatComp from './components/StatComp.vue'
+import TimelineComp from './components/TimelineComp.vue'
+import FooterComp from './components/FooterComp.vue'
+import RatingComp from './components/RatingComp.vue'
+import FormComp from './components/FormComp.vue'
+import InputComp from './components/InputComp.vue'
+import SelectComp from './components/SelectComp.vue'
+import StepperComp from './components/StepperComp.vue'
+import BreadcrumbComp from './components/BreadcrumbComp.vue'
+import VideoComp from './components/VideoComp.vue'
+import NoticeBarComp from './components/NoticeBarComp.vue'
 
 const ContainerComp = defineAsyncComponent(() => import('./components/ContainerComp.vue'))
 const SectionComp = defineAsyncComponent(() => import('./components/SectionComp.vue'))
 const GridComp = defineAsyncComponent(() => import('./components/GridComp.vue'))
+const TabsComp = defineAsyncComponent(() => import('./components/TabsComp.vue'))
 
 const COMP_MAP: Record<string, Component> = {
   heading: HeadingComp,
@@ -36,6 +53,23 @@ const COMP_MAP: Record<string, Component> = {
   container: ContainerComp,
   section: SectionComp,
   grid: GridComp,
+  navbar: NavbarComp,
+  banner: BannerComp,
+  countdown: CountdownComp,
+  coupon: CouponComp,
+  tabs: TabsComp,
+  accordion: AccordionComp,
+  stat: StatComp,
+  timeline: TimelineComp,
+  footer: FooterComp,
+  rating: RatingComp,
+  form: FormComp,
+  input: InputComp,
+  select: SelectComp,
+  stepper: StepperComp,
+  breadcrumb: BreadcrumbComp,
+  video: VideoComp,
+  noticeBar: NoticeBarComp,
 }
 
 defineProps<{ comp: any }>()
