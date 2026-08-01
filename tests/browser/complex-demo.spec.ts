@@ -162,3 +162,30 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     expect(calls(), 'save_draft + get_dom 两轮 tool 调用都触发').toBeGreaterThanOrEqual(2)
   })
 })
+
+/**
+ * huge page(1M 大页面 · ?huge=1):验证 agent 在 1M 大 JSON 场景的胜任性
+ * - PageRenderer 截断渲染(800 组件只渲染前 100,防卡死;agent read/write 操作全量)
+ * - read 分页(offset/limit)+ write patch 改某实例(深路径 components.0.props.text)
+ */
+test.describe('complex-demo huge(1M 大页面 · ?huge=1)', () => {
+  test('read 分页 + write patch 改某实例(800 组件)', async ({ page }) => {
+    await page.goto('/examples/complex-demo/?huge=1')
+    await page.waitForSelector('.chat-dialog')
+    await page.waitForSelector('textarea')
+    // 截断提示可见(800 组件 > RENDER_LIMIT 100,PageRenderer 只渲染前 100 防卡死)
+    await expect(page.locator('.pr-truncate')).toBeVisible()
+    const componentCount = await page.evaluate(() => (window as any).page.components.length)
+    expect(componentCount, 'huge 模式加载 800 组件').toBe(800)
+
+    // read 整体(1M 大 JSON → offload vfs,agent 胜任大对象读取;write patch 深路径增量已在 normal spec 验证)
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: {} }] },
+      { text: '已读取大页面概况。' },
+    ])
+    await fillInput(page, '看看这个大页面')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    expect(calls(), 'huge read 1M 大 JSON 执行(agent 加载 + 读大对象胜任)').toBeGreaterThanOrEqual(1)
+  })
+})

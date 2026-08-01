@@ -15,13 +15,17 @@ import EditableBanner from '../_shared/EditableBanner.vue'
 import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
 import PageConfigPanel from './PageConfigPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
+import { generateHugePage } from './hugePage'
 console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
 
 // 顶层(同步):先建响应式 page 挂到 window,供 PageRenderer 绑定(PageRenderer setup 在 onMounted 之前执行)
+// ?huge=1 → 加载 1M 大页面(generateHugePage ~800 实例,测 agent 大 JSON 场景);否则 initialPage
+const isHuge = typeof location !== 'undefined' && new URLSearchParams(location.search).get('huge') === '1'
+const basePage = isHuge ? generateHugePage() : initialPage
 const pageObj = reactive({
-  title: initialPage.title,
-  components: initialPage.components.map((c) => ({ ...c })),
+  title: basePage.title,
+  components: basePage.components.map((c) => ({ ...c })),
 })
 ;(window as any).page = pageObj
 
