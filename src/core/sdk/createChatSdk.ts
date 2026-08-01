@@ -24,6 +24,7 @@ import { createAgent } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { z } from 'zod'
 import { createTodosMiddleware } from '../harness/todos'
+import { createMissionMiddleware } from '../harness/mission'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
@@ -49,7 +50,7 @@ import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
 import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
-import type { VfsFile, HarnessState } from '../harness/state'
+import type { VfsFile, HarnessState, Mission } from '../harness/state'
 import { createInitialState } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
@@ -198,6 +199,7 @@ export interface ChatSdkOptions {
     dataOps?: boolean          // 数据操作工具集(默认 true;关 → 不装数据工具,省 token/上下文)
     fetch?: boolean          // 文档抓取工具 fetch_document(默认 true;关 → 不装)
     planning?: boolean       // todos 任务规划
+    missionAnchor?: boolean  // 任务目标锚定(默认 true;长任务防跑偏,revive-mission-anchor Phase 1)
     skills?: boolean         // 渐进式披露技能
     vfs?: boolean            // 虚拟工作区(关 → 大结果外存退化为截断)
     summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
@@ -304,13 +306,17 @@ export interface ChatSdk {
   /** 卸载(shareContext 时仅减引用计数,归零才真销毁) */
   unmount(): void
   /** 命令式发送一条消息(共享内部 messages,自动持久化) */
-  send(message: string): Promise<string>
+  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>
   /** 暴露底层流式接口(高级用法,自行管理历史时使用) */
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
+  /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+  getMission(): Mission | undefined
+  /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
+  setMission(mission: Partial<Mission>): void
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
@@ -462,7 +468,7 @@ interface AgentCore {
   emit: SdkEventHandler
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
-  send(message: string): Promise<string>
+  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>
   switchSession(sessionId?: string): Promise<string>
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 添加用户创建的 skill(持久化 + 入 controller;同名覆盖) */
@@ -479,6 +485,10 @@ interface AgentCore {
   resolveConflict(action: ConflictResolution['action']): void
   /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
   getInfo(): AgentInfo
+  /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+  getMission(): Mission | undefined
+  /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
+  setMission(mission: Partial<Mission>): void
 }
 
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
@@ -583,6 +593,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   })
 
   const todosMw = createTodosMiddleware([], { maxPlanRevisions: options.maxPlanRevisions })
+  const missionMw = createMissionMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
   if (typeof options.memory === 'function') void memoryMw.refresh()
@@ -699,6 +710,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   }
 
   const usePlanning = caps?.planning !== false
+  const useMission = caps?.missionAnchor !== false // mission 默认开(分层默认核心;长任务防跑偏)
   const useSkills = caps?.skills !== false
   const useVfs = caps?.vfs !== false
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
@@ -862,6 +874,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(dataHintMw ? [dataHintMw] : []),
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
+    ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
       ? [
@@ -980,8 +993,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       persistRuntime()
     },
 
-    async send(message: string): Promise<string> {
+    async send(message: string, options?: { mission?: Partial<Mission> }): Promise<string> {
       await core.initDone
+      // mission 显式覆盖(send({mission}) 优先于自动 capture)
+      if (options?.mission && useMission) missionMw.setMission(options.mission)
       // input 拦截器:send 入口预处理 user message(可改写/审计)
       let msg = message
       if (options.interceptors?.input) {
@@ -1174,6 +1189,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ id: t.id, content: t.content, status: t.status })),
         planPhase: todosMw.getPlanPhase(),
+        mission: useMission ? missionMw.getMission() : undefined,
         subagent: {
           enabled: !!subagentMw,
           maxDepth: options.subagent?.maxDepth ?? 1,
@@ -1193,6 +1209,19 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           ? { enabled: true, auto: checkpointAuto, list: checkpointMgr.list() }
           : undefined,
       }
+    },
+    /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+    getMission(): Mission | undefined {
+      return useMission ? missionMw.getMission() : undefined
+    },
+    /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
+    setMission(m: Partial<Mission>): void {
+      if (!useMission) {
+        if (options.debug) console.warn('[page-agent-sdk][mission] capabilities.missionAnchor 关闭,setMission 忽略')
+        return
+      }
+      missionMw.setMission(m)
+      core.infoTick.value++ // 触发 DebugDrawer 刷新
     },
   }
 
@@ -1530,6 +1559,10 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     switchSession: core.switchSession,
     stream: core.stream,
     inspect: core.getInfo,
+    /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+    getMission: core.getMission,
+    /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
+    setMission: core.setMission,
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,

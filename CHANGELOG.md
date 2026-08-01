@@ -6,6 +6,7 @@
 
 ### Added
 - **自适应规划(add-adaptive-planning)**:① todos 增量更新 —— 新增 `update_todo({ id, content?, status? })` 工具(按 id 改单项,不必重传整个清单);`Todo` 增稳定 `id`(`write_todos` 时框架按 index 生成 `t-1/t-2...`,LLM 也可显式传;hydrate 旧数据按 index 补,向后兼容);`augmentPrompt` 渲染带 id 供 LLM 引用。② 规划阶段防死循环 —— 新增 `maxPlanRevisions` 配置(默认 5,**规划阶段总轮次**预算,与 `maxIterations` 总闸正交):首次 `write_todos` 进入 planning → 每轮 `beforeModel` 计数(含 read/query/search 调研轮)→ 主数据写工具(write/set_data/edit_data/delete_data)成功退出 → 超限回灌「停止调研/修订,基于当前清单执行」(不强制终止,总闸兜底);支持重入(退出后再 write_todos 重新进入,单阶段计数重置)。③ 自适应 prompt 引导 —— `usageHints` planning 段升级(简单直接做/复杂先规划/update_todo 增量/方案确认 + 轮次预算提示)+ humanConfirm 补「规划方案确认」第 4 类。④ 内置 skill `adaptive-planning`(判断复杂度→规划→可选用户确认→执行→动态增量修订,入 npm 包 `skills/` 分发)。⑤ `inspect().planPhase` 反映 `{ inPlanning, rounds, limit }`;`createChatSdk({ maxPlanRevisions })`。选型见 `openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md`(A 框架深度 / B 计数语义各三方案 + 升级路径 + 暂缓提案关系)。**范围:轻量版**(框架只加 update_todo + maxPlanRevisions;复杂度判断/方案确认/标准流程在 prompt 层)。能力边界见 `doc/capability-boundaries.md`
+- **任务目标锚定 mission(revive-mission-anchor Phase 1)**:会话级 Mission 状态(`{ goal, acceptanceCriteria?, sourceMessageIdx, capturedAt, explicit }`)。① capture:首条「任务型」user 启发式(非空/非问候/含任务动词,不调 LLM)+ `send({mission})`/`setMission` 显式覆盖;② augmentPrompt 每轮注入「## 当前主线目标」pin 段(**天然跨压缩保留** —— mission 在 state 不在 messages,compressInput 不碰);③ SDK API:`getMission()` / `setMission({goal?,criteria?})`(合并;`{}` 清空)/ `send(text,{mission?})` / `inspect().mission`;④ `capabilities.missionAnchor`(分层默认核心,**默认开**;`false` 关)。长任务防跑偏 + 压缩丢主线。定位升级重启(complex-agent-roadmap Phase 1,见 `doc/complex-agent-roadmap.md`)
 
 ### Changed
 - planning 中间件工具(write_todos / update_todo)`source` 标 `'builtin'`(此前落 `'user'`,语义错;与 vfs/checkpoint/humanConfirm 一致)
@@ -14,6 +15,8 @@
 - selftest 新增 `sec-34`(update_todo 增量 / id 生成 / TODO_NOT_FOUND / maxPlanRevisions 阶段计数 / 超限回灌 / 写工具退出 / 重入 / hydrate 补 id / 同轮冲突拒)。断言计数 782→800
 - e2e `inspect.mjs` + `systemprompt.mjs` 补(update_todo + source=builtin + planPhase + maxPlanRevisions 配置反映 + 自适应规划引导)。断言计数 228→238
 - browser `page-demo.spec.ts` 加「write_todos→update_todo→write 自适应规划端到端」。断言计数 15→16
+- selftest 新增 `sec-35`(mission capture 启发式 / 保守(问候/超短/超长/无动词)/ setMission 显式覆盖·合并·清空 / getMission / augmentPrompt pin 段)。断言计数 800→817
+- e2e `inspect.mjs` 补 mission(getMission/setMission/inspect().mission/capabilities.missionAnchor:false → getMission undefined + setMission warn 不抛)。断言计数 238→247
 
 ## [2.17.0] - 2026-08-01
 

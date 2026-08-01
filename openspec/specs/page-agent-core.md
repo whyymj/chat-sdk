@@ -40,6 +40,14 @@ Planning 中间件提供两个互补工具:① `write_todos` 整表替换(拆解
 ## Requirement: 自适应规划 prompt 引导(prompt 层软约束)
 `usageHints` 中间件按 `capabilities.planning` 注入「自适应规划」引导段:简单/明确任务直接 `read`/`write`;复杂任务(多步/大改/歧义/不可逆)先 `write_todos` 拆解;`update_todo` 增量修订;规划方案需用户拍板时用 `request_human_confirmation`。该引导为 **prompt 层软约束**(非框架硬约束),复杂度判断由 LLM 完成,框架不做启发式检测(避免 mission-anchor 评估的 capture 误判争议)。内置 skill `adaptive-planning`(入 npm `files`)文档化「判断复杂度→规划→可选确认→执行→动态修订」标准流程。
 
+## Requirement: Mission 任务目标锚定(revive-mission-anchor Phase 1:capture + pin + 跨压缩保留)
+
+系统维护**会话级** Mission 状态(`{ goal, acceptanceCriteria?, sourceMessageIdx, capturedAt, explicit }`)。**capture 策略**:首条「任务型」user 消息启发式捕获(非空/非问候/含任务动词,纯规则**不调 LLM**),或 `send(text, { mission })` 显式传入覆盖(`explicit:true`);偏保守(宁漏不误,集成方 `setMission` 兜底)。
+
+**每轮 pin 段(天然跨压缩)**:`augmentPrompt` 注入「## 当前主线目标」(goal + 完成标准)到 system prompt。mission 在 state 不在 messages,`compressInput` 压的是 messages,故 mission **不随多轮压缩稀释**(无需改 summarization)—— 原始任务目标长任务多轮后仍每轮可见。
+
+**SDK API**:`getMission()` / `setMission({ goal?, acceptanceCriteria? })`(合并更新;传 `{}` 清空)/ `send(text, { mission? })` / `inspect().mission`。`capabilities.missionAnchor`(分层默认核心,**默认开**;`false` 不装 → `getMission` 返 undefined,`setMission` warn 不抛,行为同现状)。Mission 会话级,不进 checkpoint,不跨 session 持久化。Mission 与 `memory`(静态知识)/ `todos`(步骤)/ `adaptive-planning`(规划)正交:Mission 管「为什么做」(目标锚定)。
+
 ## Requirement: 内存虚拟工作区(vfs)
 系统提供基于内存的 `vfs_read/write/edit/ls/glob/grep`,作为 agent 工作记忆;会话级、刷新即失。
 

@@ -17,6 +17,20 @@ export interface Todo {
   status: TodoStatus
 }
 
+/** 会话级任务目标锚点(mission 中间件维护;capture 或集成方 setMission;revive-mission-anchor Phase 1) */
+export interface Mission {
+  /** 一句话任务目标(必填;capture 时取首条任务型 user 原文,>200 字截断) */
+  goal: string
+  /** 完成标准(可选,集成方显式传入时填) */
+  acceptanceCriteria?: string[]
+  /** 来源 user 消息 index(自动 capture 时填) */
+  sourceMessageIdx: number
+  /** capture/setMission 时间戳 */
+  capturedAt: number
+  /** true=集成方显式 setMission;false=自动 capture */
+  explicit: boolean
+}
+
 /** 虚拟工作区文件 */
 export interface VfsFile {
   content: string
@@ -56,6 +70,8 @@ export interface HarnessState {
   lastCompression?: CompressionStats
   /** beforeReturn 自纠计数(createAgent 维护);达 maxVerifyAttempts 强制 return,防死循环 */
   verifyAttempts: number
+  /** 会话级任务目标锚点(mission 中间件维护;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
+  mission?: Mission
 }
 
 export function createInitialState(): HarnessState {

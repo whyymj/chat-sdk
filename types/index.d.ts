@@ -142,6 +142,8 @@ export interface AgentInfo {
   todos: { id: string; content: string; status: string }[];
   /** 规划阶段防死循环状态(maxPlanRevisions 预算;planning 关闭时 inPlanning 恒 false) */
   planPhase?: { inPlanning: boolean; rounds: number; limit: number };
+  /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
+  mission?: Mission;
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
@@ -456,7 +458,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -504,6 +506,20 @@ export interface DialogConfig {
   onClose?: () => void;
 }
 
+/** 会话级任务目标锚点(mission 中间件;capture 或 setMission;revive-mission-anchor Phase 1) */
+export interface Mission {
+  /** 一句话任务目标(必填) */
+  goal: string;
+  /** 完成标准(可选,集成方显式传入) */
+  acceptanceCriteria?: string[];
+  /** 来源 user 消息 index(自动 capture 时填) */
+  sourceMessageIdx: number;
+  /** capture/setMission 时间戳 */
+  capturedAt: number;
+  /** true=集成方显式 setMission;false=自动 capture */
+  explicit: boolean;
+}
+
 export interface ChatSdk {
   /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless)。
    *  可选传 overrideContainer(HTMLElement | 选择器字符串)覆盖创建时 options.container —— 异步绑定:创建时可省略 container,mount 时才指定 */
@@ -515,11 +531,15 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos) */
   inspect(): AgentInfo;
+  /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+  getMission(): Mission | undefined;
+  /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
+  setMission(mission: Partial<Mission>): void;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */

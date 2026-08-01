@@ -327,5 +327,30 @@ export async function run() {
     sdkOff.unmount()
   }
 
+  console.log('[e2e:inspect] mission 任务目标锚定(revive-mission-anchor Phase 1)')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-mission', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    assert(sdk.inspect().mission === undefined, 'inspect().mission 初始 undefined(未 capture)')
+    assert(sdk.getMission() === undefined, 'getMission() 初始 undefined')
+    sdk.setMission({ goal: '测试目标', acceptanceCriteria: ['标准1'] })
+    assert(sdk.getMission()?.goal === '测试目标' && sdk.getMission()?.explicit === true, 'setMission({goal,criteria}) → getMission 反映(explicit=true)')
+    assert(sdk.inspect().mission?.goal === '测试目标', 'inspect().mission 反映 setMission')
+    sdk.setMission({})
+    assert(sdk.getMission() === undefined, 'setMission({}) → 清空')
+    sdk.unmount()
+
+    // capabilities.missionAnchor:false → 不装,getMission undefined,setMission warn 不抛
+    const sdkOff = createChatSdk({ ui: false, id: 'e2e-mission-off', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, missionAnchor: false } })
+    await sdkOff.mount()
+    assert(sdkOff.getMission() === undefined, 'missionAnchor:false → getMission undefined')
+    let threw = false
+    try { sdkOff.setMission({ goal: 'x' }) } catch { threw = true }
+    assert(!threw, 'missionAnchor:false → setMission warn 不抛')
+    assert(sdkOff.getMission() === undefined, 'missionAnchor:false → setMission 忽略(getMission 仍 undefined)')
+    assert(!sdkOff.inspect().middleware.includes('mission'), 'missionAnchor:false → middleware 不含 mission')
+    sdkOff.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
