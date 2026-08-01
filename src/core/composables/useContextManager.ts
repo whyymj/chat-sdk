@@ -14,7 +14,7 @@
  */
 import type { AgentMessage } from '../types'
 import type { BaseMessage } from '@langchain/core/messages'
-import { groupRounds, plainSummary, MEMORY_SUMMARY_PREFIX, type Round } from '../utils/rounds'
+import { groupRounds, plainSummary, parseSummarySegment, type Round } from '../utils/rounds'
 import { estimateRoundTokens, indexSummarize, recallRounds } from './contextIndex'
 
 export interface ContextManagerOptions {
@@ -91,9 +91,10 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
       const firstUserIdx = rounds[0].startIdx
       for (let i = 0; i < firstUserIdx; i++) {
         const m = messages[i]
-        if (m.role === 'system' && typeof m.content === 'string' && m.content.startsWith(MEMORY_SUMMARY_PREFIX)) {
-          prevSummaryBody = m.content.replace(/^【[^】]*】\n?/, '')
-          break
+        if (m.role === 'system') {
+          // 经共享 parseSummarySegment 提取头部旧摘要(消除与 rounds.ts 的提取重复;unify-context-compression)
+          const seg = parseSummarySegment(m.content as string)
+          if (seg) { prevSummaryBody = seg.body; break }
         }
       }
     }

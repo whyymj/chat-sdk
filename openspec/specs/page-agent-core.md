@@ -190,6 +190,10 @@ vfs 内部按 path 前缀分三池独立 LRU:`large_results/*`(offload 自动,�
 
 ReAct 循环维护双计数:`rounds`(工具轮,只在有 tool_calls 执行后 +1,受 `maxToolRounds` 约束)与 `iterations`(总循环次数,含自纠轮,受 `maxIterations` 硬上限约束)。格式自纠(format retry)与 verify 自纠不再消耗 `rounds`(回归"工具轮"语义;自纠有独立预算 `formatRetries`/`verifyAttempts`);`maxIterations` 默认 `max(maxToolRounds*3, 30)`(经纯函数 `computeMaxIterations` 推导,可显式覆盖),作为总闸防"工具轮→自纠→工具轮→自纠"交替的总数无界。循环耗尽(工具轮或迭代触顶)且无缓存最终答时,兜底文案引导用户基于已完成工具结果继续(不再要求"简化问题")。
 
+## Requirement: 双摘要合并协议统一(SummarySegment)
+
+上下文压缩的两套机制(`summarization` 上下文窗口压缩 / `trimMemoryMessages` 内存 OOM 裁剪)共享统一的摘要段协议:`SummarySegment`(body + rounds + cumulative)+ `mergeSummarySegments`(合并新旧摘要:prev 在前作"更早"、current 在后作"续",累积历史不丢)+ `parseSummarySegment`(从 system 消息识别摘要段)+ `renderSummarySegment`(渲染为消息内容)。`MEMORY_SUMMARY_PREFIX`(`【更早对话摘要】`)是统一标记。两套机制的"提取头部旧摘要"逻辑均经 `parseSummarySegment`(单一 source),消除此前两处逐字重复的提取补丁。两套压缩保留各自触发时机与产出格式(不合并为单一机制),只统一摘要段的合并逻辑。
+
 ## Requirement: 乐观锁 hash 强度(cyrb53)与并发语义文档化
 
 乐观锁的 `hashValue`(整体 bind 值的 hash,用于 `expectedHash`/`autoLock` 比对)采用 cyrb53(53-bit 非加密 hash,碰撞空间 2^53,替代旧 djb2 32-bit),降低"不同值 hash 恰等 → 误判无冲突 → 静默覆盖外部修改"的概率。hash 算法不持久化、不跨会话(同会话内 read→write 用同一算法即自洽,换算法无兼容负担)。`autoLock`(默认 true)在 `maxParallelTools>1` 并发工具下语义为"整体快照":多个 read 并发写共享 `lastReadHash`(完成顺序不定),后续 write 比对"最后完成的 read 的整体 bind hash";并发场景下若需精确乐观锁,LLM 应显式传 `expectedHash`(取自它自己那次 read 的返回值 hash)绕开共享态竞态。

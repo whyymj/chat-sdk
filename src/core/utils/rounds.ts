@@ -67,8 +67,45 @@ export function roundToolNames(r: Round): string[] {
   return names
 }
 
-/** 头部"更早对话摘要"system 的内容前缀(由 trimMemoryMessages 产生) */
+/** 头部"更早对话摘要"system 的内容前缀(由 trimMemoryMessages 产生;统一摘要段标记,groupRounds/parseSummarySegment 据此识别) */
 export const MEMORY_SUMMARY_PREFIX = '【更早对话摘要'
+
+/** 统一摘要段结构(trimMemoryMessages 与 summarization 共用;unify-context-compression) */
+export interface SummarySegment {
+  /** 摘要正文(不含前缀标记) */
+  body: string
+  /** 涵盖轮数(供 meta 显示) */
+  rounds?: number
+  /** 是否含更早累积摘要(prev 合并过);决定渲染标签"含累积" */
+  cumulative?: boolean
+}
+
+/**
+ * 合并新旧摘要段:current 为本次新产摘要,prev 为头部已有的累积摘要。
+ * 返回合并后的段(prev.body 在前作"更早",current.body 在后作"续",累积历史不丢)。
+ * 单一 source of truth:trim 与 summarization 共用。unify-context-compression
+ */
+export function mergeSummarySegments(current: SummarySegment, prev?: SummarySegment): SummarySegment {
+  if (!prev || !prev.body) return current
+  return {
+    body: `${prev.body}\n【续】\n${current.body}`,
+    rounds: (prev.rounds ?? 0) + (current.rounds ?? 0),
+    cumulative: true,
+  }
+}
+
+/** 从 system 消息内容解析出 SummarySegment(若是摘要段);否则 null */
+export function parseSummarySegment(content: string): SummarySegment | null {
+  if (typeof content !== 'string' || !content.startsWith(MEMORY_SUMMARY_PREFIX)) return null
+  const body = content.replace(/^【[^】]*】\n?/, '')
+  return { body }
+}
+
+/** 把 SummarySegment 渲染为 system 消息内容 */
+export function renderSummarySegment(seg: SummarySegment): string {
+  const tag = seg.cumulative ? `(${seg.rounds ?? 0} 轮,含累积)` : (seg.rounds ? `(${seg.rounds} 轮)` : '')
+  return `${MEMORY_SUMMARY_PREFIX}${tag}】\n${seg.body}`
+}
 
 /**
  * 内存对话轮数上限裁剪(纯函数,可单测):超限把最旧轮次压缩为一条摘要 system 消息。
@@ -90,14 +127,14 @@ export function trimMemoryMessagesImpl(
   const keepFromIdx = rounds[rounds.length - maxMemoryRounds].startIdx
   const older = rounds.slice(0, rounds.length - maxMemoryRounds)
 
-  // 提取头部已有的旧摘要正文(groupRounds 跳过头部 system,旧摘要不在 older 内,不合并会被丢弃)
+  // 提取头部已有的旧摘要段(groupRounds 跳过头部 system,旧摘要不在 older 内,不合并会被丢弃)
   const firstUserIdx = rounds[0].startIdx
-  let prevSummary = ''
+  let prevSeg: SummarySegment | null = null
   for (let i = 0; i < firstUserIdx; i++) {
     const m = messages[i]
-    if (m.role === 'system' && typeof m.content === 'string' && m.content.startsWith(MEMORY_SUMMARY_PREFIX)) {
-      prevSummary = m.content
-      break
+    if (m.role === 'system') {
+      prevSeg = parseSummarySegment(m.content as string)
+      if (prevSeg) break
     }
   }
 
@@ -109,11 +146,9 @@ export function trimMemoryMessagesImpl(
     })
     .join('\n')
 
-  // 合并:旧摘要正文(去 header)在前(更早),本轮 older 摘要作"续"追加 → 累积历史不丢
-  const prevBody = prevSummary ? prevSummary.replace(/^【[^】]*】\n?/, '') : ''
-  const content = prevBody
-    ? `${MEMORY_SUMMARY_PREFIX}(${older.length} 轮,含累积)】\n${prevBody}\n【续】\n${olderDigest}`
-    : `${MEMORY_SUMMARY_PREFIX}(${older.length} 轮)】\n${olderDigest}`
+  // 合并新旧摘要(单一 source of truth: mergeSummarySegments):prev 在前(更早),olderDigest 作"续" → 累积历史不丢
+  const merged = mergeSummarySegments({ body: olderDigest, rounds: older.length }, prevSeg ?? undefined)
+  const content = renderSummarySegment(merged)
 
   return {
     trimmed: true,

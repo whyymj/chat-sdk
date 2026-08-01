@@ -33,7 +33,7 @@ import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE } from '../../sdk/contextPreset'
 import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, computeMaxIterations, trimContextIfNeededImpl } from '../../harness/createAgent'
-import { trimMemoryMessagesImpl } from '../../utils/rounds'
+import { trimMemoryMessagesImpl, mergeSummarySegments, parseSummarySegment, renderSummarySegment } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
@@ -101,6 +101,14 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(computeMaxIterations(3) === 30, 'computeMaxIterations: 小 maxToolRounds(3) 取下限 30')
   assert(computeMaxIterations(20) === 60, 'computeMaxIterations: 大 maxToolRounds(20) → 60')
   assert(computeMaxIterations(10, 50) === 50, 'computeMaxIterations: 显式 userMax(50) 覆盖')
+
+  // mergeSummarySegments/parse/render(统一摘要合并协议,unify-context-compression)
+  assert(mergeSummarySegments({ body: '新' }).body === '新', 'mergeSummarySegments: 无 prev → current 原样')
+  const merged = mergeSummarySegments({ body: '新', rounds: 3 }, { body: '旧', rounds: 5 })
+  assert(merged.body === '旧\n【续】\n新' && merged.rounds === 8 && merged.cumulative === true, 'mergeSummarySegments: 有 prev → prev 在前 + 【续】 + current,rounds 叠加,cumulative=true')
+  const seg = { body: 'x', rounds: 2 }
+  assert(parseSummarySegment(renderSummarySegment(seg))?.body === 'x', 'parse/render 往返:body 不变')
+  assert(parseSummarySegment('非摘要内容') === null, 'parseSummarySegment: 非摘要段 → null')
 
   // ============ 大 JSON 查询/搜索(query_data / search_data)============
   console.log('\n[data query + search]')
