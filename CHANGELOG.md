@@ -10,8 +10,9 @@
 ### Changed
 - **模型能力表匹配 first-match → longest-match**:`resolveModelCaps` 对 `MODEL_TABLE` 的匹配从 first-match 改为按"实际匹配子串长度"(`RegExp.exec(model)[0].length`)降序取最具体条目,消除顺序依赖(未来新模型名是旧模型子串时不再被宽泛条目抢先匹配,拿到错的 `contextWindow`/`maxOutputTokens` 连锁影响 offload 阈值/压缩触发/maxTokens 缺省)。不用 `pattern.source.length` —— `|` 分支会虚高 source 长度(实测 `glm-4.5` 被 `glm-4|glm4` 误压)。**行为不变**(当前顺序下 longest=first 结果一致,向后兼容)
 - **乐观锁 hashValue 升级 cyrb53(53-bit)**:`hashValue`(整体 bind 值的 hash,乐观锁用)从 djb2(32-bit,~65536 对象 50% 碰撞)升级为 cyrb53(53-bit,碰撞空间 2^53,生日碰撞阈值升至 ~9500 万对象),大幅降"误判无冲突 → 静默覆盖外部修改"概率。同时明确并发语义:`autoLock` 在 `maxParallelTools>1` 下退化为"整体快照语义"(最后完成的 read 的整体 hash),并发场景建议 LLM 显式传 `expectedHash` 精确控制。hash 不持久化/不跨会话,**无兼容性问题**(语义不变,LLM 只比对相等)
-- **ReAct 循环预算语义加固(工具轮 vs 总迭代)**:`rounds` 回归"只计工具轮"(有 tool_calls 执行才 +1);格式自纠 / verify 自纠不再消耗 `rounds`(它们有独立预算 `formatRetries`/`verifyAttempts`)。新增 `iterations` 总循环计数 + `maxIterations` 硬上限(默认 `max(maxToolRounds*3, 30)`,经纯函数 `computeMaxIterations` 推导,防自纠死循环的总闸)。同等 `maxToolRounds` 下 agent 可用工具轮更多(自纠不再挤占工具预算,更符合直觉)。循环耗尽兜底文案改为进展引导(不再让用户"简化问题")。**向后兼容**(语义修正)
-- **双摘要合并协议统一(unify-context-compression)**:抽 `SummarySegment` 协议 + `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 纯函数作单一 source of truth;`trimMemoryMessagesImpl`(`rounds.ts`)与 `useContextManager.compress` 的"提取头部旧摘要"逻辑改调共享 `parseSummarySegment`(消除两处逐字重复的提取补丁)。**内部重构,行为不变**(两套压缩保留各自触发时机与产出格式,只统一摘要段合并逻辑)
+- **ReAct 循环预算语义加固(工具轮 vs 总迭代)**:`rounds` 回归"只计工具轮"(有 tool_calls 执行才 +1);格式自纠 / verify 自纠不再消耗 `rounds`(它们有独立预算 `formatRetries`/`verifyAttempts`)。新增 `iterations` 总循环计数 + `maxIterations` 硬上限(默认 `max(maxToolRounds*3, 30)`,经纯函数 `computeMaxIterations` 推导,防自纠死循环的总闸)。同等 `maxToolRounds` 下 agent 可用工具轮更多(自纠不再挤占工具预算,更符合直觉)。循环耗尽兜底文案改为进展引导(不再让用户"简化问题");`round_start` 事件的 round 字段改用迭代号(`iterations`,自纠轮新号,避免 UI 按工具轮号显示时同号卡顿)。**向后兼容**(语义修正)
+- **双摘要合并协议统一(unify-context-compression)**:抽 `SummarySegment` 协议 + `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 纯函数;`trimMemoryMessagesImpl`(`rounds.ts`)与 `useContextManager.compress` 的"提取头部旧摘要"改调共享 `parseSummarySegment`(消除两处逐字重复的提取补丁)。**内部重构,行为不变**(统一"提取";"合并"格式保留各自 —— summarization 新在前 / trim 旧在前,不强行统一)
+- **中间件声明式 priority 排序(declarative-middleware-ordering 期一)**:`createChatSdk` 中间件装载序从"数组字面量位置硬编码"改为声明式 `MIDDLEWARE_PRIORITY` 常量 + `composeMiddlewareStack` 纯函数稳定排序 + selftest 断言锁死已知约束(dataHint 最前 / sdk-events 最末 / verify 在用户前 / humanConfirm 在 approval 前);修了初版 `sdk-events=9999` bug(用户中间件 Infinity 会排到其后,破坏"最后观察"语义)。**行为不变**(排序结果与原硬编码一致)。期二(`createReconfigurable` setter 收敛)**DEFERRED** —— 纯内部重构量大收益低,推迟
 
 ### Tests
 - e2e `systemprompt.mjs` 补 `inspect().systemPrompt` 完整性断言(配 skills/memory/dataOps 后含 usageHints `## 能力使用提示` / skills `## 可用 Skills` 段,修复前漏)。断言计数 217→221
@@ -19,6 +20,7 @@
 - selftest `sec-30` 补 cyrb53/hashValue 白盒断言(确定性 + 雪崩 + 碰撞抽样)。断言计数 683→688
 - selftest `sec-21` 补 `computeMaxIterations` 白盒断言(默认 / 小 / 大 maxToolRounds / 显式覆盖)。断言计数 688→692
 - selftest `sec-21` 补 `mergeSummarySegments`/`parseSummarySegment`/`renderSummarySegment` 白盒断言。断言计数 692→696
+- selftest `sec-21` 补 `composeMiddlewareStack` 排序白盒断言(含 sdk-events 最末,锁死 9999 bug 不回归)。断言计数 696→699
 
 ## [2.16.0] - 2026-07-31
 

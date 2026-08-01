@@ -46,6 +46,7 @@ import { resolveStorage, resolveDialogConfig } from './optionsResolver'
 import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
+import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState } from '../harness/state'
 import { createInitialState } from '../harness/state'
@@ -848,7 +849,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       /* skillStore 读取失败静默(降级内存,当前会话仍可用) */
     }
   }
-  const middlewares = [
+  // 中间件按声明式 priority 排序(替代数组字面量位置硬编码);条件构造顺序无关,末尾统一排序保证约束(declarative-middleware-ordering)
+  const middlewares = composeMiddlewareStack([
     // dataHint 插最前:数据段紧跟 base(与现状等价);每轮从 liveData() 动态重算
     ...(dataHintMw ? [dataHintMw] : []),
     usageHintsMw,
@@ -896,7 +898,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // SDK 事件中间件(最末,最后观察):数据写后发 data_change;每轮结束发 message_update
     // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
     createSdkEventMiddleware(emit, messages, liveData, usage),
-  ]
+  ])
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
 

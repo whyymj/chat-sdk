@@ -404,7 +404,7 @@ export function createAgent(options: CreateAgentOptions) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
         if (signal?.aborted) break
-        onEvent({ type: 'round_start', round: rounds + 1 })
+        onEvent({ type: 'round_start', round: iterations })  // 迭代号(含自纠轮,每轮新号);log 的 round 仍用工具轮号(rounds)便于调试追踪(harden-react-loop-budget)
 
         // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
         state = runBeforeModel(middlewares, { messages: currentMessages, state })

@@ -34,6 +34,7 @@ import { resolveContextOptions, PRESET_PRESERVE } from '../../sdk/contextPreset'
 import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, computeMaxIterations, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl, mergeSummarySegments, parseSummarySegment, renderSummarySegment } from '../../utils/rounds'
+import { composeMiddlewareStack } from '../../sdk/middlewareStack'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
@@ -109,6 +110,16 @@ export async function run(ctx: TestCtx): Promise<void> {
   const seg = { body: 'x', rounds: 2 }
   assert(parseSummarySegment(renderSummarySegment(seg))?.body === 'x', 'parse/render 往返:body 不变')
   assert(parseSummarySegment('非摘要内容') === null, 'parseSummarySegment: 非摘要段 → null')
+
+  // composeMiddlewareStack(中间件声明式排序,declarative-middleware-ordering;sdk-events 靠 Infinity + 原序最末)
+  // 输入模拟 createChatSdk 实际构造序:用户中间件在前(行 895 options.middleware),sdk-events 在后(行 898)
+  const stack = composeMiddlewareStack([
+    { name: 'customUser' }, { name: 'usageHints' }, { name: 'dataHint' }, { name: 'sdk-events' },
+  ] as any[])
+  const ordered = stack.map((m: any) => m.name)
+  assert(ordered[0] === 'dataHint', 'composeMiddlewareStack: dataHint(priority 10)排最前')
+  assert(ordered[1] === 'usageHints', 'composeMiddlewareStack: usageHints(priority 20)次之')
+  assert(ordered[2] === 'customUser' && ordered[3] === 'sdk-events', 'composeMiddlewareStack: 用户中间件 + sdk-events 同 Infinity 按原序,sdk-events 最末(锁死 9999 bug 不回归)')
 
   // ============ 大 JSON 查询/搜索(query_data / search_data)============
   console.log('\n[data query + search]')

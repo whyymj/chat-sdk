@@ -192,7 +192,13 @@ ReAct 循环维护双计数:`rounds`(工具轮,只在有 tool_calls 执行后 +1
 
 ## Requirement: 双摘要合并协议统一(SummarySegment)
 
-上下文压缩的两套机制(`summarization` 上下文窗口压缩 / `trimMemoryMessages` 内存 OOM 裁剪)共享统一的摘要段协议:`SummarySegment`(body + rounds + cumulative)+ `mergeSummarySegments`(合并新旧摘要:prev 在前作"更早"、current 在后作"续",累积历史不丢)+ `parseSummarySegment`(从 system 消息识别摘要段)+ `renderSummarySegment`(渲染为消息内容)。`MEMORY_SUMMARY_PREFIX`(`【更早对话摘要】`)是统一标记。两套机制的"提取头部旧摘要"逻辑均经 `parseSummarySegment`(单一 source),消除此前两处逐字重复的提取补丁。两套压缩保留各自触发时机与产出格式(不合并为单一机制),只统一摘要段的合并逻辑。
+上下文压缩的两套机制(`summarization` 上下文窗口压缩 / `trimMemoryMessages` 内存 OOM 裁剪)共享统一的摘要段协议:`SummarySegment`(body + rounds + cumulative)+ `mergeSummarySegments`(合并新旧摘要:prev 在前作"更早"、current 在后作"续",累积历史不丢)+ `parseSummarySegment`(从 system 消息识别摘要段)+ `renderSummarySegment`(渲染为消息内容)。`MEMORY_SUMMARY_PREFIX`(`【更早对话摘要】`)是统一标记。两套机制的"提取头部旧摘要"逻辑均经 `parseSummarySegment`(单一 source),消除此前两处逐字重复的提取补丁。两套压缩保留各自触发时机与产出格式(不合并为单一机制);统一"提取"逻辑(`parseSummarySegment` 共享),"合并"格式保留各自(summarization 新在前突出近期 / trim 旧在前作历史)—— 不强行统一以免改变产出行为(务实取舍)。
+
+## Requirement: 中间件声明式 priority 排序
+
+`createChatSdk` 的中间件装载顺序由声明式 `MIDDLEWARE_PRIORITY` 常量(name → priority 数字)驱动,经纯函数 `composeMiddlewareStack(middlewares)` 稳定排序:builtin 中间件按 priority 升序,用户自定义中间件(无 priority → Infinity)尾随并保持其声明序。已知顺序约束由 selftest 断言锁死(`dataHint` 在 `usageHints` 前 / `sdk-events` 最末(靠 Infinity + 数组原序保证,不声明 priority 数字,避免用户中间件 Infinity 排到其后破坏"最后观察"语义)/ `verify` 在用户中间件前 / `humanConfirm` 在 `approval` 前)。该机制替代此前"`middlewares` 数组字面量位置 = 装载序"的隐式硬编码,使顺序偏移可被测试捕捉。`Middleware` 接口不增加 priority 字段(第三方中间件零负担,自动尾随 builtin)。
+
+> 运行时重配置 setter 收敛为 `createReconfigurable` 注册表 —— **DEFERRED**(原 change 期二,未实现):当前 10+ setter 各自 rebind + infoTick 工作正常,收敛为纯内部重构(行为零变化),量大(10+ 改造 + e2e)收益低,推迟到频繁加可配置项时再做。完整设计见 `archive/2026-07-31-declarative-middleware-ordering/design.md` §2.2。
 
 ## Requirement: 乐观锁 hash 强度(cyrb53)与并发语义文档化
 
