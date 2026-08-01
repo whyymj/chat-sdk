@@ -43,7 +43,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       }
       if (hasDataOps) {
         if (simple) {
-          hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write({value}) 整体替换(value 直传 JSON 对象,如 {title:"x"},无需 stringify);write({value, patch:{op,jsonPath}}) 增量 patch(op=set/remove/merge/append);write({patch:{jsonPath}, del:true}) 删除子路径。写入自动经 schema 校验(失败不写)+ 自动存快照(出错可用 restore_data 回退)。')
+          hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write 改值两姿势:① 改单个字段/子路径用 write({patch:{op:"set", jsonPath:"路径.字段"}, value:新值})——value 就是该字段的新值(类型匹配:string 直传字符串、number 传数字、对象传对象),不要包成 {字段:值} 对象(字段名已在 jsonPath,再包一层会致 schema 报错);② 替换整个对象用 write({value:{整个新对象}})。op:set 设值 / remove 删 / merge 合并对象 / append 追加数组;批量多改动 write({patches:[{op,jsonPath,value},...]});删子路径 write({patch:{jsonPath:"路径"}, del:true})。写入自动经 schema 校验(失败不写,按错误提示改值类型/形状后重试)+ 自动存快照(出错可用 restore_data 回退)。')
           hints.push('修改大对象/数组优先用 write 的 patch 增量(只发改动部分),避免整体重传被 max_tokens 截断致 JSON 不完整。')
           hints.push('读大数组(read 返回 hasMore=true)用 read({jsonPath,offset,limit}) 分页(offset+=limit 续读,默认 limit=50);一次读多个不相关子路径用 read({jsonPaths:[...]}) 省轮次;复杂 patches 改动先 write({patches,dryRun:true}) 预检(走完整校验不落盘)。')
           hints.push('查历史快照值(看上一版长啥样 / 冲突诊断 / 用户问"刚才改了啥")用 history_data({id?,jsonPath?})(只读不改当前);对比当前与历史快照的差异需切 advanced 用 diff_data(返回结构化 path→from/to)。')
