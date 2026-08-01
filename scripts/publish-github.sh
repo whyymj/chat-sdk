@@ -31,6 +31,10 @@ echo
 
 # 3. 切到 public 并基于 github/master 重置(丢弃上次的整理提交,重新整理)
 git checkout "$BRANCH_PUBLIC"
+# 安全保护:确认切到了 public 分支(避免 public 不存在时 checkout 静默失败、后续 reset --hard 误伤当前分支 master)
+if [ "$(git branch --show-current)" != "$BRANCH_PUBLIC" ]; then
+  echo "❌ 切换到 $BRANCH_PUBLIC 失败(分支不存在?用 git branch public \$REMOTE_GITHUB/master 创建),中止以免 reset 误伤当前分支"; exit 1
+fi
 git reset --hard "$REMOTE_GITHUB/master"
 
 # 4. squash merge master:把所有新改动作为未提交暂存(不产生 merge commit)
