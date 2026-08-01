@@ -20,6 +20,7 @@ export { defineTool } from './sdk/defineTool'
 export { actionsToTools, actionsToInspectInfo } from './sdk/actions'
 export type { ActionDef, ActionMap } from './sdk/actions'
 export { presets, systemPromptHelpers, extractSchemaHint } from './presets'
+export type { SchemaHintOptions } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
@@ -54,7 +55,7 @@ export {
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数(refactor-module-extraction 从 dataOps 抽离;expose-schema-constraints 的 describeSchemaNode 归宿)
-export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, formatConstraints } from './tools/schemaUtils'
+export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, renderSchemaShallow, formatConstraints } from './tools/schemaUtils'
 export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数(refactor-module-extraction 期二 从 useContextManager 抽离;白盒可测)
 export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds } from './composables/contextIndex'

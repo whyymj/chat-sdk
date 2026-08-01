@@ -5,7 +5,7 @@
  * buildSystemPrompt 为纯函数(结构化入参,无闭包依赖),便于后续 fix-introspection-consistency 的
  * getEffectiveSystemPrompt 复用 —— prompt 拼装收敛为单一真相源。
  */
-import { systemPromptHelpers, extractSchemaHint } from '../presets'
+import { systemPromptHelpers, extractSchemaHint, type SchemaHintOptions } from '../presets'
 import type { DataConfig } from '../tools/dataOps'
 
 /**
@@ -23,9 +23,9 @@ export const DEFAULT_SYSTEM_PROMPT = [
 ].join('\n\n')
 
 /** 拼接「可操作数据」段到 systemPrompt:从 data 的 schema 字段 .describe() 自动提取注入 */
-export function buildDataPrompt(data: DataConfig | undefined): string {
+export function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions): string {
   if (!data) return ''
-  const hint = extractSchemaHint(data.schema)
+  const hint = extractSchemaHint(data.schema, schemaHint)
   return `\n\n## 可操作数据(字段以 read 工具返回的实际值为准)\n${data.description ? data.description + '\n' : ''}${hint}`
 }
 

@@ -320,3 +320,32 @@ export function renderSchemaOverview(schemaRaw: any): string {
   } catch { /* ignore */ }
   return ''
 }
+
+/** 浅渲染单行:`- key (Type): description`(无约束,分层概览用;大 schema 不爆 token) */
+function renderSchemaFieldShallow(key: string, schemaRaw: any): string {
+  const desc = describeSchemaNode(schemaRaw)
+  const tail = desc.description ? `: ${desc.description}` : ''
+  return `- ${key} (${desc.type})${tail}`
+}
+
+/**
+ * 渲染 schema 顶层字段浅概览(分层模式用):只 key + type + 一句描述,**不带**约束(min/max/enum)、**不递归** shape。
+ * 供 extractSchemaHint 大 schema(>阈值)分层注入 systemPrompt,体积降一个数量级(深层约束交 schema_data 按需查)。
+ */
+export function renderSchemaShallow(schemaRaw: any): string {
+  if (!schemaRaw) return ''
+  try {
+    let s: any = schemaRaw
+    for (let i = 0; i < 8 && s && s._def; i++) {
+      if (s._def.innerType) { s = s._def.innerType; continue }
+      if (s._def.getter) { s = s._def.getter(); continue }
+      if (s._def.schema) { s = s._def.schema; continue }
+      break
+    }
+    const shape = s?.shape ? (typeof s.shape === 'function' ? s.shape() : s.shape) : null
+    if (shape && typeof shape === 'object' && Object.keys(shape).length) {
+      return Object.entries(shape).map(([k, v]) => renderSchemaFieldShallow(k, v)).join('\n')
+    }
+  } catch { /* ignore */ }
+  return ''
+}

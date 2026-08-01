@@ -9,7 +9,7 @@
  * container / llm / data 等依赖集成方环境的选项仍由调用方提供。
  */
 import type { ChatSdkOptions } from './sdk/createChatSdk'
-import { renderSchemaOverview } from './tools/schemaUtils'
+import { renderSchemaOverview, renderSchemaShallow } from './tools/schemaUtils'
 
 export const presets: Record<string, Partial<ChatSdkOptions>> = {
   /**
@@ -64,12 +64,39 @@ export const systemPromptHelpers = {
 /**
  * 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底。
  * 导出供集成方预览 io 契约将注入的提示,亦供单测。
+ *
+ * **分层披露**(add-schema-tiered-disclosure):大 schema(顶层 key 数 > maxKeys **或** 全量渲染字符 > maxChars)
+ * 自动转「顶层概览」(key + type + 一句描述,不带 min/max/enum 约束、不递归 shape)+ 尾部提示(深层约束查 schema_data)。
+ * 小 schema(≤阈值)仍全量(现状不变)。默认 maxKeys=15 / maxChars=4000,集成方经 schemaHint 配置可调。
  */
-export function extractSchemaHint(schema: any): string {
+export interface SchemaHintOptions {
+  /** 顶层 key 数超此 → 分层(默认 15) */
+  maxKeys?: number
+  /** 全量渲染字符超此 → 分层(默认 4000) */
+  maxChars?: number
+}
+
+const DEFAULT_SCHEMA_HINT_MAX_KEYS = 15
+const DEFAULT_SCHEMA_HINT_MAX_CHARS = 4000
+
+export function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string {
   if (!schema) return ''
-  // 走 describeSchemaNode 结构化提取(带类型 + min/max/enum/必填/默认 等约束);非 object / 空 shape fallback 到根节点描述
+  // 全量渲染(带 min/max/enum 约束 + 嵌套);非 object / 空 shape fallback 到根节点描述
   const overview = renderSchemaOverview(schema)
-  if (overview) return overview
+  if (overview) {
+    const maxKeys = opts?.maxKeys ?? DEFAULT_SCHEMA_HINT_MAX_KEYS
+    const maxChars = opts?.maxChars ?? DEFAULT_SCHEMA_HINT_MAX_CHARS
+    // 阈值判断:顶层 key 数(renderSchemaOverview 每顶层字段一行)> maxKeys 或 全量字符 > maxChars → 分层
+    const keyCount = overview.split('\n').filter((l) => l.trim().startsWith('- ')).length
+    if (keyCount > maxKeys || overview.length > maxChars) {
+      const shallow = renderSchemaShallow(schema)
+      if (shallow) {
+        return '## 可操作数据(顶层概览;深层约束查 schema_data)\n' + shallow
+          + '\n提示:改某组件深层字段前,先 schema_data({jsonPath}) 查完整约束(advanced);或 read 子路径见实际值。'
+      }
+    }
+    return overview
+  }
   return schema?.description || '(用 read 查看实际形状)'
 }
 

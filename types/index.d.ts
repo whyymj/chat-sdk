@@ -437,6 +437,8 @@ export interface ChatSdkOptions {
   /** AGENTS.md 风格持久指令。支持 string 与同步/异步函数(异步函数适合加载 RAG 文档) */
   memory?: string | (() => string | Promise<string>);
   data?: DataConfig;
+  /** 大 schema 分层披露阈值(默认 maxKeys=15/maxChars=4000;超则 systemPrompt 只注入顶层概览,深层约束查 schema_data) */
+  schemaHint?: SchemaHintOptions;
   permissions?: PermissionRule[];
   /** 自定义中间件(注入到内置中间件之后;可拦截/观察模型调用、工具、prompt) */
   middleware?: any[];
@@ -714,6 +716,10 @@ export declare function formatConstraints(c: NonNullable<SchemaNodeDesc['constra
 export declare function renderSchemaHint(key: string, desc: SchemaNodeDesc): string;
 /** 渲染 schema 顶层字段约束总览(非 object fallback 根节点;供 extractSchemaHint + read 概览复用) */
 export declare function renderSchemaOverview(schema: any): string;
+/** 渲染 schema 顶层字段浅概览(分层模式:只 key+type+desc,不带约束/不递归;大 schema 用,体积降) */
+export declare function renderSchemaShallow(schema: any): string;
+/** extractSchemaHint 分层阈值配置(默认 maxKeys=15/maxChars=4000;超则转顶层概览) */
+export interface SchemaHintOptions { maxKeys?: number; maxChars?: number }
 // ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
 export declare const STOP_WORDS: Set<string>;
 export declare function tokenize(text: string): string[];

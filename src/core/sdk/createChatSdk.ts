@@ -165,6 +165,8 @@ export interface ChatSdkOptions {
   memory?: string | (() => string | Promise<string>)
   /** 主数据对象(单对象;schema 校验 + bind 直连,工具直接读写 bind,不挂 window) */
   data?: DataConfig
+  /** 大 schema 分层披露阈值(默认 maxKeys=15/maxChars=4000;超则 systemPrompt 只注入顶层概览,深层约束查 schema_data;add-schema-tiered-disclosure) */
+  schemaHint?: { maxKeys?: number; maxChars?: number }
   /** scope 白名单(默认不启用;启用后对 window/vfs 工具生效) */
   permissions?: PermissionRule[]
   /** 自定义中间件(在内置中间件之后注入;可拦截/观察模型调用、工具执行、prompt 增强等) */
@@ -805,7 +807,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
   const dataHintMw: Middleware | null = finalDataConfig
-    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData()) || undefined }
+    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData(), options.schemaHint) || undefined }
     : null
 
   // augmentSystem 钩子:集成方按运行时状态(state/data)动态注入 system prompt 段
@@ -1194,7 +1196,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         id: agentId,
         model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
         // 代理到 createAgent 权威拼装(base + Σ augmentPrompt,含 usageHints/skills/memory/todos/subagents/augmentSystem 等全部段);agent 未构造时回退 base+data(fix-introspection-consistency)
-        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData())),
+        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint)),
         tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
