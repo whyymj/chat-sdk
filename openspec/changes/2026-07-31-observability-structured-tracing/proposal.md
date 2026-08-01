@@ -6,6 +6,11 @@
 > **重启触发**:集成方明确提生产监控 / SLA / 分布式追踪需求。
 > 决策详情与缩水替代见 [`openspec/deferred.md`](../../deferred.md)。原规划内容保留作底稿,下方不变。
 
+> 🔄 **[2026-08-01 定位升级:重启 —— Phase 3,恢复完整]**
+> 定位升级 + 「后台自动化 agent」需要可观测/错误追溯(见 [`doc/complex-agent-roadmap.md`](../../../doc/complex-agent-roadmap.md)),标尺②推翻,本 change 重启授权。
+> **调整(升级,非缩水)**:旧「缩水只留 getTraceMetrics」**升级为完整 TraceSpan 树**(timing/status/usage + DebugDrawer 树形渲染 + `onEvent('trace')` + `getTraceMetrics`);② 默认「高级 opt-in」(`capabilities.tracing`,采集有性能开销,调试/自动化场景开);③ 面向「胜任复杂 + 自动化」的性能归因 / 错误追溯 / APM 接口。
+> 落地为新 change `revive-observability-tracing`(Phase 3)。下方旧 ❌ 缩水评估保留作溯源。
+
 ---
 
 > 配套:本变更把可观测性从"`debugLogs` 扁平数组 + 无 metrics"升级为结构化 trace(span 树 + timing/status/usage),供 DebugDrawer 树形渲染 + 集成方监控。与 `unify-error-model`(错误 severity 支撑 span status)、`fix-introspection-consistency`(展示出口收敛)协同。跨 `createAgent.ts` + `types` + `DebugDrawer`,建议在 refactor 与 error-model 之后。
