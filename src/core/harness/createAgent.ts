@@ -406,9 +406,10 @@ export function createAgent(options: CreateAgentOptions) {
     const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
     let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
     let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
+    let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
     const maxFormatRetries = 2
     try {
-      while (rounds < maxToolRounds && iterations < maxIterations) {
+      while ((rounds < maxToolRounds || pendingFormatRetry) && iterations < maxIterations) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
         if (signal?.aborted) break
@@ -443,9 +444,12 @@ export function createAgent(options: CreateAgentOptions) {
         if (!response.toolCalls.length) {
           const garbled = detectGarbledToolCall(response.content)
           // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / <｜｜DSML｜｜> / 伪 XML <invoke> 等)
-          // 而非标准 tool_calls,系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环
+          // 而非标准 tool_calls,系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环。
+          // pendingFormatRetry=true 让 while 暂时绕过 rounds 预算给 LLM 重发机会(重试是格式修正,非工具轮次;
+          // 实测:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡;maxIterations 兜底防死循环)
           if (garbled && formatRetries < maxFormatRetries) {
             formatRetries += 1
+            pendingFormatRetry = true
             log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
             currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签/DSML 标记,如 <｜tool_calls｜>、<｜｜DSML｜｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
             continue
@@ -470,9 +474,11 @@ export function createAgent(options: CreateAgentOptions) {
               continue // 回灌反馈,继续循环让模型修正(不 return)
             }
           }
+          pendingFormatRetry = false // 收口:正常 final 或 garbled 重试耗尽(已 emit error)→ 清 flag
           onEvent({ type: 'done', content: response.content })
           return response.content
         }
+        pendingFormatRetry = false // 走到这里 = 本轮有标准 tool_call(重试成功或正常),清 flag
 
         // 执行工具(经 wrapToolCall 洋葱;按 maxParallelTools 并发,默认 1 串行保持原语义)
         const calls = response.toolCalls
