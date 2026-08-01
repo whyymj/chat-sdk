@@ -291,5 +291,41 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:inspect] inspect().tools 含 write_todos + update_todo(planning 开)+ planPhase 初始(add-adaptive-planning)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-planning-tools', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, planning: true },
+    })
+    await sdk.mount()
+    const names = sdk.inspect().tools.map((t) => t.name)
+    assert(names.includes('write_todos'), 'planning 开 → inspect().tools 含 write_todos')
+    assert(names.includes('update_todo'), 'planning 开 → inspect().tools 含 update_todo(add-adaptive-planning 增量工具)')
+    const ut = sdk.inspect().tools.find((t) => t.name === 'update_todo')
+    assert(ut && ut.source === 'builtin', 'update_todo → source=builtin')
+    const pp = sdk.inspect().planPhase
+    assert(pp && pp.inPlanning === false && pp.rounds === 0 && pp.limit === 5, 'inspect().planPhase 初始 {inPlanning:false, rounds:0, limit:5(默认)}')
+    sdk.unmount()
+
+    // maxPlanRevisions 配置反映到 planPhase.limit
+    const sdkCfg = createChatSdk({
+      ui: false, id: 'e2e-plan-rev', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, planning: true }, maxPlanRevisions: 8,
+    })
+    await sdkCfg.mount()
+    assert(sdkCfg.inspect().planPhase.limit === 8, 'inspect().planPhase.limit 反映 maxPlanRevisions 配置(8)')
+    sdkCfg.unmount()
+
+    // planning 关闭 → 不含 write_todos/update_todo
+    const sdkOff = createChatSdk({
+      ui: false, id: 'e2e-planning-off', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, planning: false },
+    })
+    await sdkOff.mount()
+    const namesOff = sdkOff.inspect().tools.map((t) => t.name)
+    assert(!namesOff.includes('write_todos') && !namesOff.includes('update_todo'), 'planning:false → 不含 write_todos/update_todo')
+    sdkOff.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

@@ -24,7 +24,7 @@
 
 ## 进行中的 change
 
-(无。真 LLM 审计收口完成,见最近完成 `followup-from-live-llm-audit`。暂缓项见下;新需求另行立项。)
+(无。最近完成 `add-adaptive-planning`(自适应规划:`update_todo` 增量 + `maxPlanRevisions` 规划阶段防死循环 + skill/prompt 引导,见 archive/;选型见其 `decision-record.md`,能力边界见 `doc/capability-boundaries.md`)+ `followup-from-live-llm-audit`。暂缓项见下;新需求另行立项。)
 
 ## 已评估暂缓的 change
 

@@ -149,5 +149,20 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] planning 开 → 默认 usageHints 含「自适应规划」引导(add-adaptive-planning)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-adaptive-plan', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, planning: true },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(/自适应规划/.test(sp), 'planning 开 → systemPrompt 含「自适应规划」引导段')
+    assert(/update_todo/.test(sp), 'systemPrompt 含 update_todo 用法引导(增量改单项)')
+    assert(/write_todos/.test(sp), 'systemPrompt 含 write_todos 用法引导')
+    assert(/maxPlanRevisions|规划阶段有轮次预算/.test(sp), 'systemPrompt 含规划阶段轮次预算提示(防死循环)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

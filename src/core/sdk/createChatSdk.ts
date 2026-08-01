@@ -183,6 +183,8 @@ export interface ChatSdkOptions {
   maxMemoryRounds?: number
   debug?: boolean
   maxToolRounds?: number
+  /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌提示,防"光规划不执行"死循环。与 maxIterations 总闸正交 */
+  maxPlanRevisions?: number
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number
   /** 同轮多个工具调用的并发上限(默认 1 串行;>1 并发,可能影响有状态中间件如 todos 的计数) */
@@ -580,7 +582,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     poolBytes: options.vfs?.poolBytes,
   })
 
-  const todosMw = createTodosMiddleware()
+  const todosMw = createTodosMiddleware([], { maxPlanRevisions: options.maxPlanRevisions })
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
   if (typeof options.memory === 'function') void memoryMw.refresh()
@@ -702,6 +704,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
   if (useVfs) {
     for (const n of VFS_TOOL_NAMES) toolSources.set(n, 'builtin')
+  }
+  // planning 是内置中间件,其工具(write_todos 整表替换 / update_todo 增量)标 builtin(否则落 'user',语义错;add-adaptive-planning)
+  if (usePlanning) {
+    for (const t of todosMw.tools ?? []) toolSources.set(t.name, 'builtin')
   }
   const useSummarization = caps?.summarization !== false
   const useMemory = caps?.memory !== false
@@ -1166,7 +1172,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         contextPreset: options.contextPreset ?? 'auto',
         memory: memoryMw.get(),
         middleware: middlewares.map((m) => m.name),
-        todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ content: t.content, status: t.status })),
+        todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ id: t.id, content: t.content, status: t.status })),
+        planPhase: todosMw.getPlanPhase(),
         subagent: {
           enabled: !!subagentMw,
           maxDepth: options.subagent?.maxDepth ?? 1,

@@ -9,8 +9,10 @@ import type { CompressionStats } from '../composables/useContextManager'
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 
-/** 计划项(write_todos 整表替换) */
+/** 计划项(write_todos 整表替换 + update_todo 增量更新) */
 export interface Todo {
+  /** 稳定标识:write_todos 时框架按 index 生成 t-1/t-2...(LLM 也可显式传);hydrate 旧数据按 index 补。**输出必有、输入可选**(向后兼容) */
+  id: string
   content: string
   status: TodoStatus
 }

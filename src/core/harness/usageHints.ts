@@ -33,7 +33,14 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
     name: 'usageHints',
     augmentPrompt: () => {
       const hints: string[] = []
-      if (caps?.planning !== false) hints.push('多步任务建议先 write_todos 拆解为步骤并逐步推进。')
+      if (caps?.planning !== false) {
+        hints.push('【自适应规划】按任务复杂度决定是否先规划,不要对简单任务过度编排:')
+        hints.push('  · 简单/明确任务(改单字段、调样式、查值)→ 直接 read/write 执行,不必 write_todos。')
+        hints.push('  · 复杂任务(多步、大改、有歧义、不可逆)→ 先 write_todos 拆解,首个任务标 in_progress,逐项推进。')
+        hints.push('  · 执行中发现步骤要改/补/细分 → 用 update_todo({id, content?, status?}) 按 id 增量改单项,不必重传整个清单。')
+        hints.push('  · 规划出多步方案若需用户拍板 → 先 request_human_confirmation 给方案选项,确认后再执行。')
+        hints.push('  · 规划阶段有轮次预算(maxPlanRevisions,默认 5):勿反复调研/改计划而不执行,规划充分后即开始 write 落地。')
+      }
       if (hasDataOps) {
         if (simple) {
           hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write({value}) 整体替换(value 直传 JSON 对象,如 {title:"x"},无需 stringify);write({value, patch:{op,jsonPath}}) 增量 patch(op=set/remove/merge/append);write({patch:{jsonPath}, del:true}) 删除子路径。写入自动经 schema 校验(失败不写)+ 自动存快照(出错可用 restore_data 回退)。')
@@ -75,6 +82,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  1) 用户让你「给方案/列选项/我来选/挑一个」时:把每个方案作为一个 option,调 request_human_confirmation(question=简述, options=[方案A,方案B,...], recommendation=你推荐的)。不要只回文字罗列方案让用户自己回复——要用工具把选项做成可点选按钮。')
         hints.push('  2) 需求有歧义/不确定时:调工具问清楚(options 不传则用户答同意或拒绝)。')
         hints.push('  3) 即将执行高风险不可逆操作(删除/覆盖/批量改动)前:调工具确认。')
+        hints.push('  4) 规划出多步方案需用户确认时:把整个方案(或关键分步)作为 option 调 request_human_confirmation,确认后再执行。')
         hints.push('用户在选项里选了哪个,就按那个方案继续;选「拒绝」则停止并询问如何调整。')
       }
       if (hints.length) {

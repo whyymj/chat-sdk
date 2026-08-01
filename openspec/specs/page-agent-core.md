@@ -32,8 +32,13 @@ SDK 以 `createChatSdk(options)` 命令式 API 对外暴露,返回带 `mount(con
 ## Requirement: Skills 渐进式披露
 系统在 agent 启动时仅把每个 skill 的 name + description 注入 system prompt;skill 全文仅在 LLM 调用 `load_skill(name)` 时加载到当轮 context;重复加载被防。
 
-## Requirement: Planning 以 write_todos 整表替换
-`write_todos` 工具以整表替换语义更新 todos 列表(状态 pending/in_progress/completed);系统拒绝并行的多个 `write_todos` 调用。
+## Requirement: Planning 整表替换 + 增量更新 + 规划阶段防死循环
+Planning 中间件提供两个互补工具:① `write_todos` 整表替换(拆解多步任务,状态 pending/in_progress/completed);② `update_todo({ id, content?, status? })` 按 id 增量更新单项(执行中动态修订,不必重传整个清单)。`Todo` 含稳定 `id`(`write_todos` 时框架按 index 生成 `t-N`,LLM 可显式传;hydrate 旧数据按 index 补);`update_todo` 找不到 id → `TODO_NOT_FOUND`;一轮内两者不可混用(整表替换 vs 增量语义冲突)。Planning 工具 `source` 标 `'builtin'`。
+
+**规划阶段防死循环**(`maxPlanRevisions`,默认 5,与总轮次总闸 `maxIterations` 正交):首次 `write_todos` 进入规划阶段 → 每轮 `beforeModel` 计数(含 read/query/search 调研轮)→ 主数据写工具(write/set_data/edit_data/delete_data)成功退出 → 超限回灌「停止调研/修订,基于当前清单执行」(不强制终止,总闸兜底);退出后可重入(单阶段计数重置,允许多次「规划→执行→再规划」)。`capabilities.planning: false` → 不装(两工具与防死循环均不生效)。`inspect().planPhase` 反映 `{ inPlanning, rounds, limit }`。
+
+## Requirement: 自适应规划 prompt 引导(prompt 层软约束)
+`usageHints` 中间件按 `capabilities.planning` 注入「自适应规划」引导段:简单/明确任务直接 `read`/`write`;复杂任务(多步/大改/歧义/不可逆)先 `write_todos` 拆解;`update_todo` 增量修订;规划方案需用户拍板时用 `request_human_confirmation`。该引导为 **prompt 层软约束**(非框架硬约束),复杂度判断由 LLM 完成,框架不做启发式检测(避免 mission-anchor 评估的 capture 误判争议)。内置 skill `adaptive-planning`(入 npm `files`)文档化「判断复杂度→规划→可选确认→执行→动态修订」标准流程。
 
 ## Requirement: 内存虚拟工作区(vfs)
 系统提供基于内存的 `vfs_read/write/edit/ls/glob/grep`,作为 agent 工作记忆;会话级、刷新即失。

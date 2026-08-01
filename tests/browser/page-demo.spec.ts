@@ -142,4 +142,51 @@ test.describe('page-demo: read → write → read', () => {
     const lenAfter = await page.evaluate(() => (window as any).page.components.length)
     expect(lenAfter).toBe(60)
   })
+
+  /**
+   * 自适应规划端到端(add-adaptive-planning):
+   * write_todos 拆解 → update_todo 按 id 标完成 → write 落地。
+   * 验证 update_todo 增量工具 + 规划流程在浏览器端走通(page-demo 无 approval,无干扰)。
+   * 捕获 LLM 请求体断言 write_todos/update_todo 工具调用真发 + tool 结果含生成的 id(渲染)。
+   */
+  test('write_todos 拆解 → update_todo 标完成 → write 落地(自适应规划端到端)', async ({ page }) => {
+    // 捕获发往 LLM 的请求体:assistant.tool_calls(证明工具调用)+ role:tool content(证明结果回灌)
+    const requestBodies: any[] = []
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+        try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
+      }
+    })
+
+    // mock LLM:write_todos(拆 1 步,不传 id → 框架生成 t-1)→ update_todo(按 t-1 标完成)→ write 落地 → 完成
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write_todos', arguments: { todos: [{ content: '把标题改成「规划落地」', status: 'in_progress' }] } }] },
+      { tool_calls: [{ name: 'update_todo', arguments: { id: 't-1', status: 'completed' } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '规划落地', patch: { op: 'set', jsonPath: 'title' } } }] },
+      { text: '已按计划完成:标题改为「规划落地」。' },
+    ])
+
+    await fillInput(page, '帮我改下标题')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 断言 1:标题 DOM + window.page.title 已落地(write 执行成功)
+    const title = await page.textContent('.pr-title')
+    expect(title).toBe('规划落地')
+    const pageTitle = await page.evaluate(() => (window as any).page.title)
+    expect(pageTitle).toBe('规划落地')
+
+    // 断言 2:LLM 请求体里出现过 write_todos + update_todo 工具调用(规划流程真走)
+    const allToolCalls = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'assistant').flatMap((m: any) => m.tool_calls || []))
+    const toolNames = allToolCalls.map((tc: any) => tc.function?.name || tc.name)
+    expect(toolNames, '规划流程含 write_todos 拆解').toContain('write_todos')
+    expect(toolNames, '增量更新含 update_todo 按 id 标完成').toContain('update_todo')
+
+    // 断言 3:write_todos 的 tool 结果回灌含生成的 id t-1(证明 id 生成 + 渲染,update_todo 能据此引用)
+    const toolContents = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
+      .join('\n')
+    expect(toolContents, 'write_todos 结果含框架生成的 id t-1').toContain('t-1')
+  })
 })

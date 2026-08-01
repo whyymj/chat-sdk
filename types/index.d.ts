@@ -139,7 +139,9 @@ export interface AgentInfo {
   contextPreset: 'auto' | 'conservative' | 'aggressive' | 'complex';
   memory: string;
   middleware: string[];
-  todos: { content: string; status: string }[];
+  todos: { id: string; content: string; status: string }[];
+  /** 规划阶段防死循环状态(maxPlanRevisions 预算;planning 关闭时 inPlanning 恒 false) */
+  planPhase?: { inPlanning: boolean; rounds: number; limit: number };
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
@@ -345,7 +347,7 @@ export interface SessionMeta {
 export interface SessionSnapshot {
   messages: AgentMessage[];
   vfs: Record<string, { content: string; mimeType?: string; updatedAt: number }>;
-  todos: { content: string; status: 'pending' | 'in_progress' | 'completed' }[];
+  todos: { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }[];
   memory: string;
 }
 export type StorageEvent =
@@ -443,6 +445,8 @@ export interface ChatSdkOptions {
   maxMemoryRounds?: number;
   debug?: boolean;
   maxToolRounds?: number;
+  /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌,防"光规划不执行"死循环。与 maxIterations 正交 */
+  maxPlanRevisions?: number;
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number;
   /** 同轮工具并发上限(默认 1 串行) */
