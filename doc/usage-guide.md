@@ -167,6 +167,8 @@ createChatSdk({
   memory: '...',                // AGENTS.md 风格持久指令
   permissions: [...],           // scope 白名单(默认不启用)
   middleware: [...],            // 自定义中间件(见第 7 节)
+  actions: { name: { description, run, params? } },  // 宿主动作(2.18+):SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调触发页面操作;见 §6
+  schemaHint: { maxKeys?, maxChars? },               // 大 schema 分层披露阈值(2.18+;默认 15/4000,超阈值转顶层概览省 token);见 §6
 
   /* ===== 持久化与会话 ===== */
   storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象/false(默认关闭)
@@ -178,7 +180,7 @@ createChatSdk({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向:默认关,需显式 verify:true)
+  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;workingMemory=跨压缩记忆(2.18+)默认开)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -448,6 +450,105 @@ sdk.hook((e) => {
 显式 `expectedHash` 优先于 `autoLock` 的共享 hash,跨并发工具可重现、可推理。
 
 > **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read`/`get_data` 返回值里的 `hash` 字段即可,无需集成方自己算。
+
+### 自动化闭环与规模化:`get_dom` / `actions` / `schemaHint` / `workingMemory`(2.18+)
+
+四个互补能力,组合出「胜任自动化的 agent」:改数据 → 看渲染 DOM → 触发宿主页面动作;并在大 schema / 频繁压缩场景下保持可控。
+
+#### DOM 读取 `get_dom`(看「渲染后」的页面)
+
+让 agent 读**渲染后**的 DOM 结构(区别于 `read` 读的是数据 JSON)。用途:改完数据回看渲染是否生效、定位元素、验证样式落地、辅助 UI 设计问答。`capabilities.domInspect` 默认**关闭**(读 DOM 有 token 成本,按需开启)。
+
+```ts
+createChatSdk({
+  capabilities: { domInspect: true },  // opt-in,默认关
+  // ...
+}).mount()
+```
+
+agent 调用 `get_dom({ selector?, depth?, attrs?, includeText? })`:
+
+- `selector`:CSS 选择器(默认 `body`,读整页)
+- `depth`:遍历深度(默认 `3`,防大 DOM 爆 token;`0` 只读根节点,上限 10)
+- `attrs`:属性白名单。**不传** = 默认常用(`id/class/href/src/alt/title/style/role/aria-label/name/type/value`)+ 所有 `data-*`;**传了** = 严格白名单(不含 `data-*`,只返回你列的)
+- `includeText`:是否含直接文本(默认 `true`)
+
+返回结构化 JSON(`{tag, attrs, text, children[], childCount?}`),深度截断处只报 `childCount` 不展开;大结果自动外存 vfs。区别于 `eval_script`(沙箱自由脚本返回文本):`get_dom` 只读 + 结构化 + 属性白名单(不执行脚本、不暴露敏感 attr)。
+
+```jsonc
+// agent 调 get_dom({ selector: '.navbar', depth: 2 }) 返回示例
+{
+  "tag": "nav", "attrs": { "class": "navbar" },
+  "children": [
+    { "tag": "span", "attrs": { "class": "navbar-title" }, "text": "我的专题" }
+  ]
+}
+```
+
+> 需要手动注入(不走 capabilities)时:`import { domTools } from 'page-agent-sdk'` 展开 tools。纯函数 `domToStructure(node, opts)` 已导出,可脱离浏览器单测。
+
+#### 宿主动作 `actions`(触发保存/发布等页面操作)
+
+集成方注册页面操作,SDK 自动把每个 action 包成**命名 tool**(LLM 直接看到 `save_draft`/`publish` 等,无需 `trigger_action` 中转)。配合 `get_dom` 形成「改数据 → 看 DOM → 触发动作」闭环。
+
+```ts
+createChatSdk({
+  actions: {
+    save_draft: {
+      description: '保存当前页面为草稿(写本地存储)。改完数据后调用以持久化。',
+      run: (args) => {
+        localStorage.setItem('draft', JSON.stringify(args))
+        return { saved: true, at: Date.now() }
+      },
+    },
+    publish: {
+      description: '发布页面到线上。调用前应已 save_draft。',
+      run: async () => { await fetch('/api/publish', { method: 'POST' }); return '已发布' },
+    },
+    // 带参数的动作(params 为 ZodObject,LLM 按 schema 传参)
+    set_theme: {
+      description: '切换主题',
+      params: z.object({ theme: z.enum(['light', 'dark']) }),
+      run: ({ theme }) => { document.documentElement.dataset.theme = theme; return `主题已切到 ${theme}` },
+    },
+  },
+  // ...
+}).mount()
+```
+
+要点:
+
+- `run(args)` 返回值序列化回灌 LLM(`undefined` → "动作完成";`string` 直传;对象 → JSON)。**异常隔离**:`run` 抛错 → 错误字符串回灌 LLM 自纠(agent 不崩)
+- 动作名须合法标识符(`[a-zA-Z][a-zA-Z0-9_]*`,如 `save_draft`),非法名跳过 + warn
+- `inspect().actions` 返回 `{ [name]: { description, hasParams } }`
+
+#### schema 分层披露(`schemaHint`)
+
+`data.schema` 字段的 `.describe()` 会自动注入 systemPrompt「可操作数据」段。**大 schema**(几十上百字段)全量注入会撑爆 systemPrompt。`schemaHint` 配置触发**分层披露**:超阈值时自动转「顶层概览」(key + type + 一句描述,不带约束、不递归 shape)+ 尾部提示「深层约束查 `schema_data`」—— 省 token 又不丢可发现性;小 schema(≤ 阈值)仍全量(无感)。
+
+```ts
+createChatSdk({
+  data: { schema: hugeSchema, bind: page },
+  schemaHint: { maxKeys: 15, maxChars: 4000 },  // 默认值;超阈值触发概览模式,可调大/调小
+  // ...
+}).mount()
+```
+
+默认 `maxKeys: 15, maxChars: 4000`。想全量披露(小 schema 不在乎 token):调大阈值;想更省:调小。相关导出:`extractSchemaHint` / `renderSchemaShallow` / `renderSchemaHint` / `renderSchemaOverview` / `formatConstraints` / `describeSchemaNode`。
+
+#### 工作记忆 `workingMemory`(跨压缩保留定位 path 与 read hash)
+
+长任务频繁压缩上下文时,agent 之前 `read`/`query_data`/`search_data` 定位到的 **path** 和 **read 返回的 hash** 会随 older 轮次被摘掉 → agent 重复检索(浪费 token)+ 凭记忆写导致乐观锁 `autoLock` 误冲突。`workingMemory` 中间件(`capabilities.workingMemory`,**默认开**)自动捕获这些结构化定位信息,经 `augmentPrompt` 每轮注入「## 工作记忆」段(在 state 不在 messages → 压缩不动它 → 天然跨压缩保留)。
+
+```ts
+createChatSdk({
+  capabilities: { workingMemory: true },  // 默认开,无需配置;false 关闭
+  // ...
+}).mount()
+// inspect().workingMemory → { locatedPaths: string[], lastHashes: {[path]: hash} }(各 ≤10 LRU)
+```
+
+自动捕获规则(不调 LLM):`read`/`query_data`/`search_data` 结果 → `locatedPaths`(LRU ≤10 去重);`read` 结果里的 `hash=` → `lastHashes[path]`(LRU ≤10)。与 `preserveLastToolResults`(保工具结果摘要防字段描述丢)互补;与 mission(mission 管目标,workingMemory 管中间态)正交。
 
 ### 6.2 自定义工具
 

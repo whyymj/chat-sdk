@@ -145,9 +145,11 @@ createChatSdk({
   tools: [...],                    // custom tools (defineTool)
   skills: [...],                   // custom skills (defineSkill)
   memory: '...',                   // AGENTS.md-style persistent directives
+  actions: { name: { description, run, params? } },  // host actions (2.18+): SDK wraps each as a named tool (save_draft/publish…); see §6
+  schemaHint: { maxKeys?, maxChars? },               // large-schema tiered disclosure thresholds (2.18+; default 15/4000); see §6
 
   // capability toggles (default all on; verify default off)
-  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify? },
+  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; workingMemory default on
 
   // human-in-the-loop
   humanConfirm: true,               // proactive inquiry (default on; AI asks when uncertain/multi-plan)
@@ -397,6 +399,105 @@ sdk.hook((e) => {
 Explicit `expectedHash` takes precedence over the `autoLock` shared hash — reproducible and reason-able across concurrent tools.
 
 > **Hash algorithm**: from 2.16+, `hashValue` is upgraded to **cyrb53 (53-bit)**, replacing the old djb2 (32-bit) to significantly reduce collisions. Just take the `hash` field from `read` / `get_data` return values for `expectedHash` — integrators never compute it themselves.
+
+### Automation loop & scale: `get_dom` / `actions` / `schemaHint` / `workingMemory` (2.18+)
+
+Four complementary capabilities that together yield a "competent automation agent": change data → see the rendered DOM → trigger host-page actions — and stay controllable under large schemas / frequent compression.
+
+#### DOM reading `get_dom` (see the rendered page)
+
+Let the agent read the **rendered** DOM structure (unlike `read`, which reads the data JSON). Use cases: verify rendering after a data change, locate elements, confirm styles landed, assist with UI/design questions. `capabilities.domInspect` defaults to **off** (reading DOM costs tokens; opt in as needed).
+
+```ts
+createChatSdk({
+  capabilities: { domInspect: true },  // opt-in, default off
+  // ...
+}).mount()
+```
+
+The agent calls `get_dom({ selector?, depth?, attrs?, includeText? })`:
+
+- `selector`: CSS selector (default `body`, whole page)
+- `depth`: traversal depth (default `3`, caps DOM token blowup; `0` = root only, max 10)
+- `attrs`: attribute whitelist. **Omitted** = default common (`id/class/href/src/alt/title/style/role/aria-label/name/type/value`) + all `data-*`; **provided** = strict whitelist (no `data-*`, only what you list)
+- `includeText`: include direct text (default `true`)
+
+Returns structured JSON (`{tag, attrs, text, children[], childCount?}`); truncated depth reports `childCount` without expanding. Large results auto-offload to vfs. Unlike `eval_script` (free sandbox script returning text): `get_dom` is read-only + structured + attribute-whitelisted (no script execution, no sensitive attr leak).
+
+```jsonc
+// agent calls get_dom({ selector: '.navbar', depth: 2 }) →
+{
+  "tag": "nav", "attrs": { "class": "navbar" },
+  "children": [
+    { "tag": "span", "attrs": { "class": "navbar-title" }, "text": "My Page" }
+  ]
+}
+```
+
+> To inject manually (bypass capabilities): `import { domTools } from 'page-agent-sdk'` and spread into tools. The pure function `domToStructure(node, opts)` is exported and unit-testable without a browser.
+
+#### Host actions `actions` (trigger save/publish/page ops)
+
+Register page ops; the SDK wraps each action as a **named tool** (the LLM sees `save_draft`/`publish` directly — no `trigger_action` relay). With `get_dom` this closes the loop: change data → see DOM → trigger action.
+
+```ts
+createChatSdk({
+  actions: {
+    save_draft: {
+      description: 'Save the current page as a draft (local storage). Call after editing to persist.',
+      run: (args) => {
+        localStorage.setItem('draft', JSON.stringify(args))
+        return { saved: true, at: Date.now() }
+      },
+    },
+    publish: {
+      description: 'Publish the page live. save_draft should precede this.',
+      run: async () => { await fetch('/api/publish', { method: 'POST' }); return 'published' },
+    },
+    // action with params (ZodObject; the LLM passes args per schema)
+    set_theme: {
+      description: 'Switch theme',
+      params: z.object({ theme: z.enum(['light', 'dark']) }),
+      run: ({ theme }) => { document.documentElement.dataset.theme = theme; return `theme set to ${theme}` },
+    },
+  },
+  // ...
+}).mount()
+```
+
+Notes:
+
+- `run(args)` return value is serialized back to the LLM (`undefined` → "action done"; `string` as-is; object → JSON). **Error isolation**: if `run` throws, the error string goes back to the LLM for self-correction (the agent never crashes)
+- Action names must be valid identifiers (`[a-zA-Z][a-zA-Z0-9_]*`, e.g. `save_draft`); invalid names are skipped with a warn
+- `inspect().actions` returns `{ [name]: { description, hasParams } }`
+
+#### Schema tiered disclosure (`schemaHint`)
+
+`data.schema` field `.describe()`s are auto-injected into the systemPrompt "operable data" section. A **large schema** (dozens/hundreds of fields) fully injected bloats the systemPrompt. `schemaHint` triggers **tiered disclosure**: past the threshold it switches to a "top-level overview" (key + type + one-line desc, no constraints, no recursive shape) + a footer hint "query `schema_data` for deep constraints" — saving tokens without losing discoverability; small schemas (≤ threshold) stay full (imperceptible).
+
+```ts
+createChatSdk({
+  data: { schema: hugeSchema, bind: page },
+  schemaHint: { maxKeys: 15, maxChars: 4000 },  // defaults; past threshold → overview mode; tune up/down
+  // ...
+}).mount()
+```
+
+Defaults `maxKeys: 15, maxChars: 4000`. Want full disclosure (small schema, tokens no concern): raise the thresholds; want to save more: lower them. Related exports: `extractSchemaHint` / `renderSchemaShallow` / `renderSchemaHint` / `renderSchemaOverview` / `formatConstraints` / `describeSchemaNode`.
+
+#### Working memory `workingMemory` (keep located paths & read hashes across compression)
+
+In long tasks with frequent context compression, the **paths** the agent located via `read`/`query_data`/`search_data` and the **hashes** from `read` results get dropped as older rounds are summarized → the agent re-searches (token waste) + writes from memory, causing spurious `autoLock` optimistic-lock conflicts. The `workingMemory` middleware (`capabilities.workingMemory`, **default on**) auto-captures these structured locations and injects a "## Working memory" section each round via `augmentPrompt` (lives in state, not messages → compression never touches it → naturally preserved across compression).
+
+```ts
+createChatSdk({
+  capabilities: { workingMemory: true },  // default on, no config needed; false to disable
+  // ...
+}).mount()
+// inspect().workingMemory → { locatedPaths: string[], lastHashes: {[path]: hash} } (each ≤10 LRU)
+```
+
+Auto-capture rules (no LLM call): `read`/`query_data`/`search_data` results → `locatedPaths` (LRU ≤10, deduped); `hash=` in `read` results → `lastHashes[path]` (LRU ≤10). Complementary to `preserveLastToolResults` (which keeps tool-result summaries so field descriptions aren't lost); orthogonal to mission (mission = goal, workingMemory = intermediate state).
 
 ### 6.2 Custom tools
 
