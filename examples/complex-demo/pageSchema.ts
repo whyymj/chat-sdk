@@ -7,12 +7,34 @@
  */
 import { z } from 'zod'
 
-/** 统一基础配置(所有组件共享) */
+/** 统一基础配置(所有组件共享;~20 通用,覆盖码良平台真实通用参数) */
 const baseProps = {
+  // 标识与显示
   id: z.string().optional().describe('组件唯一 id(可选,用于锚点/调试)'),
-  style: z.record(z.string(), z.string()).optional().describe('自定义内联样式对象,键值对,如 { color: "red", padding: "8px" }'),
   visible: z.boolean().optional().describe('是否显示,默认 true;设 false 隐藏组件'),
   className: z.string().optional().describe('附加 class 名(可选)'),
+  style: z.record(z.string(), z.string()).optional().describe('自定义内联样式对象,键值对,如 { color: "red", padding: "8px" }'),
+  // 布局
+  margin: z.string().optional().describe('外边距(如 "8px 16px")'),
+  padding: z.string().optional().describe('内边距(如 "8px")'),
+  width: z.string().optional().describe('宽度(如 "100%"/"320px")'),
+  height: z.string().optional().describe('高度(如 "auto"/"200px")'),
+  maxWidth: z.string().optional().describe('最大宽度(如 "1200px",限制内容居中范围)'),
+  // 响应式
+  hideOnMobile: z.boolean().optional().describe('移动端隐藏(<768px)'),
+  hideOnDesktop: z.boolean().optional().describe('桌面端隐藏(≥768px)'),
+  // 动画
+  animated: z.boolean().optional().describe('是否启用入场动画,默认 false'),
+  animation: z.enum(['fade', 'slide', 'zoom', 'none']).optional().describe('动画类型,默认 none'),
+  animationDuration: z.number().int().min(0).max(5000).optional().describe('动画时长 ms,默认 300'),
+  // 交互
+  hoverEffect: z.enum(['scale', 'lift', 'highlight', 'none']).optional().describe('悬停效果,默认 none'),
+  cursor: z.string().optional().describe('光标样式(如 pointer/help)'),
+  // 数据源/主题/无障碍
+  dataSource: z.string().optional().describe('数据源标识(绑定后端接口/状态)'),
+  theme: z.enum(['light', 'dark', 'custom']).optional().describe('主题色系'),
+  ariaLabel: z.string().optional().describe('无障碍标签(读屏用)'),
+  tooltip: z.string().optional().describe('悬浮提示文字'),
 }
 
 /** 1. 标题 */

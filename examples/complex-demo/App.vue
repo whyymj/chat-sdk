@@ -131,6 +131,22 @@ onUnmounted(() => agent?.unmount())
 /* 全局重置:消除 body 默认 margin + 防止 100vw/100vh 导致页面级滚动条
    (100vw 含竖向滚动条宽度 → 横向溢出;body margin + 100vh → 竖向溢出 → 滚动条遮挡聊天输入框) */
 html, body, #app { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+/* baseProps 通用渲染:动画 / 悬停 / 响应式 / 主题(CompRenderer compClass 合成) */
+@keyframes anim-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes anim-slide-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes anim-zoom-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+.anim-fade { animation: anim-fade-in 0.3s ease both; }
+.anim-slide { animation: anim-slide-in 0.3s ease both; }
+.anim-zoom { animation: anim-zoom-in 0.3s ease both; }
+.hover-scale { transition: transform 0.2s; }
+.hover-scale:hover { transform: scale(1.03); }
+.hover-lift { transition: box-shadow 0.2s, transform 0.2s; }
+.hover-lift:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.hover-highlight { transition: background 0.2s; }
+.hover-highlight:hover { background: rgba(37, 99, 235, 0.08); }
+@media (max-width: 767px) { .hide-on-mobile { display: none !important; } }
+@media (min-width: 768px) { .hide-on-desktop { display: none !important; } }
+.theme-dark { color: #e5e7eb; background: #1f2937; }
 </style>
 
 <style scoped>

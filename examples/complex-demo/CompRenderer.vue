@@ -6,7 +6,7 @@
  * 容器内部再 import 本渲染器渲染 children,打破 A↔B 循环依赖。
  * 叶子组件静态 import;baseProps(id/style/visible/className)单独透传。
  */
-import { defineAsyncComponent, type Component } from 'vue'
+import { defineAsyncComponent, computed, type Component } from 'vue'
 import HeadingComp from './components/HeadingComp.vue'
 import RichTextComp from './components/RichTextComp.vue'
 import ProductGridComp from './components/ProductGridComp.vue'
@@ -72,7 +72,30 @@ const COMP_MAP: Record<string, Component> = {
   noticeBar: NoticeBarComp,
 }
 
-defineProps<{ comp: any }>()
+const props = defineProps<{ comp: any }>()
+/** baseProps 通用渲染:布局字段(margin/padding/width/height/maxWidth/cursor)合并到 style;动画/响应式/主题入 class(经 fallthrough 继承到各专用组件根) */
+const compStyle = computed<Record<string, string>>(() => {
+  const c = props.comp || {}
+  const s: Record<string, string> = { ...(c.style || {}) }
+  if (c.margin) s.margin = c.margin
+  if (c.padding) s.padding = c.padding
+  if (c.width) s.width = c.width
+  if (c.height) s.height = c.height
+  if (c.maxWidth) s.maxWidth = c.maxWidth
+  if (c.cursor) s.cursor = c.cursor
+  return s
+})
+const compClass = computed<string[]>(() => {
+  const c = props.comp || {}
+  const cls: string[] = []
+  if (c.className) cls.push(...String(c.className).split(/\s+/).filter(Boolean))
+  if (c.animated && c.animation && c.animation !== 'none') cls.push(`anim-${c.animation}`)
+  if (c.hoverEffect && c.hoverEffect !== 'none') cls.push(`hover-${c.hoverEffect}`)
+  if (c.hideOnMobile) cls.push('hide-on-mobile')
+  if (c.hideOnDesktop) cls.push('hide-on-desktop')
+  if (c.theme) cls.push(`theme-${c.theme}`)
+  return cls
+})
 </script>
 
 <template>
@@ -80,8 +103,10 @@ defineProps<{ comp: any }>()
     :is="COMP_MAP[comp.type] ?? 'div'"
     v-bind="comp.props"
     :id="comp.id"
-    :style="comp.style"
+    :style="compStyle"
+    :class="compClass"
     :visible="comp.visible"
-    :className="comp.className"
+    :aria-label="comp.ariaLabel"
+    :data-tooltip="comp.tooltip"
   />
 </template>
