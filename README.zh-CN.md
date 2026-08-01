@@ -201,7 +201,9 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
-| **能力开关** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?}` | 默认全开（`verify` 默认关）；`false` 关掉省 token |
+| **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?}` | 核心默认开（`verify`/`domInspect` 默认关,opt-in）；`false` 关掉省 token |
+| | `actions` | `Record<string,{description,run,params?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发 |
+| | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
@@ -261,6 +263,8 @@ createChatSdk({ subagents: [
 - **数据操作**（默认 `toolMode:'simple'`）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `describe_data` / `get_data` / `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `snapshot_data` / `list_data_snapshots` / `restore_data`
 - **window 查询**：`query_data`（JSONPath）/ `search_data`（模糊搜索）/ `eval_script`（沙箱脚本）
 - **抓取**：`fetch_document`
+- **DOM 读取**（2.18+,`capabilities.domInspect:true` 开,默认关）：`get_dom`（读渲染后 DOM 结构,看修改是否生效;区别于 eval_script 的结构化只读）
+- **宿主动作**（2.18+,`actions` 注册）：集成方注册 save_draft/publish 等页面操作,SDK 自动生成命名 tool,agent 直接调用触发宿主(无需 trigger_action 中转)
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
 - **规划/技能**：`write_todos` / `define_skill` / `load_skill`
 - **人工确认**：`request_human_confirmation`（主动征询，默认开）
