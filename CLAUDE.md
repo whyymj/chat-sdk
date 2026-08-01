@@ -32,7 +32,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,853 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,867 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,247 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
@@ -136,6 +136,13 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - SDK API:`getMission()` / `setMission({goal?,criteria?})`(合并;`{}` 清空)/ `send(text,{mission?})` / `inspect().mission`
 - `capabilities.missionAnchor`(分层默认核心,**默认开**;`false` 关 = getMission undefined + setMission warn 不抛)。定位升级重启,见 `doc/complex-agent-roadmap.md` Phase 1
 
+### 跨压缩工作记忆 workingMemory(revive-cross-round-working-memory Phase 1)
+- 解锁:几百 K 频繁压缩 → read/query 定位的 path + read 的 hash 随 older 轮次丢 → LLM 重复检索(浪费 token)+ 凭记忆写致乐观锁 `autoLock` 误冲突
+- **自动捕获**(`wrapToolCall` after next,不调 LLM):`read`/`query_data`/`search_data` 结果 → `locatedPaths`(LRU ≤10 去重);`read` 结果的 `hash=` → `lastHashes[path]`(LRU ≤10);其他工具不捕获
+- **pin 段天然跨压缩**:`augmentPrompt` 每轮注入「## 工作记忆(跨压缩保留)」(workingMemory 在 state → `compressInput` 不碰;**无需改 summarization**,同 mission)
+- 与 `preserveLastToolResults` 互补(preserve 保工具结果摘要防字段描述丢,workingMemory 保 path/hash 结构化防定位丢);与 mission 正交(mission 管目标,workingMemory 管中间态)
+- `capabilities.workingMemory`(分层默认核心,**默认开**;`false` 关 = 不装);`inspect().workingMemory` 反映 pin(locatedPaths/lastHashes)
+
 ### 子 agent 与并行编排
 - `spawn_agent`/`spawn_agents`(subagent 中间件,默认开启):委派独立子 agent 跑子任务,只把最终结论返回主上下文(省 token)
 - 预声明子 agent:`subagents: [{ id, description, ... }]` 自动生成 `use_<id>` 委派工具(Claude Code 风格)
@@ -186,7 +193,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),853 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),867 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(27 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools / proxyLlm(代理/直连两模式)。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
@@ -264,7 +271,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(853 全过) → `npm run test:e2e`(247 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(867 全过) → `npm run test:e2e`(247 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -287,7 +294,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 
 **最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
 
-**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(853/247)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(867/247)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
 
 **自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
 
@@ -374,7 +381,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 853 全过 → `npm run test:e2e` 247 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 867 全过 → `npm run test:e2e` 247 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

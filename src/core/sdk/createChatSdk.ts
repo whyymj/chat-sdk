@@ -25,6 +25,7 @@ import { asAgentError } from '../tools/toolError'
 import { z } from 'zod'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
+import { createWorkingMemoryMiddleware } from '../harness/workingMemory'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
@@ -210,6 +211,7 @@ export interface ChatSdkOptions {
     fetch?: boolean          // 文档抓取工具 fetch_document(默认 true;关 → 不装)
     planning?: boolean       // todos 任务规划
     missionAnchor?: boolean  // 任务目标锚定(默认 true;长任务防跑偏,revive-mission-anchor Phase 1)
+    workingMemory?: boolean  // 跨压缩工作记忆(默认 true;pin 最近 path/hash,防压缩后丢定位;revive-cross-round-working-memory Phase 1)
     skills?: boolean         // 渐进式披露技能
     vfs?: boolean            // 虚拟工作区(关 → 大结果外存退化为截断)
     summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
@@ -605,6 +607,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const todosMw = createTodosMiddleware([], { maxPlanRevisions: options.maxPlanRevisions })
   const missionMw = createMissionMiddleware()
+  const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
   if (typeof options.memory === 'function') void memoryMw.refresh()
@@ -727,6 +730,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const usePlanning = caps?.planning !== false
   const useMission = caps?.missionAnchor !== false // mission 默认开(分层默认核心;长任务防跑偏)
+  const useWorkingMemory = caps?.workingMemory !== false // workingMemory 默认开(pin 最近 path/hash,防压缩后丢定位)
   const useSkills = caps?.skills !== false
   const useVfs = caps?.vfs !== false
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
@@ -916,6 +920,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           }),
         ]
       : []),
+    ...(useWorkingMemory ? [workingMemoryMw] : []), // summarization 后(augmentPrompt 段跨压缩保留;pin 最近 read/query/search 的 path/hash)
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
     // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
@@ -1206,6 +1211,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ id: t.id, content: t.content, status: t.status })),
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
+        workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
         actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
           enabled: !!subagentMw,

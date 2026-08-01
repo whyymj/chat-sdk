@@ -31,6 +31,14 @@ export interface Mission {
   explicit: boolean
 }
 
+/** 跨压缩工作记忆(workingMemory 中间件;pin 最近定位 path + read hash,≤10 LRU,防压缩后丢定位/误冲突) */
+export interface WorkingMemory {
+  /** 最近定位的 jsonPath(read/query/search 结果,LRU 去重 ≤10) */
+  locatedPaths: string[]
+  /** 最近 read 的 path→hash(LRU ≤10;LLM 跨压缩后用对 hash,减少乐观锁误冲突) */
+  lastHashes: Record<string, string>
+}
+
 /** 虚拟工作区文件 */
 export interface VfsFile {
   content: string
@@ -72,6 +80,8 @@ export interface HarnessState {
   verifyAttempts: number
   /** 会话级任务目标锚点(mission 中间件维护;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
   mission?: Mission
+  /** 跨压缩工作记忆(workingMemory 中间件;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
+  workingMemory?: WorkingMemory
 }
 
 export function createInitialState(): HarnessState {
