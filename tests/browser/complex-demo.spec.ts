@@ -15,7 +15,7 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/examples/complex-demo/')
     await page.waitForSelector('.chat-dialog')
-    await clearChat(page)
+    await page.waitForSelector('textarea') // 等 ChatDialog input 渲染就绪(异步)
   })
 
   test('read 全量 → write patch 改 navbar title → read 子路径确认', async ({ page }) => {

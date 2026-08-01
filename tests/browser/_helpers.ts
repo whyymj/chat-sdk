@@ -107,19 +107,23 @@ function sseChunk(id: string, created: number, model: string, choice: Record<str
 
 // ===== DOM 交互工具(绕过 ref 失效问题,用选择器定位) =====
 
-/** 填充 textarea 并触发 Vue 响应式(用原生 setter + input 事件) */
+/** 填充 textarea 并触发 Vue 响应式(page.fill 触发完整 input 事件链,v-model 可靠更新;
+ *  native setter + 手动 input event 在 clearChat/重置后某些场景不触发 v-model,page.fill 更稳) */
 export async function fillInput(page: Page, text: string): Promise<void> {
-  await page.evaluate((t) => {
-    const ta = document.querySelector('textarea') as HTMLTextAreaElement
-    if (!ta) throw new Error('textarea not found')
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!
-    setter.call(ta, t)
-    ta.dispatchEvent(new Event('input', { bubbles: true }))
-  }, text)
+  // 限定 ChatDialog 内 textarea:complex-demo 等含多个 textarea(DynamicReconfigPanel),page.fill('textarea') 会填错
+  await page.fill('.chat-dialog textarea', text)
 }
 
 /** 点击发送按钮(在输入区域内找最后一个可点击按钮) */
 export async function clickSend(page: Page): Promise<void> {
+  // 等 input area 出现 enabled button(fillInput 后 Vue 响应式更新 send button enabled 可能有延迟,
+  // 尤其大 schema 页面如 complex-demo;已 enabled 则立即过,不影响 page-demo 等)
+  await page.waitForFunction(() => {
+    const dialog = document.querySelector('.chat-dialog')
+    if (!dialog) return false
+    const inputArea = dialog.querySelector('.chat-input-area, .input-area, .chat-footer') || dialog
+    return Array.from(inputArea.querySelectorAll('button')).some((b) => !b.disabled)
+  }, { timeout: 10000 }).catch(() => {})
   await page.evaluate(() => {
     const dialog = document.querySelector('.chat-dialog')
     if (!dialog) throw new Error('.chat-dialog not found')
