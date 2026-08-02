@@ -5,7 +5,7 @@
  * - update_todo 改 deps/parentId/criteria/evidence(增量)
  */
 import { z } from 'zod'
-import { createTodosMiddleware } from '../../harness/todos'
+import { createTodosMiddleware, renderTodos } from '../../harness/todos'
 import { runBeforeAgent, runBeforeModel } from '../../harness/middleware'
 import type { TestCtx } from './_ctx'
 
@@ -80,5 +80,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     runBeforeModel([mwHydrate], { messages: [], state: stateH } as any)
     const segH = mwHydrate.augmentPrompt?.(stateH as any) || ''
     assert(segH.includes('#old-1'), '✓ hydrate 旧数据(无层级字段)→ 扁平渲染(向后兼容)')
+  }
+
+  // ===== renderTodos 成环/异常 parentId 不栈溢出(seen 防护 + 单值 parentId 天然树结构) =====
+  {
+    // 自指 a→a:a 有 parentId 不在 roots → 不渲染但安全返回 string(无 RangeError)
+    let seg = renderTodos([{ id: 'a', content: '自指', status: 'pending', parentId: 'a' }] as any)
+    assert(typeof seg === 'string', '✓ renderTodos 自指 parentId(a→a)安全返回 string(不栈溢出)')
+    // 互指 a↔b:都不在 roots → 空段,不溢出
+    seg = renderTodos([
+      { id: 'a', content: 'A', status: 'pending', parentId: 'b' },
+      { id: 'b', content: 'B', status: 'pending', parentId: 'a' },
+    ] as any)
+    assert(typeof seg === 'string', '✓ renderTodos 互指 parentId(a↔b)安全返回(不栈溢出)')
+    // 正常 3 层链(根 → 子1 → 子2)
+    seg = renderTodos([
+      { id: 'r', content: '根', status: 'in_progress' },
+      { id: 'c1', content: '子1', status: 'pending', parentId: 'r' },
+      { id: 'c2', content: '子2', status: 'pending', parentId: 'c1' },
+    ] as any) || ''
+    assert(seg.includes('#r') && seg.includes('#c1') && seg.includes('#c2'), '✓ renderTodos 正常 3 层链渲染(根→子1→子2)')
   }
 }

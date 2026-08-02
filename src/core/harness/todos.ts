@@ -35,7 +35,7 @@ function ensureIds(list: TodoInput[]): Todo[] {
 
 /** 渲染当前 todos 清单为 system prompt 段(带 id 供 LLM 引用 update_todo)。
  *  有 parentId → 递归层级渲染(缩进 + deps ✓/⏳ 阻塞标注 + evidence);无 → 扁平(零破坏)。 */
-function renderTodos(todos: Todo[]): string | undefined {
+export function renderTodos(todos: Todo[]): string | undefined {
   if (!todos.length) return undefined
   const hasTier = todos.some((t) => t.parentId || (t.deps && t.deps.length))
   const lines: string[] = []
@@ -46,15 +46,18 @@ function renderTodos(todos: Todo[]): string | undefined {
       const t = todos.find((x) => x.id === id)
       return t?.status === 'completed' ? '✓' : '⏳'
     }
-    const render = (t: Todo, depth: number) => {
+    // seen 集循环防护:LLM 误输入成环 parentId(自指 A→A / 互指 A↔B)时跳过已访问节点,防递归栈溢出
+    const render = (t: Todo, depth: number, seen: Set<string>) => {
+      if (seen.has(t.id)) return
+      seen.add(t.id)
       const indent = '  '.repeat(depth)
       const depStr = t.deps?.length ? ` (依赖:${t.deps.map((d) => statusMark(d)).join('')})` : ''
       const evStr = t.evidence ? ` [证据:${t.evidence}]` : ''
       const critStr = t.criteria ? ` [标准:${t.criteria}]` : ''
       lines.push(`${indent}- #${t.id} [${t.status}] ${t.content}${critStr}${depStr}${evStr}`)
-      childrenOf(t.id).forEach((c) => render(c, depth + 1))
+      childrenOf(t.id).forEach((c) => render(c, depth + 1, seen))
     }
-    todos.filter((t) => !t.parentId).forEach((t) => render(t, 0))
+    todos.filter((t) => !t.parentId).forEach((t) => render(t, 0, new Set()))
   } else {
     // 扁平渲染(无层级,现状)
     todos.forEach((t, i) => {
