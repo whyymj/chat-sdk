@@ -16,7 +16,7 @@
 - **ChatDialog 样式优化**:① 正文(`.message-md` / `.message-bubble`)字号 13→12px 对齐「思考过程」字号(line-height 提到 1.7 补偿小字号可读性);② 人工确认框(`.approval-bar`)样式升级:左侧 4px 强调边 + 渐变背景 + 卡片化问题/推荐(白底 + 阴影 + 主色左边推荐块)+ 按钮主次分明(允许=主色填充带阴影 + 拒绝=描边 + 选项 hover 上浮),图标放大
 
 ### Fixed
-- **生成中(loading)回车输入丢失修复 + 排队续跑**:旧版 agent 生成中用户回车 → `sendMessage` 被 loading 守卫 `return` 不发,但 `handleSend` 已清空 `inputText` → **输入内容丢失 + 无反馈**。改为「排队区」机制:生成中发送的消息入排队区(**可见,作后续任务记录**;不先进 messages,避免多条排队打乱"最后 user"定位),生成完 `finishRound` 自动依次执行(`shift → addMessage → runAssistantStream`,顺序正确不跳条);排队任务可 ✏️ **修改**(填回输入框编辑)/ ✕ **撤销**(`removeQueuedTask`);`stop` 清空排队。selftest `sec-40`(15 项,922→937)
+- **生成中(loading)回车输入丢失修复 + 排队续跑**:旧版 agent 生成中用户回车 → `sendMessage` 被 loading 守卫 `return` 不发,但 `handleSend` 已清空 `inputText` → **输入内容丢失 + 无反馈**。改为「排队区」机制:生成中发送的消息入排队区(**可见,作后续任务记录**;不先进 messages,避免多条排队打乱"最后 user"定位),生成完 `finishRound` 自动依次执行(`shift → addMessage → runAssistantStream`,顺序正确不跳条);排队任务可 ✏️ **修改**(填回输入框编辑)/ ✕ **撤销**(`removeQueuedTask`);`stop` 清空排队。selftest `sec-40`(15 项,922→937) + browser `queue.spec`(3 用例:排队自动执行/撤销/修改,用 mockLlm delays 制造 loading 窗口);`finishRound` 加 try/catch(`onPersist` 持久化抛错不阻塞排队续跑 —— 修真健壮性缺陷:clearStorage 删 indexedDB 致 flush reject / 实际 quota 满/IO 失败同理会卡死后续排队)
 
 ### Tests
 - selftest 新增 `sec-34`(update_todo 增量 / id 生成 / TODO_NOT_FOUND / maxPlanRevisions 阶段计数 / 超限回灌 / 写工具退出 / 重入 / hydrate 补 id / 同轮冲突拒)。断言计数 782→800

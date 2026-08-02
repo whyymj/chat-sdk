@@ -26,10 +26,12 @@ export type MockResponse = ToolCallResponse | TextResponse
  * @param script LLM 响应脚本(按 ReAct 轮次顺序)
  * @returns callCount 跟踪器(用于断言调用了几轮)
  */
-export async function mockLlm(page: Page, script: MockResponse[]): Promise<{ calls: () => number }> {
+export async function mockLlm(page: Page, script: MockResponse[], delays?: number[]): Promise<{ calls: () => number }> {
   let calls = 0
-  await page.route('**/chat/completions**', (route: Route) => {
+  await page.route('**/chat/completions**', async (route: Route) => {
     const idx = calls++
+    const delay = delays?.[idx] ?? 0
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay))
     const resp = script[idx] ?? { text: '完成' }
     const sse = toSse(resp, idx)
     route.fulfill({

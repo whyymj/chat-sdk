@@ -196,7 +196,8 @@ export function useChat(
 
   /** 一轮结束收口:持久化 + 关 loading + 排队续跑(生成中用户又发了消息,可能多条 → 依次自动执行,每条是独立后续任务) */
   async function finishRound() {
-    await onPersist?.(state.messages)
+    // 持久化当前轮(失败/慢不阻塞排队续跑 —— onPersist 抛错时仍 shift 续跑下一轮,防生成中排队被持久化故障卡死)
+    try { await onPersist?.(state.messages) } catch { /* onPersist 抛错忽略,不阻塞续跑 */ }
     state.loading = false
     currentController = null
     // 取队首任务:此时才 addMessage 进 messages(保证它是"最后 user",runAssistantStream 正确定位,不被后续排队任务干扰)
