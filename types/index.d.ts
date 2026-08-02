@@ -75,7 +75,8 @@ export type SdkEvent =
   | { type: 'conflict'; conflict: PendingConflict }
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
-  | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown };
+  | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
+  | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -158,6 +159,8 @@ export interface AgentInfo {
   };
   /** 会话级 checkpoint 装载状态(未开启 → undefined) */
   checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
+  /** 结构化追踪(revive-observability-tracing;capabilities.tracing 开时填充,否则 undefined) */
+  trace?: { spans: TraceSpan[]; metrics: TraceMetrics };
 }
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
@@ -477,7 +480,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; workingMemory?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; workingMemory?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -671,6 +674,34 @@ export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions)
 export declare function filterByToolMode(tools: any[], mode?: 'simple' | 'advanced' | 'minimal'): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
 export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit' }): { ok: true; hash: string; data: unknown } | { ok: false; error: string };
+/** 结构化追踪 span(revive-observability-tracing Phase 3) */
+export type SpanType = 'round' | 'model' | 'tool' | 'compression';
+export type SpanStatus = 'ok' | 'error' | 'timeout';
+export interface TraceSpan {
+  id: string;
+  parentId?: string;
+  name: string;
+  type: SpanType;
+  startTs: number;
+  endTs?: number;
+  durationMs?: number;
+  status: SpanStatus;
+  attributes: Record<string, unknown>;
+}
+export interface TraceMetrics {
+  rounds: number;
+  totalDurationMs: number;
+  avgRoundMs: number;
+  toolCalls: number;
+  toolFailures: number;
+  toolSuccessRate: number;
+  modelCalls: number;
+  retries: number;
+  compressions: number;
+  totalTokens?: { prompt: number; completion: number; total: number };
+}
+/** 从 TraceSpan[] 聚合 metrics(纯函数:轮次/延迟/工具成功率/重试/压缩/token) */
+export declare function getTraceMetrics(spans: TraceSpan[]): TraceMetrics;
 // ============ 通用 JSON 操作纯函数(jsonUtils,refactor-module-extraction 从 dataOps 抽离;零依赖,经 ./query subpath 按需引入)============
 export type EditOp = 'set' | 'remove' | 'merge' | 'append';
 export declare const UNSAFE_KEYS: Set<string>;

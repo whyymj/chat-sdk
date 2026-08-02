@@ -2,6 +2,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
+import type { TraceSpan } from '../harness/createAgent'
 import { copyText } from '../utils/clipboard'
 
 const props = withDefaults(defineProps<{
@@ -84,7 +85,7 @@ function roleOf(t: string) {
 function close() { emit('update:visible', false) }
 function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 
-const tab = ref<'logs' | 'flow' | 'info'>('logs')
+const tab = ref<'logs' | 'flow' | 'trace' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
 // skill 全文展开状态:name → { loading, content, error }
 const skillExpanded = ref<Record<string, { loading: boolean; content: string | null; error?: string }>>({})
@@ -155,6 +156,10 @@ const flowRounds = computed(() => {
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
+/** trace(observability-tracing):spans + metrics 从 agentInfo.trace 读 */
+const traceSpans = computed<TraceSpan[]>(() => agentInfo.value?.trace?.spans ?? [])
+const traceMetrics = computed(() => agentInfo.value?.trace?.metrics)
+function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '🧠' : t === 'tool' ? '🔧' : t === 'compression' ? '📦' : '•' }
 /** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
 function flowNodeDetail(lg: DebugLog): string {
   const d = (lg.data || {}) as any
@@ -180,6 +185,7 @@ function flowNodeDetail(lg: DebugLog): string {
             <div class="tab-group">
               <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 日志</button>
               <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 流程</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'trace' }" @click="switchTab('trace')">🌳 Trace</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
             </div>
             <div class="header-actions">
@@ -206,6 +212,27 @@ function flowNodeDetail(lg: DebugLog): string {
           </div>
 
           <div class="drawer-body">
+            <div v-if="tab === 'trace'" class="trace-panel">
+              <div v-if="!traceMetrics" class="trace-empty">未开启 tracing(<code>capabilities.tracing:true</code>)或暂无 trace。跑一轮 agent 后刷新。</div>
+              <template v-else>
+                <div class="trace-metrics">
+                  <div class="metric-card"><span>轮次</span><b>{{ traceMetrics.rounds }}</b></div>
+                  <div class="metric-card"><span>总耗时</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
+                  <div class="metric-card"><span>平均/轮</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
+                  <div class="metric-card"><span>工具</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
+                  <div class="metric-card" v-if="traceMetrics.compressions"><span>压缩</span><b>{{ traceMetrics.compressions }}</b></div>
+                  <div class="metric-card" v-if="traceMetrics.totalTokens"><span>Token</span><b>{{ traceMetrics.totalTokens.total }}</b></div>
+                </div>
+                <div class="trace-spans">
+                  <div v-for="s in traceSpans" :key="s.id" class="trace-span" :class="[s.type, s.status]">
+                    <span class="span-ico">{{ spanIcon(s.type) }}</span>
+                    <span class="span-name">{{ s.name }}</span>
+                    <span class="span-dur" v-if="s.durationMs">{{ s.durationMs }}ms</span>
+                    <span class="span-status" v-if="s.status === 'error'">❌</span>
+                  </div>
+                </div>
+              </template>
+            </div>
             <template v-if="tab === 'logs'">
             <div v-if="filteredLogs.length === 0" class="empty">
               暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息
@@ -575,4 +602,23 @@ function flowNodeDetail(lg: DebugLog): string {
 .flow-label { font-weight: 600; color: #374151; white-space: nowrap; flex-shrink: 0; }
 .flow-detail { color: #6b7280; font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .flow-time { font-size: 10px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
+
+/* trace 视图(observability-tracing Phase 3):metrics 卡片 + span 列表 */
+.trace-panel { padding: 10px; }
+.trace-empty { color: #9ca3af; font-size: 12px; text-align: center; padding: 30px; line-height: 1.6; }
+.trace-empty code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.trace-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.metric-card { display: flex; flex-direction: column; padding: 6px 10px; border-radius: 8px; background: #f0f7f3; border: 1px solid #d1e7dd; min-width: 70px; }
+.metric-card span { font-size: 10px; color: #6b7280; }
+.metric-card b { font-size: 14px; color: var(--cs-primary); }
+.trace-spans { display: flex; flex-direction: column; gap: 3px; }
+.trace-span { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: #f9fafb; border-radius: 6px; font-size: 11px; border-left: 3px solid var(--cs-primary); }
+.trace-span.model { border-left-color: #059669; }
+.trace-span.tool { border-left-color: #7c3aed; }
+.trace-span.compression { border-left-color: #d97706; }
+.trace-span.error { background: #fef2f2; }
+.span-ico { font-size: 12px; flex-shrink: 0; }
+.span-name { flex: 1; color: #374151; font-family: 'SF Mono', Monaco, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.span-dur { font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
+.span-status { font-size: 11px; flex-shrink: 0; }
 </style>

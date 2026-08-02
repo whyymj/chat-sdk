@@ -120,6 +120,24 @@ export async function run() {
     await sdkDraftSimple.mount()
     assert(!sdkDraftSimple.inspect().tools.some((t) => t.name === 'draft_write'), 'draftWrite:true 但 simple 模式 → 隐藏 draft(advanced 才暴露)')
     sdkDraftSimple.unmount()
+    // tracing:true(opt-in)→ inspect().trace 存在(spans 初始空 + metrics);默认关 → undefined
+    const sdkTrace = createChatSdk({
+      ui: false, id: 'e2e-trace-on', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, tracing: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkTrace.mount()
+    const traceInfo = sdkTrace.inspect()
+    assert(traceInfo.trace !== undefined && Array.isArray(traceInfo.trace.spans) && traceInfo.trace.metrics, 'tracing:true → inspect().trace 存在(spans + metrics)')
+    sdkTrace.unmount()
+    // 默认(tracing 未开)→ trace undefined(opt-in)
+    const sdkNoTrace = createChatSdk({
+      ui: false, id: 'e2e-trace-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkNoTrace.mount()
+    assert(sdkNoTrace.inspect().trace === undefined, '默认(tracing 关)→ inspect().trace undefined(opt-in)')
+    sdkNoTrace.unmount()
 
     // inspect().contextPreset 反映 complex(add-complex-preset-and-vfs-json)
     const sdkComplex = createChatSdk({

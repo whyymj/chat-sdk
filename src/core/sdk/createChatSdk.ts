@@ -57,6 +57,7 @@ import { createDataOps, filterByToolMode, type DataConfig, type DataOpsControlle
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
+import { getTraceMetrics } from '../utils/traceMetrics'
 import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -222,6 +223,7 @@ export interface ChatSdkOptions {
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
+    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -644,6 +646,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const caps = options.capabilities
   const useDataOps = caps?.dataOps !== false
   const useDraft = caps?.draftWrite === true  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
+  const useTracing = caps?.tracing === true  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
@@ -1217,6 +1220,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
+        trace: useTracing && core.agent?.spans ? { spans: core.agent.spans.value, metrics: getTraceMetrics(core.agent.spans.value) } : undefined,
         actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
           enabled: !!subagentMw,
@@ -1380,6 +1384,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         currentLlm = newLlm
         if (options.debug) console.log('[page-agent-sdk][setLlm] 重解析 modelCaps:', modelCaps)
       },
+      // trace:createAgent finally 调 onTrace(spans, metrics) → emit('trace')(capabilities.tracing 开时注入,关时 undefined → createAgent 不采集,零开销)
+      onTrace: useTracing ? (spans, metrics) => { try { emit({ type: 'trace', spans, metrics }) } catch { /* emit 抛错忽略 */ } } : undefined,
       debug: options.debug,
     })
     agentRef.current = core.agent

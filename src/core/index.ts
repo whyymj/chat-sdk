@@ -25,7 +25,7 @@ export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
 export { createAgent, detectGarbledToolCall } from './harness/createAgent'
-export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
+export type { CreateAgentOptions, DebugLog, TraceSpan, TraceMetrics, SpanType, SpanStatus } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware } from './harness/subagent'
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsController } from './harness/subagent'
@@ -45,6 +45,7 @@ export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, Dat
 export type { SkillsController } from './harness/skills'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataOps/fetch 关闭默认自动装配)
 export { createDataOps, filterByToolMode, commitSetToBind } from './tools/dataOps'
+export { getTraceMetrics } from './utils/traceMetrics'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
 // 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)

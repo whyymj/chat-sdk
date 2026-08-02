@@ -24,6 +24,7 @@ import { asAgentError } from '../tools/toolError'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
+import { getTraceMetrics } from '../utils/traceMetrics'
 import { createInitialState, type HarnessState } from './state'
 import { withRetry, isAbort } from './retry'
 import {
@@ -114,6 +115,36 @@ export interface DebugLog {
   source?: string
 }
 
+/** 结构化追踪 span(revive-observability-tracing Phase 3)。debugLogs 扁平数组的层级+timing+metrics 升级,供 DebugDrawer 树形 + getTraceMetrics */
+export type SpanType = 'round' | 'model' | 'tool' | 'compression'
+export type SpanStatus = 'ok' | 'error' | 'timeout'
+export interface TraceSpan {
+  id: string
+  parentId?: string
+  name: string
+  type: SpanType
+  startTs: number
+  endTs?: number
+  durationMs?: number
+  status: SpanStatus
+  /** 按 type 分桶:round:{round,aborted?} model:{round,tools?,usage?} tool:{name,args?,resultSnippet?} compression:{stats?} */
+  attributes: Record<string, unknown>
+}
+
+/** trace metrics(getTraceMetrics 纯函数聚合:轮次/延迟/工具成功率/重试/压缩/token) */
+export interface TraceMetrics {
+  rounds: number
+  totalDurationMs: number
+  avgRoundMs: number
+  toolCalls: number
+  toolFailures: number
+  toolSuccessRate: number
+  modelCalls: number
+  retries: number
+  compressions: number
+  totalTokens?: { prompt: number; completion: number; total: number }
+}
+
 export interface CreateAgentOptions {
   /** 预构造的 LLM 实例(任意 provider,provider 抽离);提供则优先于 apiKey/model 配置 */
   llm?: BaseChatModel
@@ -148,6 +179,10 @@ export interface CreateAgentOptions {
   maxVerifyAttempts?: number
   /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
   onLog?: (entry: DebugLog) => void
+  /** span 采集回调(capabilities.tracing 开时由 createChatSdk 注入;关时 undefined → startSpan/endSpan no-op 零开销) */
+  onSpan?: (span: TraceSpan) => void
+  /** 一次 agent 调用结束的 trace 回调(stream/invoke finally 触发,传完整 spans + metrics;createChatSdk 经此 emit('trace')) */
+  onTrace?: (spans: TraceSpan[], metrics: TraceMetrics) => void
   /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: BaseChatModel) => void
   debug?: boolean
@@ -214,6 +249,8 @@ export function createAgent(options: CreateAgentOptions) {
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
     onLog,
+    onSpan,
+    onTrace,
     onLlmChange,
     debug = false,
   } = options
@@ -248,6 +285,28 @@ export function createAgent(options: CreateAgentOptions) {
     debugLogs.value.push(entry)
     if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
     triggerRef(debugLogs)
+  }
+
+  // ===== 结构化追踪(TraceSpan 树;capabilities.tracing 开时采集,no-op 零开销)=====
+  const spans = shallowRef<TraceSpan[]>([])
+  let spanSeq = 0
+  const tracingEnabled = !!onSpan || !!onTrace
+  /** 开启一个 span(tracing 关时返回 null,no-op);parentId 建立父子(round 是 model/tool 的 parent) */
+  function startSpan(parentId: string | undefined, type: SpanType, name: string, attributes: Record<string, unknown> = {}): TraceSpan | null {
+    if (!tracingEnabled) return null
+    return { id: `span-${++spanSeq}`, parentId, name, type, startTs: Date.now(), status: 'ok', attributes }
+  }
+  /** 结束 span(算 durationMs + status,推入 spans;tracing 关时 no-op) */
+  function endSpan(span: TraceSpan | null, status: SpanStatus = 'ok', extra?: Record<string, unknown>) {
+    if (!span || !tracingEnabled) return
+    span.endTs = Date.now()
+    span.durationMs = span.endTs - span.startTs
+    span.status = status
+    if (extra) Object.assign(span.attributes, extra)
+    spans.value.push(span)
+    if (spans.value.length > MAX_DEBUG_LOGS) spans.value.splice(0, spans.value.length - MAX_DEBUG_LOGS) // 复用上限
+    triggerRef(spans)
+    onSpan?.(span)
   }
 
   // 合并工具:中间件贡献的工具 + 用户工具
@@ -423,6 +482,8 @@ export function createAgent(options: CreateAgentOptions) {
    */
   async function stream(messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal): Promise<string> {
     debugLogs.value = []
+    spans.value = []
+    spanSeq = 0
     state = createInitialState()
     state.messages = messages
 
@@ -433,11 +494,15 @@ export function createAgent(options: CreateAgentOptions) {
     let input = messages
     for (const m of middlewares) {
       if (m.compressInput) {
+        const compSpan = startSpan(undefined, 'compression', `compress:${m.name}`, {})
         const r = await m.compressInput(input)
         input = Array.isArray(r) ? r : r.messages
         // 捕获最近一次压缩统计写入 state,供 DebugDrawer 可观测
         if (r && !Array.isArray(r) && r.stats) {
           state = { ...state, lastCompression: r.stats as any }
+          endSpan(compSpan, 'ok', { stats: r.stats })
+        } else {
+          endSpan(compSpan)
         }
       }
     }
@@ -460,6 +525,7 @@ export function createAgent(options: CreateAgentOptions) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
         if (signal?.aborted) break
+        const roundSpanId = startSpan(undefined, 'round', `round ${iterations}`, { round: iterations })?.id
         onEvent({ type: 'round_start', round: iterations })  // 迭代号(含自纠轮,每轮新号);log 的 round 仍用工具轮号(rounds)便于调试追踪(harden-react-loop-budget)
 
         // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
@@ -468,6 +534,7 @@ export function createAgent(options: CreateAgentOptions) {
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
         currentMessages = trimContextIfNeeded(currentMessages, offloadPassThrough)
 
+        const modelSpan = startSpan(roundSpanId, 'model', model, { round: rounds + 1, tools: allTools.map((t) => t.name) })
         log('llm_request', {
           round: rounds + 1,
           model,
@@ -479,6 +546,7 @@ export function createAgent(options: CreateAgentOptions) {
         currentMessages.push(response.message)
 
         log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
+        endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: (response.message as any)?.additional_kwargs?.usage })
 
         state = runAfterModel(middlewares, response, state)
 
@@ -551,11 +619,13 @@ export function createAgent(options: CreateAgentOptions) {
           maxParallelTools,
           async (c) => {
             if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
+            const toolSpan = startSpan(roundSpanId, 'tool', c.call.name, { name: c.call.name })
             onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
             log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
             const result = await toolHandler(c.ctx)
             onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status })
             log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status })
+            endSpan(toolSpan, result.status === 'error' ? 'error' : 'ok', { resultSnippet: String(result.content).slice(0, 100) })
             return result
           },
           signal,
@@ -617,6 +687,10 @@ export function createAgent(options: CreateAgentOptions) {
         const ae = asAgentError(e, 'observable')
         console.warn(`[Agent] afterAgent 清理出错(observable,已忽略):`, ae.message)
       }
+      // trace:agent 调用结束(finally 必跑,覆盖所有出口),emit spans + metrics(createChatSdk 经 onTrace → emit('trace'))
+      if (tracingEnabled && onTrace) {
+        try { onTrace(spans.value, getTraceMetrics(spans.value)) } catch { /* onTrace 抛错忽略,不影响主流程 */ }
+      }
     }
   }
 
@@ -663,6 +737,7 @@ export function createAgent(options: CreateAgentOptions) {
     setTools,
     setLlm,
     debugLogs,
+    spans,
     // 复用内部权威拼装(base + Σ augmentPrompt),供 getInfo/inspect 收敛为单一真相源(fix-introspection-consistency)
     getEffectiveSystemPrompt: () => buildSystemPrompt(),
   }

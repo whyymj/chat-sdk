@@ -64,6 +64,7 @@ export type SdkEvent =
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: import('../tools/toolError').ErrorSeverity; code?: string; context?: unknown }
+  | { type: 'trace'; spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -136,4 +137,6 @@ export interface AgentInfo {
     auto: boolean
     list: { id: number; label?: string; timestamp: number; messageCount: number }[]
   }
+  /** 结构化追踪(revive-observability-tracing;capabilities.tracing 开时填充,否则 undefined) */
+  trace?: { spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
 }
