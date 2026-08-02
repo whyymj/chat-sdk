@@ -25,8 +25,8 @@
 
 > **状态:待立项**。合理性:定位升级后「后台自动化 agent」需性能归因/错误追溯/SLA,TraceSpan 树有真实价值;但采集有性能开销 → opt-in,调试/自动化场景开。旧 `observability-structured-tracing` 已归档(被本 Phase 取代)。
 
-- [ ] 立 `revive-observability-tracing`(完整 TraceSpan 树 + timing/status/usage + DebugDrawer 树形 + getTraceMetrics)
-- [ ] apply Phase 3
+- [x] 立 `revive-observability-tracing`(完整 TraceSpan 树 + timing/status/usage + DebugDrawer 树形 + getTraceMetrics)
+- [x] apply Phase 3 ✅(2.19 实施 + 真 LLM 实测通过)
 
 ## Phase 4 —— 自动化(高级 opt-in,浏览器内后台)
 
