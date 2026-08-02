@@ -219,7 +219,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'set_data',
       description:
-        '设置主数据的值(整体替换)。value 为 JSON 对象(或 JSON 字符串),需通过 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 read/get 返回的 hash,传入则启用乐观锁;不传时系统自动用你最后一次读到的 hash 比对(autoLock,默认开)。大对象/数组强烈建议改用 edit_data 增量 patch。',
+        '设置主数据的值(整体替换)。value 为 JSON 对象(或 JSON 字符串),需通过 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 read/get 返回的 hash,传入则启用乐观锁;不传时系统自动用你最后一次读到的 hash 比对(autoLock,默认开)。大对象/数组强烈建议改用 edit_data 增量 patch。白名单模式(schema 为 ZodObject 子集):set 为根级浅合并,深层子对象整体替换(未传字段丢失);保留深层字段请用 edit_data({op:"merge", jsonPath:"子路径", value:{...}})局部合并。',
       schema: z.object({
         value: z.unknown().describe('JSON 对象(推荐直传,如 {title:"x"}),或 JSON 字符串;需符合 schema'),
         expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
@@ -228,7 +228,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   )
 
   const editData = tool(
-    async ({ op, jsonPath, value, expectedHash }) => {
+    async (args) => {
+      // M2 容错:advanced 模式 edit_data 与 write 并存,LLM 可能误传 write 的 patch 形式({patch:{op,jsonPath,value}});
+      // 从 patch 补全 op/jsonPath/value(顶层优先,patch 兜底)。op 仍语义必填(顶层或 patch 至少一个,缺则 MISSING_VALUE)
+      const op = args.op ?? args.patch?.op
+      const jsonPath = args.jsonPath ?? args.patch?.jsonPath
+      const value = args.value ?? args.patch?.value
+      const expectedHash = args.expectedHash
+      if (!op) return toolError({ code: 'MISSING_VALUE', message: 'edit_data 需要 op(set/remove/merge/append)', hint: '顶层 op 或 patch.op 至少传一个' })
       const jp = jsonPath || ''
       if (isUnsafePath(jp)) {
         return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常的属性路径,如 components.0.text(数组索引用数字)' })
@@ -267,10 +274,18 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       description:
         '增量编辑主数据(对象/数组),只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对主数据根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 对象(推荐直传)或 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 read/get 返回的 hash;不传时自动用你最后读到的 hash(autoLock,默认开)防"基于过期值覆盖"。',
       schema: z.object({
-        op: z.enum(['set', 'remove', 'merge', 'append']),
-        jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text)。set/remove 必填;merge/append 不填则作用于根'),
-        value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串(set/merge/append 必填)'),
+        op: z.enum(['set', 'remove', 'merge', 'append']).optional().describe('增量操作(顶层或 patch.op 至少一个):set/remove/merge/append'),
+        jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);顶层或 patch.jsonPath。set/remove 必填,merge/append 不填则作用于根'),
+        value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串;顶层或 patch.value(set/merge/append 必填)'),
         expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
+        patch: z
+          .object({
+            op: z.enum(['set', 'remove', 'merge', 'append']).optional(),
+            jsonPath: z.string().optional(),
+            value: z.unknown().optional(),
+          })
+          .optional()
+          .describe('容错:误传 write 的 {patch:{op,jsonPath,value}} 形式时从此取值(顶层优先)。正常用顶层 op/jsonPath/value 即可'),
       }),
     },
   )

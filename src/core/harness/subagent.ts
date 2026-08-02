@@ -139,7 +139,10 @@ async function runSubagent(
 
 export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   const maxParallel = opts.maxParallel ?? DEFAULT_MAX_PARALLEL
-  // 当前主循环的 signal / emit / logSink(由 wrapToolCall 捕获,供 spawn 工具继承/转发)
+  // 当前主循环的 signal / emit / logSink(由 wrapToolCall 捕获,供 spawn 工具继承/转发)。
+  // ⚠️ 并发限制(M3,已知):此为闭包级单变量,maxParallelTools>1 时并发工具调用的 wrapToolCall 会互相覆盖,
+  // 子 agent 可能继承到无关工具的 signal/emit(停止信号错乱 / 进度转发到错误 handler)。
+  // 默认 maxParallelTools=1(串行)规避;subagent 场景建议保持串行。彻底修需让 spawn 工具从 ToolCallContext 取这些值(待后续)
   let currentSignal: AbortSignal | undefined
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined

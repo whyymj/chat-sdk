@@ -340,6 +340,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t8['set_data'], { value: '{bad' })
     assert(/JSON_PARSE/.test(r), 'set_data "{bad" → JSON_PARSE(以 { 开头按 JSON 解析失败报错)')
 
+    // M2: edit_data 容错误传 write 的 patch 形式({patch:{op,jsonPath,value}})→ 从 patch 取值落地
+    // (原:op schema 必填 + 顶层无 op → zod 挡/MISSING_VALUE 浪费一轮;advanced 模式 edit_data 与 write 并存易混用)
+    r = await invoke(t8['edit_data'], { patch: { op: 'set', jsonPath: 'count', value: 99 } })
+    assert(page8.count === 99, 'M2: edit_data 误传 patch 形式 → 从 patch 取 op/jsonPath/value 落地')
+    // 顶层优先:顶层 op/jsonPath + patch.value → 用顶层 op/jsonPath + patch.value 兜底
+    r = await invoke(t8['edit_data'], { op: 'set', jsonPath: 'count', patch: { value: 77 } })
+    assert(page8.count === 77, 'M2: edit_data 顶层优先(顶层 op/jsonPath 主导,patch.value 兜底)')
+    // 顶层与 patch 都无 op → MISSING_VALUE(op 仍语义必填)
+    r = await invoke(t8['edit_data'], { jsonPath: 'count', value: 5 })
+    assert(/MISSING_VALUE/.test(r), 'M2: edit_data 顶层与 patch 都无 op → MISSING_VALUE')
+
     // #优化1:write 批量 patches(一次原子应用多个 patch)
     const page9: any = { title: 't', a: 1, b: 2, items: ['x'] }
     const tools9 = createDataOps({ schema: z.object({ title: z.string(), a: z.number(), b: z.number(), items: z.array(z.string()) }), bind: page9, description: 'p9' })

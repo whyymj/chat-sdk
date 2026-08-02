@@ -77,17 +77,24 @@
 - **修复**:catch 块 `if (url) URL.revokeObjectURL(url)`;`let url: string` 改 `let url = ''`(消除 used-before-assigned)。
 - **测试**:单测待补(需 mock `new Worker` 抛错,环境构造成本高;逻辑直白 + test:types 守卫 url 初始化)。
 
-### 第三批·需决策/低优先(暂未修,见 §四 取舍)
+### 第三批·需决策/低优先
 
-| # | 项 | 暂不修原因 |
+**本轮已治本(3 项)**:
+
+| # | 项 | 修复 |
 |---|---|---|
-| M2 | edit_data 扁平 vs write.patch 嵌套 value 位置不一致 | 需定收敛方向(advanced 模式两者共存,提示增强 or edit_data 双兼容);simple/minimal 已只暴露 read/write 规避,advanced 用户受影响小 |
-| M3 | subagent 并发模式 signal/emit/logSink 闭包竞态 | 默认 `maxParallelTools=1` 串行规避;修复需改 spawn 工具取 ctx 机制(中等成本);文档已声明 >1 影响有状态中间件 |
-| M4 | maybeParseValue 裸字面量隐式转换("5"→5) | 向后兼容不改行为;description 已提示;改了会破坏现有 value parse 语义 |
-| L1 | simple 模式暴露 history/restore 但隐藏 list_snapshots | 语义割裂但功能可用(restore/history 不传 id 用默认最近);二选一需产品决策 |
+| M2 | edit_data 扁平 vs write.patch 嵌套 value 位置不一致 | **双兼容**:edit_data 容错误传 write 的 `{patch:{op,jsonPath,value}}` 形式(从 patch 取,顶层优先);op 改 optional + 函数兜底 MISSING_VALUE。advanced 模式两者混用不再直接报错浪费一轮 |
+| M3 | subagent 并发模式 signal/emit/logSink 闭包竞态 | **文档告知**:subagent.ts 注释标注闭包竞态限制(并发 >1 时 signal/emit 可能错乱)+ 建议串行;机制彻底修(改 spawn 从 ctx 取)成本高,待后续 |
+| L6 | set_data 白名单浅 safeMerge 嵌套整体替换 | **description 增强**:set_data 说明白名单模式根级浅合并、深层子对象整体替换,保留深层字段用 edit_data merge |
+
+**维持暂缓(4 项,低优先/需产品决策)**:
+
+| # | 项 | 暂缓原因 |
+|---|---|---|
+| M4 | maybeParseValue 裸字面量隐式转换("5"→5) | 向后兼容不改行为;usageHints 已提示 string 直传;改了破坏现有 value parse 语义 |
+| L1 | simple 模式暴露 history/restore 但隐藏 list_snapshots | 功能可用(restore/history 不传 id 用默认最近);二选一需产品决策 |
 | L4 | trimContext 只截 ToolMessage 不处理超长 AIMessage | AI 输出有 maxTokens 兜底;小上下文模型多轮累积才触发,低频 |
 | L5 | setByPath 自动建中间路径(可能掩盖笔误) | schema safeParse + isPathAllowed 多数场景兜住;`.passthrough()` schema 才漏,罕见 |
-| L6 | set_data 白名单浅 safeMerge 嵌套整体替换 | 是 set_data"整体替换"语义所致;description 可增强提示深层保留用 edit_data merge |
 
 ---
 
