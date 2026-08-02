@@ -1001,6 +1001,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (snap.memory && !options.memory) memoryMw.reset(snap.memory)
       // automation 断点续跑:恢复 checkpoint 栈 + 累计 usage(刷新后 restoreLastCheckpoint 能用 + 预算统计连续)
       if (snap.checkpoints?.length && checkpointMgr) checkpointMgr.importStack(snap.checkpoints)
+      // 恢复累计 usage(断点续跑:刷新后预算统计连续)。一次性恢复覆盖:此处把 snap.usage 整体赋到 usage;
+      // 之后 sdk-events afterModel 在恢复后的 usage 上继续累加 —— 非"双写"(applySnapshot 恢复时一次性 + afterModel 每轮累加,时机不同,语义一致:恢复基线 + 后续累加)
       if (snap.usage) Object.assign(usage, snap.usage)
       // 注:用户创建的 skill 不再随 SessionSnapshot 持久化,由独立 SkillStore 管理(见 loadUserSkillsFromStore)
     },
@@ -1105,6 +1107,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         const task = tasks[i]
         // 每任务前存 checkpoint:该任务失败时 restoreLastCheckpoint 可回退到任务前态
         if (checkpointMgr) checkpointMgr.save(`batch:${i}`)
+        const beforeLen = messages.length  // 失败时 truncate 回(撤销本轮 user + invoke 期间的中间 push)
         try {
           messages.push({ role: 'user', content: task, timestamp: Date.now() })
           const reply = await core.agent!.invoke(messages)
@@ -1114,7 +1117,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           results.push({ index: i, task, reply, ok: true })
           onProgress?.({ done: i + 1, total: tasks.length, task, ok: true })
         } catch (err) {
-          // 任务级错误隔离:invoke 抛错不中断整批;记 observable error + 失败结果,继续下一任务
+          // 任务级错误隔离:invoke 抛错不中断整批;truncate 回本轮前(撤销 user + 中间 push,防失败 user 残留致下一任务连续 user 上下文错乱 — bug-review MED)+ 记 observable error
+          if (messages.length > beforeLen) messages.splice(beforeLen)
           const ae = asAgentError(err, 'fatal')
           emit({ type: 'error', message: `批量任务 ${i + 1}/${tasks.length} 失败:${ae.message}`, severity: 'observable', code: 'BATCH_TASK_FAILED', context: { index: i, task: task.slice(0, 100) } } as any)
           results.push({ index: i, task, error: ae.message, ok: false })

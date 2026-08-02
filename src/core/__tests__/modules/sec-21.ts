@@ -17,6 +17,7 @@ import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from
 import { createApprovalMiddleware } from '../../harness/approval'
 import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../../harness/humanConfirm'
 import { createCheckpointManager, createCheckpointMiddleware } from '../../harness/checkpoint'
+import { createBudgetMiddleware } from '../../harness/budget'
 import { extractText } from '../../mcp/client'
 import { createInitialState as createState } from '../../harness/state'
 import {
@@ -193,6 +194,33 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(fb2.ok === false && /禁用模式/.test(fb2.error || ''), '✓ runSandboxedScript 静态扫描拒绝 eval()')
     const fb3 = await runSandboxedScript({ x: 1 }, 'return new Function("x","return x")()')
     assert(fb3.ok === false && /禁用模式/.test(fb3.error || ''), '✓ runSandboxedScript 静态扫描拒绝 new Function()')
+  }
+
+  // ============ budget middleware 运行时(automation §1 资源预算闸;maintain 测试盲区 HIGH 补)============
+  console.log('\n[budget middleware · 资源预算闸]')
+  {
+    const usage: any = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    const events: any[] = []
+    const emit = (e: any) => events.push(e)
+    const mkNext = (content = 'ok') => async () => ({ message: new AIMessage(content), content, toolCalls: [] as any, aborted: false })
+    // 未超限 → 放行 next
+    const mw = createBudgetMiddleware(usage, { tokenBudget: 100, timeBudgetMs: 5000 }, emit)
+    mw.beforeAgent!({} as any)
+    usage.total_tokens = 50
+    const r1 = await mw.wrapModelCall!({ messages: [], state: {} as any } as any, mkNext() as any)
+    assert(r1.content === 'ok' && !r1.aborted, '✓ budget 未超限 → 放行 next(正常响应)')
+    // token 超限 → aborted + emit BUDGET_EXCEEDED(不调 next)
+    usage.total_tokens = 200
+    events.length = 0
+    const r2 = await mw.wrapModelCall!({ messages: [], state: {} as any } as any, mkNext('不应到达') as any)
+    assert(r2.aborted === true, '✓ budget token 超限(200>100) → aborted response(不调 next)')
+    assert(events.some((e) => e.code === 'BUDGET_EXCEEDED'), '✓ budget 超限 → emit BUDGET_EXCEEDED(observable)')
+    // time 超限 → aborted
+    const mwT = createBudgetMiddleware({ total_tokens: 0 } as any, { timeBudgetMs: 50 }, emit)
+    mwT.beforeAgent!({} as any)
+    await new Promise((r) => setTimeout(r, 80))
+    const r3 = await mwT.wrapModelCall!({ messages: [], state: {} as any } as any, mkNext('不应到达') as any)
+    assert(r3.aborted === true, '✓ budget time 超限(80ms>50ms) → aborted')
   }
 
   // ============ read/write 高层工具(单主对象 + 自动锁 + 拦截器)============
