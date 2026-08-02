@@ -5,6 +5,7 @@ import { extractSchemaHint } from '../../presets'
 import { diffObjects } from '../../tools/jsonUtils'
 import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
+import { inspectTools } from '../../tools/envTool'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
@@ -82,6 +83,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 两者都关 → 空
     const none = selectBuiltinTools({ dataOps: false, fetch: false }, dataOps, fetchDocTools)
     assert(none.length === 0, 'dataOps + fetch 都关 → 工具池空')
+
+    // inspect_env 默认开(=== false 才关):传 inspect 数组时默认装入
+    const withInspect = selectBuiltinTools(undefined, dataOps, fetchDocTools, undefined, inspectTools)
+    assert(withInspect.some((t) => t.name === 'inspect_env'), 'selectBuiltinTools 默认装 inspect_env(inspectEnv 默认开)')
+    assert(withInspect.length === dataOps.length + fetchDocTools.length + inspectTools.length, 'selectBuiltinTools 默认含 inspect(默认开,dataOps+fetch+inspect)')
+    // inspectEnv:false → 不含 inspect(其他不变)
+    const noInspect = selectBuiltinTools({ inspectEnv: false }, dataOps, fetchDocTools, undefined, inspectTools)
+    assert(noInspect.every((t) => t.name !== 'inspect_env') && noInspect.length === dataOps.length + fetchDocTools.length, 'inspectEnv:false → 不含 inspect_env(其余不变)')
+    // 不传 inspect 数组 → 即使默认开也无 inspect 可装(不报错)
+    const noInspectArr = selectBuiltinTools(undefined, dataOps, fetchDocTools)
+    assert(noInspectArr.every((t) => t.name !== 'inspect_env'), '未传 inspect 数组 → 不含 inspect(默认开但无源)')
   }
 
   // ============ usageHints 中间件(能力用法默认提示,克制注入)============
@@ -114,7 +126,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!/restore_data/.test(segNoData), '无数据工具 → 不注入 snapshot 提示')
 
     // 全关 → undefined(不增上下文)
-    const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false }, false)
+    const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false, inspectEnv: false }, false)
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
     assert(mwFull.name === 'usageHints', '中间件 name=usageHints')

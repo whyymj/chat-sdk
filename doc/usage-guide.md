@@ -180,7 +180,7 @@ createChatSdk({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;workingMemory=跨压缩记忆(2.18+)默认开)
+  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.18+)默认开排查用;workingMemory=跨压缩记忆(2.18+)默认开)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -486,6 +486,26 @@ agent 调用 `get_dom({ selector?, depth?, attrs?, includeText? })`:
 ```
 
 > 需要手动注入(不走 capabilities)时:`import { domTools } from 'page-agent-sdk'` 展开 tools。纯函数 `domToStructure(node, opts)` 已导出,可脱离浏览器单测。
+
+#### 环境探查 `inspect_env`(排查调试,默认开)
+
+让 agent 读宿主页面**环境信息**(URL / 浏览器 / 视口 / 集成方调试变量),排查「当前页面在哪/什么浏览器/视口多大/调试变量值/为何没生效」。`capabilities.inspectEnv` 默认**开启**(轻量只读,排查刚需);`false` 关。
+
+```ts
+createChatSdk({
+  capabilities: { inspectEnv: true },  // 默认开;false 关
+  // ...
+}).mount()
+```
+
+agent 调用 `inspect_env({ key? })`:
+
+- **不传 `key`**:返回环境摘要(`location` 的 URL/origin/path、`navigator` 浏览器/语言/在线、`viewport` 视口尺寸/DPR/滚动、`document` 的 title/readyState)
+- **传 `key`**:读指定 `window[key]`(集成方挂的调试变量,如 `inspect_env({key:"appConfig"})` 读 `window.appConfig`)
+
+`safeSerialize` 跳过 function/DOM/循环引用 + 限深度/键数/长度截断防超大;大结果自动外存 vfs。区别于 `get_dom`(读 DOM 结构,深度遍历,opt-in):`inspect_env` 轻量读环境摘要,**默认开**,不改数据。
+
+> 手动注入:`import { inspectTools } from 'page-agent-sdk'`。纯函数 `safeSerialize`/`getEnvSummary` 已导出,可脱离浏览器单测。
 
 #### 宿主动作 `actions`(触发保存/发布等页面操作)
 

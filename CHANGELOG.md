@@ -9,15 +9,19 @@
 - **任务目标锚定 mission(revive-mission-anchor Phase 1)**:会话级 Mission 状态(`{ goal, acceptanceCriteria?, sourceMessageIdx, capturedAt, explicit }`)。① capture:首条「任务型」user 启发式(非空/非问候/含任务动词,不调 LLM)+ `send({mission})`/`setMission` 显式覆盖;② augmentPrompt 每轮注入「## 当前主线目标」pin 段(**天然跨压缩保留** —— mission 在 state 不在 messages,compressInput 不碰);③ SDK API:`getMission()` / `setMission({goal?,criteria?})`(合并;`{}` 清空)/ `send(text,{mission?})` / `inspect().mission`;④ `capabilities.missionAnchor`(分层默认核心,**默认开**;`false` 关)。长任务防跑偏 + 压缩丢主线。定位升级重启(complex-agent-roadmap Phase 1,见 `doc/complex-agent-roadmap.md`)
 - **跨压缩工作记忆 workingMemory(revive-cross-round-working-memory Phase 1)**:① 自动捕获(`wrapToolCall` after,**不调 LLM**):`read`/`query_data`/`search_data` 结果 → `locatedPaths`(LRU ≤10 去重);`read` 结果的 `hash=` → `lastHashes[path]`(LRU ≤10);其他工具不捕获;② pin 段天然跨压缩:`augmentPrompt` 每轮注入「## 工作记忆(跨压缩保留)」(workingMemory 在 state → `compressInput` 不碰;**无需改 summarization**,同 mission 机制);③ `capabilities.workingMemory`(分层默认核心,**默认开**;`false` 关);④ `inspect().workingMemory` 反映 pin(locatedPaths/lastHashes)。解锁:几百 K 频繁压缩 → read/query 定位的 path + read 的 hash 随 older 轮次丢 → LLM 重复检索(浪费 token)+ 凭记忆写致 `autoLock` 误冲突。与 `preserveLastToolResults` 互补(preserve 保工具结果摘要防字段描述丢,workingMemory 保 path/hash 结构化防定位丢);与 mission 正交。定位升级重启(complex-agent-roadmap Phase 1)
 - **大 schema 分层披露(add-schema-tiered-disclosure Phase 1)**:`extractSchemaHint(schema, opts?)` 阈值触发(默认 maxKeys=15/maxChars=4000,集成方经 `schemaHint` 配置可调)→ 大 schema 自动转「顶层概览」(`renderSchemaShallow`:key+type+一句描述,**不带**约束/不递归 shape)+ 尾部提示(深层约束查 `schema_data`);小 schema(≤阈值)仍全量(现状不变,无感)。新增导出 `renderSchemaShallow`/`SchemaHintOptions`。直击:50+ 组件深嵌套 schema 全量注入 systemPrompt 撑爆上下文 + LLM 认知负担(本轮只改 1 个组件却看到全部约束)。在 expose-schema(2.17)之上加分层;`schema_data` 工具已有(advanced)。定位升级重启(complex-agent-roadmap Phase 1)
+- **环境探查工具 inspect_env(排查调试默认工具)**:新增**默认开启**的轻量环境探查(`capabilities.inspectEnv` 默认 true,`false` 关)。① 无参返回 window 安全摘要(`location` URL/origin/path、`navigator` 浏览器/语言/在线、`viewport` 视口尺寸/DPR/滚动、`document` title/readyState);② 传 `key` 读指定 `window[key]`(集成方挂的调试变量,如 `inspect_env({key:"appConfig"})` 读 `window.appConfig`);③ `safeSerialize` 跳过 function/DOM/循环引用 + 限深度/键数/长度截断防超大。排查"当前 URL/浏览器/视口/调试变量值/为何没生效"。区别于 `get_dom`(DOM 结构深度遍历,opt-in,有 token 成本):inspect_env 轻量只读环境摘要**默认开**。新增导出 `inspectTools`/`inspectEnvTool`/`safeSerialize`/`getEnvSummary`
 
 ### Changed
 - planning 中间件工具(write_todos / update_todo)`source` 标 `'builtin'`(此前落 `'user'`,语义错;与 vfs/checkpoint/humanConfirm 一致)
+- **ChatDialog 样式优化**:① 正文(`.message-md` / `.message-bubble`)字号 13→12px 对齐「思考过程」字号(line-height 提到 1.7 补偿小字号可读性);② 人工确认框(`.approval-bar`)样式升级:左侧 4px 强调边 + 渐变背景 + 卡片化问题/推荐(白底 + 阴影 + 主色左边推荐块)+ 按钮主次分明(允许=主色填充带阴影 + 拒绝=描边 + 选项 hover 上浮),图标放大
 
 ### Tests
 - selftest 新增 `sec-34`(update_todo 增量 / id 生成 / TODO_NOT_FOUND / maxPlanRevisions 阶段计数 / 超限回灌 / 写工具退出 / 重入 / hydrate 补 id / 同轮冲突拒)。断言计数 782→800
 - e2e `inspect.mjs` + `systemprompt.mjs` 补(update_todo + source=builtin + planPhase + maxPlanRevisions 配置反映 + 自适应规划引导)。断言计数 228→238
 - browser `page-demo.spec.ts` 加「write_todos→update_todo→write 自适应规划端到端」。断言计数 15→16
 - selftest 新增 `sec-35`(mission capture 启发式 / 保守(问候/超短/超长/无动词)/ setMission 显式覆盖·合并·清空 / getMission / augmentPrompt pin 段)。断言计数 800→817
+- selftest 新增 `sec-39`(inspect_env:`safeSerialize` 纯函数基本类型/截断/function/symbol/bigint/array/object/深度/循环/DOM/getter + `getEnvSummary` 结构 + `inspect_env` invoke 读 window 属性/不存在/无参摘要,~18 项)+ `sec-19` 补 `selectBuiltinTools` 的 inspect 默认开/关。断言计数 894→922
+- e2e `inspect.mjs` 补 inspect_env(默认含 + `inspectEnv:false` 不含 + source=builtin)。断言计数 247→250
 - e2e `inspect.mjs` 补 mission(getMission/setMission/inspect().mission/capabilities.missionAnchor:false → getMission undefined + setMission warn 不抛)。断言计数 238→247
 
 ## [2.17.0] - 2026-08-01

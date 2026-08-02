@@ -112,8 +112,8 @@ watch(() => props.content, enhanceCodeBlocks)
 
 <style>
 .message-md {
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.7;
   overflow-wrap: anywhere;
   word-break: break-word;
 }

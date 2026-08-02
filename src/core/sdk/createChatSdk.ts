@@ -56,6 +56,7 @@ import { createInitialState } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools } from '../tools/domTool'
+import { inspectTools } from '../tools/envTool'
 import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -219,6 +220,7 @@ export interface ChatSdkOptions {
     subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
+    inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -666,7 +668,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domTools)
+  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domTools, inspectTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
   const userTools: StructuredToolInterface[] = [

@@ -477,7 +477,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; workingMemory?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; workingMemory?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -753,12 +753,20 @@ export interface SdkEvents {
   hook(handler: (e: any) => void): () => void;
 }
 export declare function createSdkEvents(onEvent?: (e: any) => void): SdkEvents;
-export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean; domInspect?: boolean } | undefined, dataOps: any[], fetchDocs: any[], dom?: any[]): any[];
+export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean; domInspect?: boolean; inspectEnv?: boolean } | undefined, dataOps: any[], fetchDocs: any[], dom?: any[], inspect?: any[]): any[];
 export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
 export declare const fetchDocTools: any[];
 /** DOM 读取工具 get_dom(随 capabilities.domInspect 装配,opt-in) */
 export declare const domTools: any[];
 export declare const domToolsStatic: any[];
+/** 环境探查工具 inspect_env(随 capabilities.inspectEnv 默认装配,默认开;排查 window/location/调试变量) */
+export declare const inspectTools: any[];
+/** 单个 inspect_env 工具(inspectTools 数组的元素) */
+export declare const inspectEnvTool: any;
+/** 纯函数:安全序列化任意值(跳过 function/DOM,防循环引用,截断)—— inspect_env 读 window[key] 时用 */
+export declare function safeSerialize(value: unknown, depth?: number, maxLen?: number, seen?: WeakSet<object>): unknown;
+/** 环境摘要(location/navigator/viewport/document);inspect_env 无参时返回,可传 win 注入测试 */
+export declare function getEnvSummary(win?: Window & typeof globalThis): Record<string, unknown>;
 export declare const getDomTool: any;
 /** 纯函数:DOM Element → 结构化 DomNode(可单测,与浏览器解耦) */
 export declare function domToStructure(node: Element | null, opts: { depth: number; attrs?: string[]; includeText?: boolean }): DomNode | null;

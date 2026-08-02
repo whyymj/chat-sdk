@@ -31,12 +31,13 @@ export function defineDataToolset(config: DataConfig, opts?: DataOpsOptions): St
 }
 
 /** capabilities 子集(仅工具相关开关,避免与 createChatSdk 循环依赖) */
-type ToolCapabilityFlags = { dataOps?: boolean; fetch?: boolean; domInspect?: boolean }
+type ToolCapabilityFlags = { dataOps?: boolean; fetch?: boolean; domInspect?: boolean; inspectEnv?: boolean }
 
 /**
  * 按 capabilities 开关筛选内置工具(纯函数,可单测)。
- * - dataOps/fetch 默认开启(=== false 才关)
+ * - dataOps/fetch/inspectEnv 默认开启(=== false 才关)
  * - domInspect 默认**关闭**(=== true 才开):读 DOM 有 token 成本,集成方按需开启
+ * - inspectEnv 默认**开启**:轻量只读环境探查(location/navigator/viewport/调试变量),排查调试刚需
  * 关闭则对应工具不进工具池(省 token/上下文)。
  */
 export function selectBuiltinTools(
@@ -44,13 +45,16 @@ export function selectBuiltinTools(
   dataOps: StructuredToolInterface[],
   fetchDocs: StructuredToolInterface[],
   dom?: StructuredToolInterface[],
+  inspect?: StructuredToolInterface[],
 ): StructuredToolInterface[] {
   const useDataOps = caps?.dataOps !== false
   const useFetch = caps?.fetch !== false
   const useDom = caps?.domInspect === true
+  const useInspect = caps?.inspectEnv !== false
   return [
     ...(useDataOps ? dataOps : []),
     ...(useFetch ? fetchDocs : []),
     ...(useDom && dom ? dom : []),
+    ...(useInspect && inspect ? inspect : []),
   ]
 }

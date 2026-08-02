@@ -149,7 +149,7 @@ createChatSdk({
   schemaHint: { maxKeys?, maxChars? },               // large-schema tiered disclosure thresholds (2.18+; default 15/4000); see §6
 
   // capability toggles (default all on; verify default off)
-  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; workingMemory default on
+  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, inspectEnv?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; inspectEnv (inspect_env, reads window/env, 2.18+) default on; workingMemory default on
 
   // human-in-the-loop
   humanConfirm: true,               // proactive inquiry (default on; AI asks when uncertain/multi-plan)
@@ -435,6 +435,26 @@ Returns structured JSON (`{tag, attrs, text, children[], childCount?}`); truncat
 ```
 
 > To inject manually (bypass capabilities): `import { domTools } from 'page-agent-sdk'` and spread into tools. The pure function `domToStructure(node, opts)` is exported and unit-testable without a browser.
+
+#### Environment probe `inspect_env` (debugging, default on)
+
+Lets the agent read the host page's **environment info** (URL / browser / viewport / integrator debug vars) to troubleshoot "where am I / what browser / viewport size / debug var value / why didn't it take effect". `capabilities.inspectEnv` defaults to **on** (lightweight read-only, essential for debugging); `false` to disable.
+
+```ts
+createChatSdk({
+  capabilities: { inspectEnv: true },  // default on; false to disable
+  // ...
+}).mount()
+```
+
+The agent calls `inspect_env({ key? })`:
+
+- **Without `key`**: returns an environment summary (`location` URL/origin/path, `navigator` browser/language/online, `viewport` size/DPR/scroll, `document` title/readyState)
+- **With `key`**: reads a specific `window[key]` (integrator-mounted debug var, e.g. `inspect_env({key:"appConfig"})` reads `window.appConfig`)
+
+`safeSerialize` skips functions/DOM/circular refs + caps depth/key-count/length to avoid blowups. Large results auto-offload to vfs. Unlike `get_dom` (reads DOM structure, deep traversal, opt-in): `inspect_env` is a lightweight environment summary, **on by default**, non-mutating.
+
+> Manual inject: `import { inspectTools } from 'page-agent-sdk'`. Pure functions `safeSerialize`/`getEnvSummary` are exported and unit-testable without a browser.
 
 #### Host actions `actions` (trigger save/publish/page ops)
 

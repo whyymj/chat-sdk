@@ -616,7 +616,7 @@ const drawerWidthStyle = computed(() => {
 .message-row.user .message-avatar { background: #ecf5ef; }
 .message-content { max-width: 80%; min-width: 0; }
 .message-bubble {
-  padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.6;
+  padding: 9px 13px; border-radius: 12px; font-size: 12px; line-height: 1.7;
   overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;
 }
 .message-row.assistant .message-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
@@ -704,24 +704,25 @@ const drawerWidthStyle = computed(() => {
 .undo-foot-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
 
 /* 人工确认条(approval 中间件挂起时显示) */
-.approval-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #f59e0b; border-radius: 10px; background: #fffbeb; }
-.approval-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #92400e; }
-.approval-icon { font-size: 15px; }
-.approval-title code { padding: 1px 6px; border-radius: 4px; background: #fef3c7; color: #78350f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.approval-toggle { margin-left: auto; padding: 2px 8px; border: none; background: transparent; color: #92400e; font-size: 12px; cursor: pointer; border-radius: 4px; }
-.approval-toggle:hover { background: #fef3c7; }
-.approval-args { margin: 8px 0; padding: 8px; max-height: 140px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; }
-.approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.approval-actions button { padding: 5px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
-.approval-deny { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
-.approval-deny:hover { background: #e5e7eb; color: #374151; }
-.approval-allow { background: var(--cs-primary); color: #fff; }
-.approval-allow:hover { opacity: 0.9; }
-.approval-question { margin: 8px 0; padding: 8px 10px; border-radius: 6px; background: #fff; border: 1px solid #fde68a; font-size: 13px; color: #57534e; line-height: 1.5; white-space: pre-wrap; }
-.approval-context { margin: 4px 0 8px; font-size: 12px; color: #92400e; line-height: 1.5; }
-.approval-recommend { margin: 4px 0 8px; font-size: 12px; color: #1f4d3a; }
-.approval-opt { padding: 5px 14px; border: 1px solid var(--cs-primary); border-radius: 6px; background: #fff; color: var(--cs-primary); font-size: 13px; cursor: pointer; transition: all 0.2s; }
-.approval-opt:hover { background: var(--cs-primary); color: #fff; }
+.approval-bar { margin: 10px 12px; padding: 12px 14px; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 10px; background: linear-gradient(180deg, #fffbeb 0%, #fffef5 100%); box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08); }
+.approval-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #92400e; }
+.approval-icon { font-size: 18px; }
+.approval-title { flex: 1; min-width: 0; }
+.approval-title code { padding: 2px 7px; border-radius: 5px; background: #fef3c7; color: #78350f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.approval-toggle { padding: 3px 10px; border: 1px solid #fde68a; background: #fffbeb; color: #92400e; font-size: 12px; cursor: pointer; border-radius: 6px; transition: all 0.2s; }
+.approval-toggle:hover { background: #fef3c7; border-color: #f59e0b; }
+.approval-args { margin: 10px 0; padding: 10px; max-height: 160px; overflow: auto; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+.approval-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.approval-actions button { padding: 6px 18px; border: none; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+.approval-deny { background: #fff; color: #6b7280; border: 1px solid #e5e7eb; }
+.approval-deny:hover { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+.approval-allow { background: var(--cs-primary); color: #fff; box-shadow: 0 1px 3px rgba(var(--cs-primary-rgb), 0.3); }
+.approval-allow:hover { opacity: 0.92; transform: translateY(-1px); }
+.approval-question { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 13px; color: #1f2937; line-height: 1.6; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03); }
+.approval-context { margin: 6px 0 10px; padding: 0 2px; font-size: 12px; color: #92400e; line-height: 1.6; }
+.approval-recommend { margin: 8px 0 10px; padding: 8px 12px; border-radius: 8px; background: rgba(var(--cs-primary-rgb), 0.06); border-left: 3px solid var(--cs-primary); font-size: 12px; color: var(--cs-primary); line-height: 1.6; }
+.approval-opt { padding: 6px 16px; border: 1px solid var(--cs-primary); border-radius: 7px; background: #fff; color: var(--cs-primary); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+.approval-opt:hover { background: var(--cs-primary); color: #fff; transform: translateY(-1px); }
 
 /* 乐观锁冲突条(dataOps 写入时 expectedHash 不匹配,挂起等用户决定) */
 .conflict-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #dc2626; border-radius: 10px; background: #fef2f2; }

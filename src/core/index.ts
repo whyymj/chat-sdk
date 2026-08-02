@@ -74,6 +74,7 @@ export type { ToolErrorInput, ErrorSeverity, AgentError, ErrorRouting } from './
 export { fetchDocTools } from './tools/fetchDoc'
 export { domTools, getDomTool, domToStructure } from './tools/domTool'
 export type { DomNode, DomReadOptions } from './tools/domTool'
+export { inspectTools, inspectEnvTool, safeSerialize, getEnvSummary } from './tools/envTool'
 export { fetchTools, defineDataToolset, selectBuiltinTools, domToolsStatic } from './toolsets'
 export { createUsageHintsMiddleware } from './harness/usageHints'
 export type { PermissionRule, PermissionOp } from './harness/permissions'

@@ -15,6 +15,7 @@ type HintCapabilityFlags = {
   dataOps?: boolean
   subagent?: boolean
   humanConfirm?: boolean
+  inspectEnv?: boolean
   /** 预声明子 agent(用于注入"规划-反思-执行"路由提示;空则不注入) */
   subagents?: { id: string; description: string; temperature?: number }[]
 }
@@ -61,6 +62,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         }
       }
       if (caps?.subagent !== false) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
+      if (caps?.inspectEnv !== false) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
       if (caps?.subagents?.length) {
         const planners = caps.subagents.filter((s) => (s.temperature ?? 0) >= CREATIVE_TEMP || /规划|创意|设计|方案|brainstorm|plan/i.test(s.description))
         const reflectors = caps.subagents.filter((s) => (s.temperature ?? 0) < CREATIVE_TEMP && /反思|审查|挑刺|校验|review|critique|reflect/i.test(s.description))

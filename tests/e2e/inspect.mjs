@@ -68,6 +68,26 @@ export async function run() {
     const vfsJsonPatch = sdkVfs.inspect().tools.find((t) => t.name === 'vfs_json_patch')
     assert(vfsJsonPatch && vfsJsonPatch.source === 'builtin', 'vfs_json_patch → source=builtin')
     assert(sdkVfs.inspect().contextPreset === 'auto', 'inspect().contextPreset 默认 auto')
+
+    // inspect_env 默认开(capabilities.inspectEnv !== false,排查调试默认工具)
+    const sdkEnvOn = createChatSdk({
+      ui: false, id: 'e2e-inspect-env-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkEnvOn.mount()
+    assert(sdkEnvOn.inspect().tools.some((t) => t.name === 'inspect_env'), '默认 → inspect().tools 含 inspect_env(排查调试默认开)')
+    const envTool = sdkEnvOn.inspect().tools.find((t) => t.name === 'inspect_env')
+    assert(envTool && envTool.source === 'builtin', 'inspect_env → source=builtin')
+    sdkEnvOn.unmount()
+    // inspectEnv:false → 不含 inspect_env(其余不变)
+    const sdkEnvOff = createChatSdk({
+      ui: false, id: 'e2e-inspect-env-off', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, inspectEnv: false },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkEnvOff.mount()
+    assert(!sdkEnvOff.inspect().tools.some((t) => t.name === 'inspect_env'), 'inspectEnv:false → 不含 inspect_env')
+    sdkEnvOff.unmount()
     sdkVfs.unmount()
 
     // inspect().contextPreset 反映 complex(add-complex-preset-and-vfs-json)

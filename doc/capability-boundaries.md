@@ -19,6 +19,7 @@
 | 上下文管理 | 压缩 + 关键词召回 + 预设档 | summarization + contextPreset | 长会话、复杂任务(complex 预设) |
 | RAG 知识库 | memory 异步注入 / skill 渐进披露 | memory + skills | 文档问答、领域知识 |
 | MCP 远程工具 | 动态注入外部工具 | mcp client | 接外部能力 |
+| 环境探查(排查调试) | 读 window 环境/URL/视口/集成方调试变量 | `inspect_env`(2.18+,默认开) | 排查「为何没生效」、看页面运行环境 |
 
 **典型能扛的复杂场景**:低代码页面搭建(complex-demo)、多步配置、嵌套树编辑、RAG 问答、规划-反思-执行编排、大数组分页操作。
 
