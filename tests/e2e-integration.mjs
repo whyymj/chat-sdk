@@ -13,6 +13,7 @@ import { run as runPresets } from './e2e/presets.mjs'
 import { run as runBoundary } from './e2e/boundary.mjs'
 import { run as runCustomInjection } from './e2e/custom-injection.mjs'
 import { run as runConflict } from './e2e/conflict.mjs'
+import { run as runAutomation } from './e2e/automation.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -27,6 +28,7 @@ const modules = [
   ['boundary', runBoundary],
   ['custom-injection', runCustomInjection],
   ['conflict', runConflict],
+  ['automation', runAutomation],
 ]
 
 let totalPass = 0, totalFail = 0

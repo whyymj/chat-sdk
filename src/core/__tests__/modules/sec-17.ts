@@ -156,4 +156,46 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(bind.list.length === 3 && !bind.list.includes(99), 'getData 模式 restore 还原 bind.list(就地清空+重填)')
     assert(!('extra' in bind), 'getData 模式 restore 删除快照后新增的 key(restoreInPlace 语义)')
   }
+
+  // automation 断点续跑:exportStack/importStack(持久化 checkpoint 栈,刷新/崩溃后恢复 restoreLastCheckpoint 能力)
+  {
+    console.log('\n[checkpoint exportStack/importStack(automation 断点续跑)]')
+    const bind: any = { title: '原标题', theme: 'light' }
+    const messages: any[] = [{ role: 'user', content: '你好', timestamp: Date.now() }]
+    const vfsStore = { files: { 'a.txt': { content: 'A', bytes: 1, updatedAt: 1 } } } as any
+    const todosMw = { reset: (_t: any[]) => {} }
+    const mgr = createCheckpointManager({
+      getData: () => bind, vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: messages as any,
+    })
+    mgr.save('round1'); mgr.save('round2')
+    assert(mgr.list().length === 2, 'exportStack 前:2 个 checkpoint')
+    // 导出栈快照(深拷贝,可序列化)
+    const stack = mgr.exportStack()
+    assert(Array.isArray(stack) && stack.length === 2, 'exportStack 返回数组,长度 = 栈长')
+    assert(stack[0].messages && stack[0].windowVals, 'exportStack 元素含 messages + windowVals(可序列化结构)')
+    assert(JSON.parse(JSON.stringify(stack)).length === 2, 'exportStack 结果可 JSON 序列化(持久化往返)')
+    assert(mgr.list().length === 2, 'exportStack 不影响原栈(深拷贝隔离)')
+    // 新 mgr 灌入快照 → 恢复栈 + canRestore=true
+    const mgr2 = createCheckpointManager({
+      getData: () => bind, vfsStore: { files: {} } as any, todosMw: todosMw as any, getTodos: () => [], messages: [] as any,
+    })
+    assert(mgr2.list().length === 0 && !mgr2.canRestore(), 'importStack 前:空栈')
+    mgr2.importStack(stack)
+    assert(mgr2.list().length === 2 && mgr2.canRestore(), 'importStack 恢复栈(2 个 checkpoint)+ canRestore=true')
+    // 灌入后 restore 能用(回退到最近 checkpoint,内容完整)
+    bind.title = '改坏'
+    const ok = mgr2.restore()
+    assert(ok && bind.title === '原标题', 'importStack 后 restore 正常回退(栈内容完整可用)')
+    // nextId 重置:后续 save 的 id > 栈最大 id(不冲突)
+    const beforeMax = Math.max(...mgr2.list().map((c: any) => c.id))
+    mgr2.save('after-import')
+    const newId = mgr2.list().find((c: any) => c.label === 'after-import')!.id
+    assert(newId > beforeMax, 'importStack 后 save 的 id > 栈最大 id(nextId 重置防冲突)')
+    // 脏数据过滤:缺 messages 的元素不灌入;非数组不抛
+    const mgr3 = createCheckpointManager({ getData: () => bind, vfsStore: { files: {} } as any, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+    mgr3.importStack([{ foo: 1 }, null, { id: 5 }] as any)
+    assert(mgr3.list().length === 0, 'importStack 过滤脏数据(缺 messages 不灌入)')
+    mgr3.importStack(undefined as any)
+    assert(mgr3.list().length === 0, 'importStack 非数组不抛(空栈)')
+  }
 }

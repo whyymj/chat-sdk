@@ -73,6 +73,28 @@ export interface TokenUsage {
   total_tokens?: number
 }
 
+/** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */
+export interface BatchResult {
+  /** 任务在入参数组中的下标 */
+  index: number
+  /** 任务文本 */
+  task: string
+  /** 成功时的 agent 回复 */
+  reply?: string
+  /** 失败时的错误信息 */
+  error?: string
+  /** 是否成功 */
+  ok: boolean
+}
+
+/** 批处理进度回调 payload(sdk.batch 的 onProgress 每任务完成调一次) */
+export interface BatchProgress {
+  done: number
+  total: number
+  task: string
+  ok: boolean
+}
+
 /** SDK 事件回调签名 */
 export type SdkEventHandler = (event: SdkEvent) => void
 

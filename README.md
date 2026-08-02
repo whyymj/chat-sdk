@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1004%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-1015%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -139,6 +139,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | ⚡ host actions (2.18+) | Register save/publish/preview etc; SDK auto-generates named tools, agent triggers page ops directly (no `trigger_action` indirection) | `actions` |
 | 🧩 schema tiered disclosure (2.18+) | Large schema → systemPrompt injects top-level overview only (no constraints/no recursion); deep constraints via `schema_data` on demand; small schema unaffected (full) | `schemaHint` |
 | 📌 cross-compress working memory (2.18+) | Pin recent read/query paths + hashes across compression; no re-fetch, correct optimistic-lock hash | `capabilities.workingMemory` |
+| 🤖 unattended automation (2.20+) | Resource budget guard (`tokenBudget`/`timeBudgetMs`) + fatal-error auto-recovery (`maxAutoRetries`: restore checkpoint + retry) + cross-refresh resume + `sdk.batch(tasks)` batch processing | `capabilities.automation` |
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
 

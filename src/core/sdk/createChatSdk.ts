@@ -67,7 +67,7 @@ import { createSkillStore, type SkillStore, type SkillStoreConfig, type Persiste
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../utils/rounds'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
 
 export interface LLMConfig {
@@ -206,6 +206,8 @@ export interface ChatSdkOptions {
   tokenBudget?: number
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
   timeBudgetMs?: number
+  /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */
+  maxAutoRetries?: number
   /** 同轮多个工具调用的并发上限(默认 1 串行;>1 并发,可能影响有状态中间件如 todos 的计数) */
   maxParallelTools?: number
   /** 模型上下文窗口(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表。影响 offload 阈值与压缩触发 */
@@ -346,6 +348,12 @@ export interface ChatSdk {
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
   listCheckpoints(): { id: number; label?: string; timestamp: number; messageCount: number }[]
+  /**
+   * 批处理(automation):逐任务跑 agent,每任务前自动 checkpoint,任务间错误隔离(单任务失败记 error 不中断整批)。
+   * 适合无人值守批量操作(批量生成/改一批页面)。不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。
+   * 配合 capabilities.automation + checkpoint 使用;onProgress 每任务完成调一次(done/total/task/ok)。
+   */
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
   /**
    * 运行时订阅 SDK 事件(常用时机:数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * 与构造时 `onEvent` 选项互补:可注册多个监听器、运行时动态订阅;返回取消函数。
@@ -991,6 +999,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (snap.todos?.length) todosMw.reset(snap.todos)
       // memory:options.memory 优先(非空覆盖),否则用持久化的
       if (snap.memory && !options.memory) memoryMw.reset(snap.memory)
+      // automation 断点续跑:恢复 checkpoint 栈 + 累计 usage(刷新后 restoreLastCheckpoint 能用 + 预算统计连续)
+      if (snap.checkpoints?.length && checkpointMgr) checkpointMgr.importStack(snap.checkpoints)
+      if (snap.usage) Object.assign(usage, snap.usage)
       // 注:用户创建的 skill 不再随 SessionSnapshot 持久化,由独立 SkillStore 管理(见 loadUserSkillsFromStore)
     },
 
@@ -1041,23 +1052,74 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (options.interceptors?.input) {
         try { const r = options.interceptors.input(message); if (typeof r === 'string') msg = r } catch { /* 拦截器抛错忽略,用原 message */ }
       }
-      messages.push({ role: 'user', content: msg, timestamp: Date.now() })
-      try {
-        let reply = await core.agent!.invoke(messages)
-        // output 拦截器:返回前 postprocess(可改写最终回复)
-        if (options.interceptors?.output) {
-          try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
+      // automation 无人值守错误恢复:致命错误(invoke 抛错)→ restore_last_checkpoint 回到本轮前 + 重试(限 maxAutoRetries 次防循环)。
+      // 适合无人值守批量/长任务:单点模型/工具致命错误不永久中断,自动回退重试;确定性错误重试仍耗尽 → fatal(emit + throw)。
+      // checkpoint 在 beforeModel save(时点在 push user 后)→ restore 后 messages 已含本轮 user,故用 pushed 标记避免重复 push。
+      const maxAuto = useAutomation ? ((options as { maxAutoRetries?: number }).maxAutoRetries ?? 1) : 0
+      let attempt = 0
+      let pushed = false
+      while (true) {
+        if (!pushed) {
+          messages.push({ role: 'user', content: msg, timestamp: Date.now() })
+          pushed = true
         }
-        messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
-        core.afterRound()
-        if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
-        return reply
-      } catch (err) {
-        // invoke 抛错 = fatal(emit 结构化 error + 重新抛中断);asAgentError 归一化提取 severity/code/context
-        const ae = asAgentError(err, 'fatal')
-        emit({ type: 'error', message: ae.message, severity: ae.severity, ...(ae.code ? { code: ae.code } : {}), ...(ae.context !== undefined ? { context: ae.context } : {}) } as any)
-        throw err
+        try {
+          let reply = await core.agent!.invoke(messages)
+          // output 拦截器:返回前 postprocess(可改写最终回复)
+          if (options.interceptors?.output) {
+            try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
+          }
+          messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
+          core.afterRound()
+          if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
+          return reply
+        } catch (err) {
+          const ae = asAgentError(err, 'fatal')
+          // 仍有重试次数 + 有 checkpoint 可回退 → restore 回本轮前(含本轮 user)+ 重试,emit observable 告知
+          if (attempt < maxAuto && checkpointMgr?.canRestore()) {
+            attempt += 1
+            checkpointMgr.restore()
+            pushed = true // restore 后 messages 已含本轮 user(checkpoint 在 beforeModel save,时点在 push user 后),不重复 push
+            emit({ type: 'error', message: `致命错误自动恢复(${attempt}/${maxAuto}):${ae.message},已回退 checkpoint 重试`, severity: 'observable', code: 'AUTO_RECOVER_RETRY', context: { attempt, cause: ae.code ?? ae.message.slice(0, 120) } } as any)
+            continue
+          }
+          // 重试耗尽或未开 automation:invoke 抛错 = fatal(emit 结构化 error + 重新抛中断);asAgentError 归一化提取 severity/code/context
+          emit({ type: 'error', message: ae.message, severity: ae.severity, ...(ae.code ? { code: ae.code } : {}), ...(ae.context !== undefined ? { context: ae.context } : {}) } as any)
+          throw err
+        }
       }
+    },
+
+    /**
+     * 批处理(automation):逐任务跑 agent,每任务前自动 checkpoint(失败可 restoreLastCheckpoint 回退到任务前),
+     * 任务间错误隔离(单任务失败不中断整批,记 observable error 继续下一个)。适合无人值守批量操作(批量生成/改一批页面)。
+     * 不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。配合 capabilities.automation + checkpoint 使用。
+     */
+    async batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]> {
+      await core.initDone
+      if (!tasks.length) return []
+      const results: BatchResult[] = []
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i]
+        // 每任务前存 checkpoint:该任务失败时 restoreLastCheckpoint 可回退到任务前态
+        if (checkpointMgr) checkpointMgr.save(`batch:${i}`)
+        try {
+          messages.push({ role: 'user', content: task, timestamp: Date.now() })
+          const reply = await core.agent!.invoke(messages)
+          messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
+          core.afterRound()
+          if (store) await store.flush()
+          results.push({ index: i, task, reply, ok: true })
+          onProgress?.({ done: i + 1, total: tasks.length, task, ok: true })
+        } catch (err) {
+          // 任务级错误隔离:invoke 抛错不中断整批;记 observable error + 失败结果,继续下一任务
+          const ae = asAgentError(err, 'fatal')
+          emit({ type: 'error', message: `批量任务 ${i + 1}/${tasks.length} 失败:${ae.message}`, severity: 'observable', code: 'BATCH_TASK_FAILED', context: { index: i, task: task.slice(0, 100) } } as any)
+          results.push({ index: i, task, error: ae.message, ok: false })
+          onProgress?.({ done: i + 1, total: tasks.length, task, ok: false })
+        }
+      }
+      return results
     },
 
     /** 切换会话:flush 当前 → 载入/新建目标 → 清内存态并灌入快照(替换语义)→ 返回新会话 id */
@@ -1336,6 +1398,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
     void store.save(agentId, core.sessionId, { todos })
+    // automation 断点续跑:持久化 checkpoint 栈 + 累计 usage(刷新/崩溃后恢复,长任务可续跑;仅 automation 开启时写,省空间)
+    if (useAutomation && checkpointMgr) {
+      void store.save(agentId, core.sessionId, { checkpoints: checkpointMgr.exportStack() } as Partial<SessionSnapshot>)
+      void store.save(agentId, core.sessionId, { usage } as Partial<SessionSnapshot>)
+    }
     if (options.debug) console.log('[page-agent-sdk][persist] save', core.sessionId, `${messages.length} msgs`)
   }
 
@@ -1606,6 +1673,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     hide,
     show,
     send: core.send,
+    /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离(单任务失败不中断整批);详见 ChatSdk.batch */
+    batch: core.batch,
     switchSession: core.switchSession,
     stream: core.stream,
     inspect: core.getInfo,

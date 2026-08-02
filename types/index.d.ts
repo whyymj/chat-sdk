@@ -84,6 +84,26 @@ export interface TokenUsage {
   completion_tokens?: number;
   total_tokens?: number;
 }
+/** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */
+export interface BatchResult {
+  /** 任务在入参数组中的下标 */
+  index: number;
+  /** 任务文本 */
+  task: string;
+  /** 成功时的 agent 回复 */
+  reply?: string;
+  /** 失败时的错误信息 */
+  error?: string;
+  /** 是否成功 */
+  ok: boolean;
+}
+/** 批处理进度回调 payload(sdk.batch 的 onProgress 每任务完成调一次) */
+export interface BatchProgress {
+  done: number;
+  total: number;
+  task: string;
+  ok: boolean;
+}
 
 export type SdkEventHandler = (event: SdkEvent) => void;
 
@@ -316,11 +336,21 @@ export interface CheckpointMeta {
   timestamp: number;
   messageCount: number;
 }
+export interface Checkpoint extends CheckpointMeta {
+  messages: AgentMessage[];
+  windowVals: Record<string, unknown>;
+  vfs: Record<string, { content: string; mimeType?: string; updatedAt: number }>;
+  todos: { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }[];
+}
 export interface CheckpointManager {
   save(label?: string): number;
   list(): CheckpointMeta[];
   restore(id?: number): boolean;
   canRestore(): boolean;
+  /** 导出栈快照(深拷贝,可序列化;供 automation 断点续跑持久化,刷新/崩溃后恢复 restoreLastCheckpoint 能力) */
+  exportStack(): Checkpoint[];
+  /** 灌入栈快照(刷新/崩溃恢复时重建 checkpoint 栈;重置 nextId 防后续 save id 冲突) */
+  importStack(cps: unknown[]): void;
 }
 export declare function createCheckpointManager(deps: any): CheckpointManager;
 export declare function createCheckpointMiddleware(mgr: CheckpointManager): any;
@@ -358,6 +388,10 @@ export interface SessionSnapshot {
   vfs: Record<string, { content: string; mimeType?: string; updatedAt: number }>;
   todos: { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }[];
   memory: string;
+  /** automation 断点续跑:checkpoint 栈快照(刷新/崩溃后恢复 restoreLastCheckpoint 能力);仅 capabilities.automation 开启时写入 */
+  checkpoints?: unknown[];
+  /** automation 断点续跑:累计 token usage(刷新后续跑预算统计连续) */
+  usage?: TokenUsage;
 }
 export type StorageEvent =
   | { type: 'degraded'; reason: string }
@@ -473,6 +507,12 @@ export interface ChatSdkOptions {
   maxPlanRevisions?: number;
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number;
+  /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
+  tokenBudget?: number;
+  /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
+  timeBudgetMs?: number;
+  /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */
+  maxAutoRetries?: number;
   /** 同轮工具并发上限(默认 1 串行) */
   maxParallelTools?: number;
   /** 模型上下文窗口(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表。影响 offload 阈值与压缩触发 */
@@ -571,6 +611,12 @@ export interface ChatSdk {
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */
   listCheckpoints(): CheckpointMeta[];
+  /**
+   * 批处理(automation):逐任务跑 agent,每任务前自动 checkpoint,任务间错误隔离(单任务失败记 error 不中断整批)。
+   * 适合无人值守批量操作(批量生成/改一批页面)。不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。
+   * 配合 capabilities.automation + checkpoint 使用。
+   */
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>;
   /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
   hook(handler: SdkEventHandler): () => void;
   /** 运行时替换主数据配置(如页面切换、schema 变更);立即对数据工具生效,无需重建 agent。需开启 dataOps */

@@ -13,7 +13,7 @@
  * 并发安全:同一会话的 meta 读-改-写经 per-session 串行队列(runSerial),避免 lost-update;
  *   不同会话并行。debouncedSave 被同 kind 后续 save 取代时立即 resolve 旧 Promise(不挂起)。
  */
-import type { AgentMessage } from '../types'
+import type { AgentMessage, TokenUsage } from '../types'
 import type { VfsFile, Todo } from '../harness/state'
 import { makeId } from '../utils/id'
 
@@ -48,6 +48,10 @@ export interface SessionSnapshot {
   vfs: Record<string, VfsFile>
   todos: Todo[]
   memory: string
+  /** automation 断点续跑:checkpoint 栈快照(刷新/崩溃后恢复 restoreLastCheckpoint 能力);仅 capabilities.automation 开启时写入 */
+  checkpoints?: unknown[]
+  /** automation 断点续跑:累计 token usage(刷新后续跑,预算统计连续) */
+  usage?: TokenUsage
 }
 
 /** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)

@@ -22,7 +22,7 @@ export interface CheckpointMeta {
   messageCount: number
 }
 
-interface Checkpoint extends CheckpointMeta {
+export interface Checkpoint extends CheckpointMeta {
   messages: AgentMessage[]
   windowVals: Record<string, unknown>
   vfs: Record<string, VfsFile>
@@ -38,6 +38,10 @@ export interface CheckpointManager {
   restore: (id?: number) => boolean
   /** 是否有可回滚的 checkpoint */
   canRestore: () => boolean
+  /** 导出栈快照(深拷贝,可序列化;供 automation 断点续跑持久化,刷新/崩溃后恢复 restoreLastCheckpoint 能力) */
+  exportStack: () => Checkpoint[]
+  /** 灌入栈快照(刷新/崩溃恢复时重建 checkpoint 栈;重置 nextId 防后续 save id 冲突) */
+  importStack: (cps: unknown[]) => void
 }
 
 export interface CheckpointDeps {
@@ -189,6 +193,21 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
       // 4. todos:reset
       deps.todosMw.reset(clone(cp.todos))
       return true
+    },
+
+    exportStack() {
+      return clone(stack)
+    },
+
+    importStack(cps: unknown[]) {
+      stack.length = 0
+      const arr = Array.isArray(cps) ? cps : []
+      for (const cp of arr) {
+        // 仅灌入结构完整的 checkpoint(防脏数据;windowVals/messages/vfs/todos 透传,restore 时按需 clone)
+        if (cp && typeof cp === 'object' && 'id' in cp && 'messages' in cp) stack.push(cp as Checkpoint)
+      }
+      // 重置 nextId 为栈中最大 id + 1,防后续 save 的 id 与恢复的 checkpoint 冲突(list/restore 按 id 定位)
+      nextId = stack.reduce((m, c) => Math.max(m, c.id), 0) + 1
     },
   }
 }

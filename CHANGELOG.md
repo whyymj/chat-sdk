@@ -2,7 +2,7 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [2.20.0] - 2026-08-02
 
 ### Added
 - **自适应规划(add-adaptive-planning)**:① todos 增量更新 —— 新增 `update_todo({ id, content?, status? })` 工具(按 id 改单项,不必重传整个清单);`Todo` 增稳定 `id`(`write_todos` 时框架按 index 生成 `t-1/t-2...`,LLM 也可显式传;hydrate 旧数据按 index 补,向后兼容);`augmentPrompt` 渲染带 id 供 LLM 引用。② 规划阶段防死循环 —— 新增 `maxPlanRevisions` 配置(默认 5,**规划阶段总轮次**预算,与 `maxIterations` 总闸正交):首次 `write_todos` 进入 planning → 每轮 `beforeModel` 计数(含 read/query/search 调研轮)→ 主数据写工具(write/set_data/edit_data/delete_data)成功退出 → 超限回灌「停止调研/修订,基于当前清单执行」(不强制终止,总闸兜底);支持重入(退出后再 write_todos 重新进入,单阶段计数重置)。③ 自适应 prompt 引导 —— `usageHints` planning 段升级(简单直接做/复杂先规划/update_todo 增量/方案确认 + 轮次预算提示)+ humanConfirm 补「规划方案确认」第 4 类。④ 内置 skill `adaptive-planning`(判断复杂度→规划→可选用户确认→执行→动态增量修订,入 npm 包 `skills/` 分发)。⑤ `inspect().planPhase` 反映 `{ inPlanning, rounds, limit }`;`createChatSdk({ maxPlanRevisions })`。选型见 `openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md`(A 框架深度 / B 计数语义各三方案 + 升级路径 + 暂缓提案关系)。**范围:轻量版**(框架只加 update_todo + maxPlanRevisions;复杂度判断/方案确认/标准流程在 prompt 层)。能力边界见 `doc/capability-boundaries.md`
@@ -14,6 +14,7 @@
 - **结构化追踪 observability-tracing(Phase 3,opt-in)**:`debugLogs` 扁平数组升级为 **TraceSpan 树**(round/model/tool/compression span + timing/status/usage)。① `getTraceMetrics(spans)` 纯函数聚合(轮次/延迟/工具成功率/重试/压缩/token);② DebugDrawer 第 4 tab 🌳 Trace(metrics 卡片 + span 列表);③ `inspect().trace` + `onEvent('trace')`;④ `capabilities.tracing` 默认关(opt-in,采集有开销;`onSpan`/`onTrace` 回调 no-op 零开销)。新增导出 `TraceSpan`/`TraceMetrics`/`getTraceMetrics`
 - **结构化 todos 层级依赖(structured-todos-tier Phase 2)**:Todo 加 `parentId`(父任务)/`deps`(依赖数组)/`criteria`(完成标准)/`evidence`(完成证据)。① `write_todos` 层级输入(parentId/deps/criteria/evidence)+ `ensureIds` 透传(不丢字段);② `renderTodos` 递归渲染(有 parentId 缩进 + deps ✓/⏳ 阻塞标注 + evidence + criteria);③ `update_todo` 增量改层级字段;④ **扁平 fallback**(无 parentId → 现状扁平渲染,零破坏)。schema 总含可选字段(向后兼容)
 - **子 agent 写权限 subagent-writable(Phase 2,opt-in)**:子 agent 默认只读。配 `writablePaths` 前缀白名单后获写权限(write/set_data/edit_data/delete_data/draft_commit 经 `wrapWithPathGuard` 包装,越界 `PATH_OUT_OF_SCOPE`)。**整体 set 禁**(无 jsonPath 盲区,子 agent 只能增量 patch,防越权)。SubagentConfig + spawn_agent 参数 + SubagentOptions 支持 `writablePaths`。三重防护(writablePaths 前缀 + PATH_OUT_OF_SCOPE + 禁整体 set)。新增导出 `extractWritePaths`/`isPathWritable`/`wrapWithPathGuard`
+- **无人值守自动化 automation-layer(Phase 4,opt-in)**:`capabilities.automation:true` 开启(最远,默认关)。四互补子能力构成"无人值守"闭环:① **资源预算闸** —— `tokenBudget`/`timeBudgetMs` 配置,wrapModelCall 每轮检查累计 total_tokens/耗时,超限 → 停止 agent + emit `BUDGET_EXCEEDED`(补核心缺口:usage 此前只累计不强制,无人值守易烧爆);② **无人值守错误恢复** —— `maxAutoRetries`(默认 1),send 致命错误(invoke 抛错)→ 自动 `restore_last_checkpoint` 回本轮前 + 重试(限次防循环;确定性错误耗尽 → fatal emit + throw);③ **任务级断点续跑** —— SessionSnapshot 扩展 `checkpoints?`/`usage?`,刷新/崩溃后恢复 checkpoint 栈 + 累计 usage(restoreLastCheckpoint 可用 + 预算统计连续);④ **批处理 `sdk.batch(tasks, onProgress?)`** —— 逐任务跑 agent,每任务前 checkpoint,任务间错误隔离(单任务失败不中断整批,记 observable error 继续下一个)。`CheckpointManager` 加 `exportStack/importStack`;新增导出 `BatchResult`/`BatchProgress`/`Checkpoint`。定位升级终态(complex-agent-roadmap Phase 4)
 
 ### Changed
 - planning 中间件工具(write_todos / update_todo)`source` 标 `'builtin'`(此前落 `'user'`,语义错;与 vfs/checkpoint/humanConfirm 一致)
@@ -32,6 +33,7 @@
 - e2e `inspect.mjs` 补 mission(getMission/setMission/inspect().mission/capabilities.missionAnchor:false → getMission undefined + setMission warn 不抛)。断言计数 238→247
 - selftest 新增 `sec-41`(draft:`commitSetToBind` 纯函数白盒 合法/schema失败/dryRun + `draft_write` start/append + `draft_commit` JSON_INVALID/SCHEMA_INVALID 不写保留/成功写 bind+清草稿/DRAFT_NOT_FOUND + createDataOps({vfsStore}) 含 draft + filterByToolMode simple 隐藏,~24 项)。断言计数 937→961
 - e2e `inspect.mjs` 补 draft(`draftWrite:true`+vfs+advanced 含 draft_write/draft_commit;opt-in 关;simple 隐藏)。断言计数 250→254
+- selftest `sec-17` 补 `CheckpointManager.exportStack/importStack`(导出/深拷贝隔离/JSON 序列化往返/恢复栈/restore 可用/nextId 重置防冲突/脏数据过滤/非数组不抛,11 项);e2e 新增 `automation.mjs`(capabilities.automation opt-in 反映/budget 中间件装载/batch API 暴露/false 显式关/automation+checkpoint 共存/maxAutoRetries 配置,7 项)。断言计数 selftest 1004→1015 / e2e 256→263
 
 ## [2.17.0] - 2026-08-01
 
