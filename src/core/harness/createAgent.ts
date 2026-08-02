@@ -56,7 +56,54 @@ export function detectGarbledToolCall(content: string): boolean {
   //  - <｜｜?DSML｜｜?>:DeepSeek-v4 DSML(内部 function-calling 格式)标记,长链下易退化泄漏
   //  - <｜tool[_a-z]*｜>:DeepSeek tool 段标记变体(<｜tool｜>/<｜tool_begin｜> 等)
   //  - <invoke name=> / <tool_call> / <function_call>:通用伪 XML 工具调用
-  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML｜｜?>|<｜tool[_a-z]*｜>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜tool[_a-z]*｜>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+}
+
+/** 解析 garbled 工具调用文本(DSML/伪 XML)为标准 tool_calls 数组。
+ *  DeepSeek-v4 等模型把工具调用写成正文标签(<｜｜DSML｜｜invoke name="X"><｜｜DSML｜｜parameter name="Y">值</…>)
+ *  而非标准 tool_calls 通道;此处解析为 [{id,name,args}] 让 agent 直接执行(免重试)。
+ *  - 变体:<｜｜DSML｜｜invoke name=> / <invoke name=> / <｜tool_calls｜>…<invoke>
+ *  - 参数 <｜｜DSML｜｜parameter name="Y"[…]>值</…> / <parameter name="Y">值</parameter>;值 try JSON.parse
+ *  - 截断(参数未闭合 / 值不完整) → 跳过该 invoke;全部失败 → null(交重试)
+ *  返回 null:无 garbled / 无 invoke / 全截断。 */
+export function parseGarbledToolCalls(content: string): { id: string; name: string; args: Record<string, unknown> }[] | null {
+  if (!content || !detectGarbledToolCall(content)) return null
+  const invokeRe = /<(?:｜｜?DSML｜｜?)?\s*invoke\s+name=["']([^"']+)["'][^>]*>/gi
+  const starts: { name: string; tagStart: number; after: number }[] = []
+  let m: RegExpExecArray | null
+  while ((m = invokeRe.exec(content)) !== null) {
+    starts.push({ name: m[1], tagStart: m.index, after: invokeRe.lastIndex })
+  }
+  if (!starts.length) return null
+  const closeInvokeRe = /<\/(?:｜｜?DSML｜｜?)?\s*invoke\s*>/i
+  const paramRe = /<(?:｜｜?DSML｜｜?)?\s*parameter\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/(?:｜｜?DSML｜｜?)?\s*parameter\s*>/gi
+  const openParamRe = /<(?:｜｜?DSML｜｜?)?\s*parameter\s+name=["'][^"']+["'][^>]*>/gi
+  const closeParamRe = /<\/(?:｜｜?DSML｜｜?)?\s*parameter\s*>/gi
+  const calls: { id: string; name: string; args: Record<string, unknown> }[] = []
+  for (let i = 0; i < starts.length; i++) {
+    const segEnd = i + 1 < starts.length ? starts[i + 1].tagStart : content.length
+    let seg = content.slice(starts[i].after, segEnd)
+    const closeM = seg.match(closeInvokeRe)
+    if (closeM && closeM.index !== undefined) seg = seg.slice(0, closeM.index)
+    // 截断检查:开参数 > 闭参数(有未闭合 = 值被 max_tokens 截断) → 跳过该 invoke(值不完整不可用)
+    const openCount = (seg.match(openParamRe) || []).length
+    const closeCount = (seg.match(closeParamRe) || []).length
+    if (openCount > closeCount) continue
+    const args: Record<string, unknown> = {}
+    paramRe.lastIndex = 0
+    let pm: RegExpExecArray | null
+    while ((pm = paramRe.exec(seg)) !== null) args[pm[1]] = parseDsmlValue(pm[2].trim())
+    calls.push({ id: `dsml_${i}_${Date.now().toString(36)}`, name: starts[i].name, args })
+  }
+  return calls.length ? calls : null
+}
+
+/** DSML 参数值解析:try JSON.parse(失败保留 string;支持 boolean/null) */
+function parseDsmlValue(s: string): unknown {
+  if (s === 'true') return true
+  if (s === 'false') return false
+  if (s === 'null') return null
+  try { return JSON.parse(s) } catch { return s }
 }
 
 export interface DebugLog {
@@ -443,40 +490,52 @@ export function createAgent(options: CreateAgentOptions) {
 
         if (!response.toolCalls.length) {
           const garbled = detectGarbledToolCall(response.content)
-          // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / <｜｜DSML｜｜> / 伪 XML <invoke> 等)
-          // 而非标准 tool_calls,系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环。
-          // pendingFormatRetry=true 让 while 暂时绕过 rounds 预算给 LLM 重发机会(重试是格式修正,非工具轮次;
-          // 实测:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡;maxIterations 兜底防死循环)
-          if (garbled && formatRetries < maxFormatRetries) {
-            formatRetries += 1
-            pendingFormatRetry = true
-            log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
-            currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签/DSML 标记,如 <｜tool_calls｜>、<｜｜DSML｜｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
-            continue
-          }
-          // 重试耗尽仍 garbled:不静默 final——emit observable error 让用户/集成方知晓任务可能未完成。
-          // 实测痛点:DeepSeek 长 tool-call 链持续退化,重试 maxFormatRetries 次仍 DSML,此前直接 done 无任何提示,
-          // UI 以为 agent "答完了"但其实没干活。此处 emit error(observable 不中断,仍 return content 让 UI 显示原文)。
-          if (garbled) {
-            const msg = `模型连续 ${maxFormatRetries} 次输出无法解析的工具调用格式(DSML/伪标签),任务可能未完成。请重试或换模型。`
-            log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
-            onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } })
-          }
-          // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
-          // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
-          if (!garbled && maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
-            const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
-            if (feedback) {
-              lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
-              state.verifyAttempts += 1
-              currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
-              log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
-              continue // 回灌反馈,继续循环让模型修正(不 return)
+          // 升级(#95):garbled 时先尝试解析 DSML/伪 XML → 标准 tool_calls(免重试,直接执行)
+          const parsed = garbled ? parseGarbledToolCalls(response.content) : null
+          if (parsed && parsed.length) {
+            // 解析成功:补 response.toolCalls(下面 484 执行)+ message.tool_calls(消息历史 / ToolMessage tool_call_id 关联)
+            response.toolCalls = parsed
+            const msgAny = response.message as any
+            if (msgAny) msgAny.tool_calls = parsed.map((p) => ({ id: p.id, name: p.name, args: p.args, type: 'tool_call' }))
+            log('middleware', { stage: 'dsml_parsed', count: parsed.length, names: parsed.map((p) => p.name) })
+            // 补成功 → 跳过下面的 garbled 重试 / done,落到 484 执行工具(本轮走工具执行分支,清 pendingFormatRetry 由 481 统一)
+          } else {
+            // 解析失败(无 invoke / 截断不完整)/ 非 garbled:原 #73 逻辑(重试 → 耗尽 emit error → done)
+            // 格式异常自纠:模型把工具调用写成文本(DeepSeek <｜tool_calls｜> / <｜｜DSML｜｜> / 伪 XML <invoke> 等)
+            // 而非标准 tool_calls,系统未识别 → 未执行。回灌 feedback 让模型用标准 function calling 重新发起,限次防死循环。
+            // pendingFormatRetry=true 让 while 暂时绕过 rounds 预算给 LLM 重发机会(重试是格式修正,非工具轮次;
+            // 实测:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡;maxIterations 兜底防死循环)
+            if (garbled && formatRetries < maxFormatRetries) {
+              formatRetries += 1
+              pendingFormatRetry = true
+              log('middleware', { stage: 'format_retry', attempt: formatRetries, content: response.content.slice(0, 200) })
+              currentMessages.push(new HumanMessage('⚠️ 你刚才把工具调用写成了文本(伪 XML/标签/DSML 标记,如 <｜tool_calls｜>、<｜｜DSML｜｜>、<invoke name=...>),未被系统识别为工具调用,因此未执行,页面无变化。请直接用标准 function calling(工具调用)格式重新发起工具调用,不要在回复正文里输出这些标签或 JSON 文本。'))
+              continue
             }
+            // 重试耗尽仍 garbled:不静默 final——emit observable error 让用户/集成方知晓任务可能未完成。
+            // 实测痛点:DeepSeek 长 tool-call 链持续退化,重试 maxFormatRetries 次仍 DSML,此前直接 done 无任何提示,
+            // UI 以为 agent "答完了"但其实没干活。此处 emit error(observable 不中断,仍 return content 让 UI 显示原文)。
+            if (garbled) {
+              const msg = `模型连续 ${maxFormatRetries} 次输出无法解析的工具调用格式(DSML/伪标签),任务可能未完成。请重试或换模型。`
+              log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
+              onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } })
+            }
+            // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
+            // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
+            if (!garbled && maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
+              const feedback = await runBeforeReturn(middlewares, { messages: currentMessages, state, response, log: (t, d) => log(t as DebugLog['type'], d) })
+              if (feedback) {
+                lastFinalContent = response.content // 缓存最终答:自纠若耗尽 rounds 预算,兜底优先返回它(而非误导性"请简化问题")
+                state.verifyAttempts += 1
+                currentMessages.push(new HumanMessage(`⚠️ 验证未通过,请修正:${feedback}`))
+                log('middleware', { stage: 'verify_retry', attempt: state.verifyAttempts, feedback })
+                continue // 回灌反馈,继续循环让模型修正(不 return)
+              }
+            }
+            pendingFormatRetry = false // 收口:正常 final 或 garbled 重试耗尽(已 emit error)→ 清 flag
+            onEvent({ type: 'done', content: response.content })
+            return response.content
           }
-          pendingFormatRetry = false // 收口:正常 final 或 garbled 重试耗尽(已 emit error)→ 清 flag
-          onEvent({ type: 'done', content: response.content })
-          return response.content
         }
         pendingFormatRetry = false // 走到这里 = 本轮有标准 tool_call(重试成功或正常),清 flag
 

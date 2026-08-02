@@ -13,7 +13,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createChatSdk } from '../../src/core'
+import { createChatSdk } from '../../dist/page-agent-sdk.js'
 import { pageSchema } from '../../examples/complex-demo/pageSchema'
 
 // 手动加载 .env(tsx 不自动读 VITE_ 前缀;vite dev 才自动)
@@ -47,7 +47,16 @@ async function main() {
     data: { schema: pageSchema, bind, description: '专题页 {title, components[]}(30 种组件 union)' },
     capabilities: { draftWrite: true, vfs: true, domInspect: false },
     toolMode: 'advanced',
-    systemPrompt: '你是复杂页面构建助手。生成大页面(20+ 组件)时必须用 draft_write 分块累积 → draft_commit 提交(单次 write 装 max_tokens 装不下)。draft_write({draftId,chunk,mode}) mode:start 起,append 追加每块 2-3 组件的 JSON 片段,注意 JSON 合法(逗号/括号/引号闭合);累积完 draft_commit({draftId}) 提交。',
+    maxToolRounds: 40, // draft 分块多轮(每块一轮),给足轮次到 commit
+    systemPrompt: [
+      '你是复杂页面构建助手。',
+      '**强制规则:禁止用 write({value:...}) 生成大页面**(单次输出受 max_tokens 限制会被截断,生成不完整 → 工具不执行)。生成页面必须且只能用 draft_write 分块累积 + draft_commit 提交。',
+      '流程:① draft_write({draftId:"page1", chunk:\'{"title":"电商专题","components":[\', mode:"start"});',
+      '② 每块 draft_write({draftId:"page1", chunk:\'<2-3 个组件的 JSON 片段>,\', mode:"append"})(注意每块末尾逗号,JSON 片段要能拼成合法数组);',
+      '③ draft_write({draftId:"page1", chunk:\']}\', mode:"append"})(闭合 components 数组 + 根对象);',
+      '④ draft_commit({draftId:"page1"})(合并 + 校验 + 提交)。',
+      '**严禁 write 生成大页面**;小改可用 write patch,但从零生成页面必须 draft。',
+    ].join('\n'),
   })
   await sdk.mount()
 
@@ -56,12 +65,31 @@ async function main() {
       calls.push(e.name)
       if (e.name === 'draft_write') draftWriteCount++
     }
+    if (e.type === 'round_start' || e.type === 'error' || e.type === 'done') {
+      console.log(`[event] ${e.type}${e.name ? ' ' + e.name : ''}${e.message ? ' ' + String(e.message).slice(0, 100) : ''}${e.round ? ' round=' + e.round : ''}`)
+    }
   })
 
   console.log('━' .repeat(60))
-  console.log('发送任务:用 draft 分块生成 20+ 组件电商专题页(真 LLM)...')
+  console.log('发送任务:用 draft 分块生成 20+ 组件电商专题页(真 LLM,stream 收 tool_call)...')
   console.log('━' .repeat(60))
-  const reply = await sdk.send('用 draft_write 分块生成一个 20+ 组件的电商专题页(含 navbar 横幅 / banner / 多个商品卡片 / 优惠券 / footer)。draft_write start 起,append 累积(每块 2-3 组件的 JSON 片段,严格合法 JSON),累积完 draft_commit 提交。')
+  // 用 stream(发 tool_call 事件;send/invoke 不发离散 tool_call)而非 send
+  const reply = await sdk.stream(
+    [{ role: 'user', content: '用 draft_write 工具分块生成一个 30+ 组件的电商专题页(含 navbar / banner / 多个商品卡片 productGrid / 优惠券 coupon / footer 等)。**禁止用 write**(会超 max_tokens 截断),必须 draft_write({draftId:"page1",chunk,mode}) 分块累积:先 mode:"start" 起 {"title":"...","components":[,再 mode:"append" 每块加 2-3 个组件的 JSON 片段,最后 ]} 闭合,draft_commit({draftId:"page1"}) 提交。', timestamp: Date.now() }],
+    (e: any) => {
+      if (e.type === 'tool_call') {
+        calls.push(e.name)
+        if (e.name === 'draft_write') draftWriteCount++
+        console.log(`[tool_call] ${e.name}`)
+      } else if (e.type === 'tool_result' && (e.name === 'draft_commit' || e.name === 'draft_write')) {
+        console.log(`[${e.name}_result] ${String(e.result).slice(0, 220)}`)
+      } else if (e.type === 'round_start') {
+        console.log(`[round_start] round=${e.round}`)
+      } else if (e.type === 'error' || e.type === 'done') {
+        console.log(`[event] ${e.type}${e.message ? ' ' + String(e.message).slice(0, 100) : ''}`)
+      }
+    },
+  )
 
   console.log('\n=== 真 LLM 实测结果 ===')
   console.log('工具调用序列:', calls.join(' → '))
