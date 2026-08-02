@@ -63,16 +63,20 @@ export function useChat(
   /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
   const pendingApproval = ref<PendingApproval | null>(null)
 
-  /** scroll 事件处理:仅用于"滚回底部附近时恢复跟随";向上滑由 onWheel 立即置 false,不等阈值 */
-  function onScroll() {
-    const el = scrollContainer.value
-    if (!el) return
-    isStickyBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD
-  }
+  // stick-to-bottom 完全由 onWheel(用户滚轮意图)管;onScroll 不再改 isStickyBottom ——
+  // 否则程序 scrollToBottom(流式跟随)触发 onScroll 会把 isStickyBottom 重设为 true,
+  // 覆盖用户上滑设的 false,致"生成中上滑被拉回底部"震颤。
+  function onScroll() { /* no-op:保留给 @scroll 绑定;sticky 由 onWheel 管 */ }
 
-  /** wheel 事件处理:用户向上滚(deltaY<0)立即停止跟随,避免小幅滑动落在阈值内仍被拉回(震颤) */
+  /** wheel 事件处理:用户滚轮意图驱动 stick-to-bottom。
+   *  上滑(deltaY<0)→ 立即停止跟随(看历史);下滑(deltaY>0)→ 接近底部时恢复跟随(滚回底部重新吸附)。 */
   function onWheel(e: WheelEvent) {
-    if (e.deltaY < 0) isStickyBottom.value = false
+    const el = scrollContainer.value
+    if (e.deltaY < 0) {
+      isStickyBottom.value = false
+    } else if (el) {
+      isStickyBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD
+    }
   }
 
   /** 滚到底部:仅在用户吸附底部时跟随;用 rAF 确保 DOM 增量已渲染,且执行前二次检查 sticky(用户可能在此期间上滑) */
