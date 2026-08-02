@@ -53,7 +53,8 @@
     "test:size": "node tests/size-check.mjs",
     "test:browser": "playwright test",
     "test:browser:ui": "playwright test --ui",
-    "test:draft-real": "tsx tests/runtime/draft-real-llm.ts"
+    "test:draft-real": "tsx tests/runtime/draft-real-llm.ts",
+    "test:trace-real": "tsx tests/runtime/trace-real-llm.ts"
   },
   "keywords": [
     "ai",

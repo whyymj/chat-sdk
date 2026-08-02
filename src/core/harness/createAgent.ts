@@ -291,20 +291,23 @@ export function createAgent(options: CreateAgentOptions) {
   const spans = shallowRef<TraceSpan[]>([])
   let spanSeq = 0
   const tracingEnabled = !!onSpan || !!onTrace
-  /** 开启一个 span(tracing 关时返回 null,no-op);parentId 建立父子(round 是 model/tool 的 parent) */
+  /** 开启一个 span(tracing 关时返回 null,no-op);parentId 建立父子(round 是 model/tool 的 parent)。
+   *  创建即 push 到 spans(round span 不 endSpan 也有记录;model/tool 在 endSpan 更新 endTs/duration/status) */
   function startSpan(parentId: string | undefined, type: SpanType, name: string, attributes: Record<string, unknown> = {}): TraceSpan | null {
     if (!tracingEnabled) return null
-    return { id: `span-${++spanSeq}`, parentId, name, type, startTs: Date.now(), status: 'ok', attributes }
+    const span: TraceSpan = { id: `span-${++spanSeq}`, parentId, name, type, startTs: Date.now(), status: 'ok', attributes }
+    spans.value.push(span)
+    if (spans.value.length > MAX_DEBUG_LOGS) spans.value.splice(0, spans.value.length - MAX_DEBUG_LOGS)
+    triggerRef(spans)
+    return span
   }
-  /** 结束 span(算 durationMs + status,推入 spans;tracing 关时 no-op) */
+  /** 结束 span(算 durationMs + 更新 status;span 已在 startSpan 时 push,此处只更新字段引用) */
   function endSpan(span: TraceSpan | null, status: SpanStatus = 'ok', extra?: Record<string, unknown>) {
     if (!span || !tracingEnabled) return
     span.endTs = Date.now()
     span.durationMs = span.endTs - span.startTs
     span.status = status
     if (extra) Object.assign(span.attributes, extra)
-    spans.value.push(span)
-    if (spans.value.length > MAX_DEBUG_LOGS) spans.value.splice(0, spans.value.length - MAX_DEBUG_LOGS) // 复用上限
     triggerRef(spans)
     onSpan?.(span)
   }
