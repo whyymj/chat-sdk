@@ -56,6 +56,9 @@ export function useChat(
 
   /** 当前生成的 AbortController(stop() 中止用;每次 sendMessage/regenerate 新建,停止不影响后续发送) */
   let currentController: AbortController | null = null
+  /** 排队待发的任务内容(生成中用户又发消息 → 入队显示在排队区,生成完依次自动 addMessage+执行;
+   * 不先进 messages 避免多条排队时打乱"最后 user"定位;可撤销/修改;stop 清空) */
+  const queuedTasks = ref<string[]>([])
 
   /** 待确认的工具调用(人工确认挂起中);一次只挂一个,确认完清空 */
   const pendingApproval = ref<PendingApproval | null>(null)
@@ -174,9 +177,7 @@ export function useChat(
           if (idx >= 0) state.messages.splice(idx, 1)
         }
       } finally {
-        await onPersist?.(state.messages)
-        state.loading = false
-        currentController = null
+        await finishRound()
       }
       return
     }
@@ -189,10 +190,29 @@ export function useChat(
     } catch (err: any) {
       if (!isAbort(err, signal)) state.error = err.message || '请求失败,请重试'
     } finally {
-      await onPersist?.(state.messages)
-      state.loading = false
-      currentController = null
+      await finishRound()
     }
+  }
+
+  /** 一轮结束收口:持久化 + 关 loading + 排队续跑(生成中用户又发了消息,可能多条 → 依次自动执行,每条是独立后续任务) */
+  async function finishRound() {
+    await onPersist?.(state.messages)
+    state.loading = false
+    currentController = null
+    // 取队首任务:此时才 addMessage 进 messages(保证它是"最后 user",runAssistantStream 正确定位,不被后续排队任务干扰)
+    const nextContent = queuedTasks.value.shift()
+    if (nextContent !== undefined) {
+      addMessage('user', nextContent)
+      state.loading = true
+      state.error = null
+      currentController = new AbortController()
+      await runAssistantStream(currentController.signal)
+    }
+  }
+
+  /** 撤销排队中的任务(未执行,从排队区移除;已执行的在 messages 里,不在此) */
+  function removeQueuedTask(idx: number) {
+    queuedTasks.value.splice(idx, 1)
   }
 
   /**
@@ -200,7 +220,13 @@ export function useChat(
    * 每次新建 AbortController;stop() 可中止,abort 不计入 error。
    */
   async function sendMessage(content: string) {
-    if (!content.trim() || state.loading) return
+    if (!content.trim()) return
+    // 生成中(loading):入排队区(不先进 messages,避免多条排队时打乱"最后 user"定位);生成完 finishRound 依次自动执行。
+    // 修 bug:旧版 loading 时直接 return 不发,但 ChatDialog 已清空 inputText → 输入内容丢失 + 无反馈。排队区可撤销/修改
+    if (state.loading) {
+      queuedTasks.value.push(content.trim())
+      return
+    }
     addMessage('user', content.trim())
     state.loading = true
     state.error = null
@@ -239,8 +265,9 @@ export function useChat(
     state.error = null
   }
 
-  /** 停止当前生成(abort) */
+  /** 停止当前生成(abort) + 清空排队(用户主动停,不再续跑后续排队任务) */
   function stop() {
+    queuedTasks.value = []
     currentController?.abort()
   }
 
@@ -270,5 +297,5 @@ export function useChat(
     await sendMessage(content)
   }
 
-  return { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel }
+  return { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel }
 }

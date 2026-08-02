@@ -69,7 +69,7 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const { state, scrollContainer, pendingApproval, sendMessage, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
+const { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
@@ -201,6 +201,12 @@ function handleSend() {
   if (!inputText.value.trim()) return
   sendMessage(inputText.value)
   inputText.value = ''
+}
+
+/** 修改排队中的任务:填回输入框(用户编辑)+ 从队列移除(改完回车重新入队/发送) */
+function editQueued(idx: number) {
+  inputText.value = queuedTasks.value[idx] || ''
+  removeQueuedTask(idx)
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -395,6 +401,20 @@ const drawerWidthStyle = computed(() => {
       </div>
     </div>
     </Transition>
+
+    <!-- 排队区:生成中用户又发的任务(未执行,生成完后自动执行);可撤销/修改 -->
+    <div v-if="queuedTasks.length" class="queued-bar">
+      <div class="queued-head">
+        <span class="queued-icon">📋</span>
+        <span class="queued-title">排队中 · 生成完后自动执行</span>
+        <span class="queued-count">{{ queuedTasks.length }}</span>
+      </div>
+      <div v-for="(task, qIdx) in queuedTasks" :key="qIdx" class="queued-item">
+        <span class="queued-text">{{ task }}</span>
+        <button class="queued-act" title="修改(填回输入框编辑)" @click="editQueued(qIdx)">✏️</button>
+        <button class="queued-act" title="撤销该任务" @click="removeQueuedTask(qIdx)">✕</button>
+      </div>
+    </div>
 
     <!-- 人工确认:工具调用前需用户允许/拒绝(approval 中间件挂起) / LLM 主动征询(humanConfirm 工具挂起) -->
     <div v-if="pendingApproval" class="approval-bar">
@@ -702,6 +722,17 @@ const drawerWidthStyle = computed(() => {
 .undo-btn:hover { background: #fde68a; }
 .undo-foot-btn { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
 .undo-foot-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
+
+/* 排队区:生成中用户又发的任务(未执行,生成完后自动执行);可撤销/修改 */
+.queued-bar { margin: 0 12px 8px; padding: 10px 12px; border: 1px solid #d1d5db; border-left: 4px solid #9ca3af; border-radius: 10px; background: #f9fafb; }
+.queued-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #4b5563; margin-bottom: 4px; }
+.queued-icon { font-size: 14px; }
+.queued-title { font-weight: 600; }
+.queued-count { margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: 10px; background: #e5e7eb; color: #4b5563; font-size: 11px; font-weight: 600; text-align: center; }
+.queued-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-top: 6px; border-radius: 8px; background: #fff; border: 1px solid #e5e7eb; }
+.queued-text { flex: 1; min-width: 0; font-size: 12px; color: #1f2937; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queued-act { flex-shrink: 0; width: 24px; height: 24px; border: none; border-radius: 6px; background: transparent; color: #6b7280; font-size: 12px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+.queued-act:hover { background: #f3f4f6; color: #1f2937; }
 
 /* 人工确认条(approval 中间件挂起时显示) */
 .approval-bar { margin: 10px 12px; padding: 12px 14px; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 10px; background: linear-gradient(180deg, #fffbeb 0%, #fffef5 100%); box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08); }
