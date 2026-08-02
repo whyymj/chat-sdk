@@ -52,7 +52,8 @@
     "test:types": "tsc --noEmit -p tsconfig.test.json",
     "test:size": "node tests/size-check.mjs",
     "test:browser": "playwright test",
-    "test:browser:ui": "playwright test --ui"
+    "test:browser:ui": "playwright test --ui",
+    "test:draft-real": "tsx tests/runtime/draft-real-llm.ts"
   },
   "keywords": [
     "ai",

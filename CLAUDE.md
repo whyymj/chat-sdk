@@ -255,6 +255,7 @@ selftest/e2e 不调真 LLM,以下需配 `.env` API key 或 server 手动验证:
 - MCP 远程工具注入(`npm run mcp:mock` 起本地 server,`npm run mcp:probe` 验证连通)
 - verify 自纠循环(`capabilities.verify:true` + `check` 反馈回灌)
 - 真实 LLM 工具调用 + 流式输出 + 停止/重试
+- **draft-write-commit 真 LLM 实测**:`npm run test:draft-real`(配 `.env` key;headless 让真 LLM 用 `draft_write` 分块生成 20+ 组件专题页 → `draft_commit` 提交,断言生成组件数 ≥10 + commit 成功;无 key 自动 skip 不阻塞 CI)
 
 #### 5. CDN 可达性验证(发布后)
 ```bash

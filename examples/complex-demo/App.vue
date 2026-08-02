@@ -75,7 +75,8 @@ onMounted(() => {
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     data: { schema: pageSchema, bind: pageObj },
     // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
-    capabilities: { domInspect: true },
+    capabilities: { domInspect: true, draftWrite: true },
+    toolMode: 'advanced', // complex 场景:暴露全工具 + draft_write/draft_commit(分块生成大页面;真 LLM 实测用)
     actions: {
       save_draft: { description: '保存当前页面为草稿(序列化 page 到 localStorage)。用户要求保存/存草稿时调用,无需参数。', run: saveDraft },
       publish: { description: '发布当前页面(模拟发布,记录发布时间戳)。用户要求发布/上线/生效时调用,无需参数。', run: publish },
