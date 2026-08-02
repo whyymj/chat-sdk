@@ -60,6 +60,8 @@ export interface SubagentOptions {
   /** 当前递归深度(内部用;主=0) */
   depth?: number
   debug?: boolean
+  /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
+  writablePaths?: string[]
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -81,6 +83,47 @@ const DEFAULT_MAX_PARALLEL = 4
 const DEFAULT_CHILD_ROUNDS = 6
 const SPAWN_TOOL_NAMES = ['spawn_agent', 'spawn_agents']
 
+/** 子 agent 可获得写权限的工具(经 writablePaths path guard 包装后) */
+const SUB_WRITE_TOOLS = ['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit']
+
+/** 提取写工具 args 的所有 jsonPath(jsonPath / patch.jsonPath / patches[].jsonPath / path) */
+export function extractWritePaths(args: any): string[] {
+  const paths: string[] = []
+  if (typeof args.jsonPath === 'string' && args.jsonPath) paths.push(args.jsonPath)
+  if (typeof args.path === 'string' && args.path) paths.push(args.path)
+  if (args.patch && typeof args.patch.jsonPath === 'string') paths.push(args.patch.jsonPath)
+  if (Array.isArray(args.patches)) for (const p of args.patches) { if (p && typeof p.jsonPath === 'string') paths.push(p.jsonPath) }
+  return paths
+}
+
+/** 写路径前缀校验:精确相等 / startsWith(p + '.') / startsWith(p + '[') */
+export function isPathWritable(jsonPath: string, prefixes: string[]): boolean {
+  return prefixes.some((p) => jsonPath === p || jsonPath.startsWith(p + '.') || jsonPath.startsWith(p + '['))
+}
+
+/** 包写工具一层 path guard:args 所有 jsonPath 必须在 writablePaths 前缀内;越界 → PATH_OUT_OF_SCOPE;整体 set(无 jsonPath)禁。 */
+export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]): StructuredToolInterface {
+  const orig = t.invoke.bind(t)
+  const guarded = async (args: any) => {
+    const paths = extractWritePaths(args)
+    if (!paths.length) {
+      return `PATH_OUT_OF_SCOPE:子 agent 仅可增量 patch(writablePaths: ${prefixes.join(', ')}),不能整体替换(无 jsonPath)。用 write({patch:{jsonPath,...}}) 增量改。`
+    }
+    for (const p of paths) {
+      if (!isPathWritable(p, prefixes)) {
+        return `PATH_OUT_OF_SCOPE:子 agent 写 "${p}" 越界(仅可写 ${prefixes.join(', ')})。`
+      }
+    }
+    return orig(args)
+  }
+  return new Proxy(t, {
+    get(target, prop, receiver) {
+      if (prop === 'invoke') return guarded
+      return Reflect.get(target, prop, receiver)
+    },
+  }) as StructuredToolInterface
+}
+
 /**
  * 构造并跑一个子 agent,返回最终文本结论。
  * 过程隔离:独立 state/messages;signal 继承(主停则子停);
@@ -98,10 +141,18 @@ async function runSubagent(
   // 子 agent 工具子集:只读白名单 + 用户 allowedTools;排除 spawn(防递归)
   const allow = new Set([...DEFAULT_READONLY_TOOLS, ...(opts.allowedTools ?? [])])
   // 子 agent 工具:主 allTools 按白名单筛只读子集 + extraTools(预声明子 agent 的专属工具,不经筛选)
-  const childTools = [
+  let childTools = [
     ...opts.allTools.filter((t) => allow.has(t.name) && !SPAWN_TOOL_NAMES.includes(t.name)),
     ...(opts.extraTools ?? []),
   ]
+  // writablePaths(子 agent 写权限):写工具包 path guard 后加入(越界 PATH_OUT_OF_SCOPE;整体 set 禁)
+  if (opts.writablePaths?.length) {
+    childTools = childTools.filter((t) => !SUB_WRITE_TOOLS.includes(t.name)) // 移除可能的原版写工具(防重复)
+    const guardedWrites = opts.allTools
+      .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !SPAWN_TOOL_NAMES.includes(t.name))
+      .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
+    childTools = [...childTools, ...guardedWrites]
+  }
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
   const child = createAgent({
@@ -163,8 +214,10 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   }
 
   const spawnOne = tool(
-    async ({ prompt, role, tools, model }) => {
-      const subOpts = tools?.length ? { ...opts, allowedTools: tools } : opts
+    async ({ prompt, role, tools, writablePaths, model }) => {
+      const subOpts = tools?.length || writablePaths?.length
+        ? { ...opts, ...(tools?.length ? { allowedTools: tools } : {}), ...(writablePaths?.length ? { writablePaths } : {}) }
+        : opts
       const taskId = `sub-${Math.random().toString(36).slice(2, 8)}`
       const label = role?.trim() || '子任务'
       const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${label}` })
@@ -178,6 +231,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
         prompt: z.string().describe('子任务描述(子 agent 的唯一输入)'),
         role: z.string().optional().describe('子 agent 身份(如"你是代码审查专家")'),
         tools: z.array(z.string()).optional().describe('子 agent 可用工具名白名单(默认只读主数据 + fetch)'),
+        writablePaths: z.array(z.string()).optional().describe('子 agent 可写路径前缀(给写权限;越界 PATH_OUT_OF_SCOPE;如 ["components"] 允许写 components.* )'),
         model: z.string().optional().describe('覆盖模型(默认同主)'),
       }),
     },
@@ -245,6 +299,8 @@ export interface SubagentConfig {
   temperature?: number
   maxTokens?: number
   maxToolRounds?: number
+  /** 子 agent 可写路径前缀白名单(给写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁) */
+  writablePaths?: string[]
 }
 
 export interface SubagentsMiddlewareOptions {
@@ -271,6 +327,7 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     extraTools: extra.length ? extra : undefined,
     maxToolRounds: config.maxToolRounds,
     debug: main.debug,
+    ...(config.writablePaths?.length ? { writablePaths: config.writablePaths } : {}),
   }
 }
 
