@@ -1,0 +1,375 @@
+{
+  "title": "深嵌套复杂专题页(结构测试 · 5 层递归嵌套 · 深 jsonPath)",
+  "components": [
+    {
+      "type": "navbar",
+      "id": "nav",
+      "props": {
+        "logo": "https://picsum.photos/seed/logo/120/40",
+        "title": "深嵌套测试专区",
+        "menu": [
+          {
+            "label": "首页",
+            "link": "#"
+          },
+          {
+            "label": "商品",
+            "link": "#"
+          }
+        ]
+      }
+    },
+    {
+      "type": "noticeBar",
+      "id": "nb",
+      "props": {
+        "text": "🎉 限时优惠:全场低至 5 折,满 300 减 30!",
+        "scrollable": true
+      }
+    },
+    {
+      "type": "banner",
+      "id": "bn",
+      "props": {
+        "image": "https://picsum.photos/seed/banner/1200/200",
+        "link": "#",
+        "text": "年中盛典 低至 5 折"
+      }
+    },
+    {
+      "type": "countdown",
+      "id": "cd",
+      "props": {
+        "targetTime": "2026-08-20 23:59:59"
+      }
+    },
+    {
+      "type": "section",
+      "id": "sec-coupon",
+      "props": {
+        "title": "💰 领券中心",
+        "children": [
+          {
+            "type": "grid",
+            "id": "grid-coupon",
+            "props": {
+              "columns": 4,
+              "gap": 12,
+              "children": [
+                {
+                  "type": "coupon",
+                  "id": "cpn-0",
+                  "props": {
+                    "amount": 50,
+                    "threshold": 300,
+                    "label": "新人券",
+                    "status": "available"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "id": "cpn-1",
+                  "props": {
+                    "amount": 100,
+                    "threshold": 1000,
+                    "label": "满减券",
+                    "status": "available"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "id": "cpn-2",
+                  "props": {
+                    "amount": 30,
+                    "threshold": 300,
+                    "label": "无门槛",
+                    "status": "available"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "id": "cpn-3",
+                  "props": {
+                    "amount": 200,
+                    "threshold": 2000,
+                    "label": "大额券",
+                    "status": "available"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "tabs",
+      "id": "tabs-0",
+      "props": {
+        "tabs": [
+          {
+            "label": "商品",
+            "children": [
+              {
+                "type": "productGrid",
+                "id": "pg-0",
+                "props": {
+                  "columns": 3,
+                  "gap": 16,
+                  "products": [
+                    {
+                      "id": "p1",
+                      "title": "示例商品一",
+                      "price": 99,
+                      "image": "https://picsum.photos/seed/p1/300/300",
+                      "tag": "热销"
+                    },
+                    {
+                      "id": "p2",
+                      "title": "示例商品二",
+                      "price": 199,
+                      "image": "https://picsum.photos/seed/p2/300/300"
+                    },
+                    {
+                      "id": "p3",
+                      "title": "示例商品三",
+                      "price": 299,
+                      "image": "https://picsum.photos/seed/p3/300/300",
+                      "tag": "新品"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "label": "深嵌套测试区",
+            "children": [
+              {
+                "type": "section",
+                "id": "deep-sec",
+                "props": {
+                  "title": "第 5 层嵌套区块",
+                  "children": [
+                    {
+                      "type": "grid",
+                      "id": "deep-grid",
+                      "props": {
+                        "columns": 2,
+                        "gap": 12,
+                        "children": [
+                          {
+                            "type": "section",
+                            "id": "deep-d-sec",
+                            "props": {
+                              "title": "第 4 层嵌套区块",
+                              "children": [
+                                {
+                                  "type": "grid",
+                                  "id": "deep-d-grid",
+                                  "props": {
+                                    "columns": 2,
+                                    "gap": 12,
+                                    "children": [
+                                      {
+                                        "type": "section",
+                                        "id": "deep-d-d-sec",
+                                        "props": {
+                                          "title": "第 3 层嵌套区块",
+                                          "children": [
+                                            {
+                                              "type": "grid",
+                                              "id": "deep-d-d-grid",
+                                              "props": {
+                                                "columns": 2,
+                                                "gap": 12,
+                                                "children": [
+                                                  {
+                                                    "type": "section",
+                                                    "id": "deep-d-d-d-sec",
+                                                    "props": {
+                                                      "title": "第 2 层嵌套区块",
+                                                      "children": [
+                                                        {
+                                                          "type": "grid",
+                                                          "id": "deep-d-d-d-grid",
+                                                          "props": {
+                                                            "columns": 2,
+                                                            "gap": 12,
+                                                            "children": [
+                                                              {
+                                                                "type": "section",
+                                                                "id": "deep-d-d-d-d-sec",
+                                                                "props": {
+                                                                  "title": "第 1 层嵌套区块",
+                                                                  "children": [
+                                                                    {
+                                                                      "type": "grid",
+                                                                      "id": "deep-d-d-d-d-grid",
+                                                                      "props": {
+                                                                        "columns": 2,
+                                                                        "gap": 12,
+                                                                        "children": [
+                                                                          {
+                                                                            "type": "card",
+                                                                            "id": "deep-d-d-d-d-d-c",
+                                                                            "props": {
+                                                                              "title": "深层卡片(deep-d-d-d-d-d)",
+                                                                              "text": "测深路径 patch 的目标。",
+                                                                              "image": "https://picsum.photos/seed/card/400/200",
+                                                                              "link": "#"
+                                                                            }
+                                                                          },
+                                                                          {
+                                                                            "type": "button",
+                                                                            "id": "deep-d-d-d-d-d-b",
+                                                                            "props": {
+                                                                              "label": "深层按钮",
+                                                                              "variant": "primary",
+                                                                              "action": "点击跳转活动页"
+                                                                            }
+                                                                          }
+                                                                        ]
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "id": "sec-pick",
+      "props": {
+        "title": "✨ 精选好物",
+        "children": [
+          {
+            "type": "grid",
+            "id": "grid-pick",
+            "props": {
+              "columns": 3,
+              "gap": 16,
+              "children": [
+                {
+                  "type": "card",
+                  "id": "card-0",
+                  "props": {
+                    "title": "精选一",
+                    "text": "测容器内组件的 patch。",
+                    "image": "https://picsum.photos/seed/card/400/200",
+                    "link": "#"
+                  }
+                },
+                {
+                  "type": "card",
+                  "id": "card-1",
+                  "props": {
+                    "title": "精选二",
+                    "text": "第二张卡片。",
+                    "image": "https://picsum.photos/seed/card/400/200",
+                    "link": "#"
+                  }
+                },
+                {
+                  "type": "card",
+                  "id": "card-2",
+                  "props": {
+                    "title": "精选三",
+                    "text": "第三张卡片。",
+                    "image": "https://picsum.photos/seed/card/400/200",
+                    "link": "#"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": "stat-0",
+      "props": {
+        "items": [
+          {
+            "number": "10万+",
+            "label": "参与用户"
+          },
+          {
+            "number": "4.9分",
+            "label": "用户评分"
+          }
+        ]
+      }
+    },
+    {
+      "type": "rating",
+      "id": "rt-0",
+      "props": {
+        "score": 4.5,
+        "count": 1280
+      }
+    },
+    {
+      "type": "timeline",
+      "id": "tl-0",
+      "props": {
+        "items": [
+          {
+            "time": "2026-08-01",
+            "text": "活动开启,限量抢购"
+          },
+          {
+            "time": "2026-08-15",
+            "text": "活动结束"
+          }
+        ]
+      }
+    },
+    {
+      "type": "footer",
+      "id": "ft-0",
+      "props": {
+        "links": [
+          {
+            "label": "关于我们",
+            "link": "#"
+          },
+          {
+            "label": "联系客服",
+            "link": "#"
+          }
+        ],
+        "contact": "客服热线:400-xxx-xxxx",
+        "copyright": "© 2026 示例站点"
+      }
+    }
+  ]
+}

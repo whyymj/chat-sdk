@@ -1,0 +1,624 @@
+{
+  "title": "🔥 数码狂欢节 · 年中盛典",
+  "components": [
+    {
+      "type": "navbar",
+      "props": {
+        "logo": "https://picsum.photos/seed/logo/120/40",
+        "title": "数码专区",
+        "menu": [
+          {
+            "label": "首页",
+            "link": "#"
+          },
+          {
+            "label": "手机",
+            "link": "#"
+          },
+          {
+            "label": "电脑",
+            "link": "#"
+          },
+          {
+            "label": "家电",
+            "link": "#"
+          },
+          {
+            "label": "配件",
+            "link": "#"
+          }
+        ]
+      }
+    },
+    {
+      "type": "noticeBar",
+      "props": {
+        "text": "🎉 年中盛典 6.18-6.20,全场低至 5 折,满 3000 减 300,会员再享折上折!"
+      }
+    },
+    {
+      "type": "breadcrumb",
+      "props": {
+        "items": [
+          {
+            "label": "首页",
+            "link": "#"
+          },
+          {
+            "label": "数码",
+            "link": "#"
+          },
+          {
+            "label": "狂欢节"
+          }
+        ]
+      }
+    },
+    {
+      "type": "banner",
+      "props": {
+        "image": "https://picsum.photos/seed/banner/1200/200",
+        "link": "#",
+        "text": "年中盛典 低至 5 折"
+      }
+    },
+    {
+      "type": "carousel",
+      "props": {
+        "autoplay": true,
+        "interval": 4000,
+        "slides": [
+          {
+            "image": "https://picsum.photos/seed/s1/1200/400",
+            "caption": "手机专场 满 2000 减 200"
+          },
+          {
+            "image": "https://picsum.photos/seed/s2/1200/400",
+            "caption": "笔记本 直降 1000"
+          },
+          {
+            "image": "https://picsum.photos/seed/s3/1200/400",
+            "caption": "智能穿戴 8 折起"
+          }
+        ]
+      }
+    },
+    {
+      "type": "countdown",
+      "props": {
+        "targetTime": "2026-08-20 23:59:59"
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "💰 领券中心",
+        "children": [
+          {
+            "type": "grid",
+            "props": {
+              "columns": 4,
+              "gap": 12,
+              "children": [
+                {
+                  "type": "coupon",
+                  "props": {
+                    "amount": 50,
+                    "threshold": 300,
+                    "label": "新人券",
+                    "status": "available"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "props": {
+                    "amount": 100,
+                    "threshold": 1000,
+                    "label": "数码专享",
+                    "status": "available"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "props": {
+                    "amount": 200,
+                    "threshold": 2000,
+                    "label": "大额满减",
+                    "status": "claimed"
+                  }
+                },
+                {
+                  "type": "coupon",
+                  "props": {
+                    "amount": 30,
+                    "label": "无门槛",
+                    "status": "available"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "🏆 精选好物",
+        "children": [
+          {
+            "type": "productGrid",
+            "props": {
+              "columns": 4,
+              "gap": 16,
+              "products": [
+                {
+                  "id": "p1",
+                  "title": "旗舰手机 Pro",
+                  "price": 4999,
+                  "image": "https://picsum.photos/seed/p1/300/300",
+                  "tag": "热销"
+                },
+                {
+                  "id": "p2",
+                  "title": "轻薄笔记本",
+                  "price": 6999,
+                  "image": "https://picsum.photos/seed/p2/300/300",
+                  "tag": "新品"
+                },
+                {
+                  "id": "p3",
+                  "title": "无线降噪耳机",
+                  "price": 899,
+                  "image": "https://picsum.photos/seed/p3/300/300"
+                },
+                {
+                  "id": "p4",
+                  "title": "4K 显示器",
+                  "price": 1899,
+                  "image": "https://picsum.photos/seed/p4/300/300",
+                  "tag": "促销"
+                },
+                {
+                  "id": "p5",
+                  "title": "机械键盘",
+                  "price": 459,
+                  "image": "https://picsum.photos/seed/p5/300/300"
+                },
+                {
+                  "id": "p6",
+                  "title": "游戏鼠标",
+                  "price": 199,
+                  "image": "https://picsum.photos/seed/p6/300/300",
+                  "tag": "热销"
+                },
+                {
+                  "id": "p7",
+                  "title": "智能手表",
+                  "price": 1299,
+                  "image": "https://picsum.photos/seed/p7/300/300"
+                },
+                {
+                  "id": "p8",
+                  "title": "蓝牙音箱",
+                  "price": 299,
+                  "image": "https://picsum.photos/seed/p8/300/300",
+                  "tag": "促销"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "tabs",
+      "props": {
+        "tabs": [
+          {
+            "label": "手机",
+            "children": [
+              {
+                "type": "productGrid",
+                "props": {
+                  "columns": 3,
+                  "products": [
+                    {
+                      "id": "m1",
+                      "title": "手机 A",
+                      "price": 2999,
+                      "image": "https://picsum.photos/seed/m1/300/300"
+                    },
+                    {
+                      "id": "m2",
+                      "title": "手机 B",
+                      "price": 3999,
+                      "image": "https://picsum.photos/seed/m2/300/300"
+                    },
+                    {
+                      "id": "m3",
+                      "title": "手机 C",
+                      "price": 4999,
+                      "image": "https://picsum.photos/seed/m3/300/300"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "label": "电脑",
+            "children": [
+              {
+                "type": "productGrid",
+                "props": {
+                  "columns": 3,
+                  "products": [
+                    {
+                      "id": "c1",
+                      "title": "笔记本 X",
+                      "price": 5999,
+                      "image": "https://picsum.photos/seed/c1/300/300"
+                    },
+                    {
+                      "id": "c2",
+                      "title": "台式机 Y",
+                      "price": 3999,
+                      "image": "https://picsum.photos/seed/c2/300/300"
+                    },
+                    {
+                      "id": "c3",
+                      "title": "平板 Z",
+                      "price": 2999,
+                      "image": "https://picsum.photos/seed/c3/300/300"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "label": "配件",
+            "children": [
+              {
+                "type": "productGrid",
+                "props": {
+                  "columns": 3,
+                  "products": [
+                    {
+                      "id": "a1",
+                      "title": "充电器",
+                      "price": 99,
+                      "image": "https://picsum.photos/seed/a1/300/300"
+                    },
+                    {
+                      "id": "a2",
+                      "title": "数据线",
+                      "price": 39,
+                      "image": "https://picsum.photos/seed/a2/300/300"
+                    },
+                    {
+                      "id": "a3",
+                      "title": "手机壳",
+                      "price": 29,
+                      "image": "https://picsum.photos/seed/a3/300/300"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "✨ 新品首发",
+        "children": [
+          {
+            "type": "grid",
+            "props": {
+              "columns": 3,
+              "gap": 12,
+              "children": [
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "折叠屏旗舰",
+                    "text": "全新折叠屏,轻薄如镜。首发价 9999 元。",
+                    "image": "https://picsum.photos/seed/n1/400/200",
+                    "link": "#"
+                  }
+                },
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "AI 眼镜",
+                    "text": "智能 AR 眼镜,沉浸体验。",
+                    "image": "https://picsum.photos/seed/n2/400/200",
+                    "link": "#"
+                  }
+                },
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "智能耳机",
+                    "text": "AI 降噪,实时翻译。",
+                    "image": "https://picsum.photos/seed/n3/400/200",
+                    "link": "#"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "props": {
+        "items": [
+          {
+            "number": "10万+",
+            "label": "参与用户"
+          },
+          {
+            "number": "5000万",
+            "label": "成交额"
+          },
+          {
+            "number": "3000+",
+            "label": "精选商品"
+          },
+          {
+            "number": "4.9分",
+            "label": "用户评分"
+          }
+        ]
+      }
+    },
+    {
+      "type": "rating",
+      "props": {
+        "score": 4.9,
+        "count": 98642
+      }
+    },
+    {
+      "type": "timeline",
+      "props": {
+        "items": [
+          {
+            "time": "6.18 00:00",
+            "text": "活动开启,限量 5 折抢购"
+          },
+          {
+            "time": "6.18 10:00",
+            "text": "品牌日开启,额外满减"
+          },
+          {
+            "time": "6.19 20:00",
+            "text": "会员专享,折上折"
+          },
+          {
+            "time": "6.20 23:59",
+            "text": "活动结束"
+          }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "🎯 会员权益",
+        "children": [
+          {
+            "type": "grid",
+            "props": {
+              "columns": 4,
+              "gap": 12,
+              "children": [
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "极速发货",
+                    "text": "24 小时顺丰直达"
+                  }
+                },
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "七天无忧",
+                    "text": "无理由退换"
+                  }
+                },
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "正品保障",
+                    "text": "假一赔十"
+                  }
+                },
+                {
+                  "type": "card",
+                  "props": {
+                    "title": "专属客服",
+                    "text": "7×24 在线"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "stepper",
+      "props": {
+        "current": 1,
+        "steps": [
+          {
+            "title": "选商品",
+            "description": "挑选心仪数码"
+          },
+          {
+            "title": "领券",
+            "description": "领取优惠券"
+          },
+          {
+            "title": "下单",
+            "description": "享受满减"
+          },
+          {
+            "title": "收货",
+            "description": "极速送达"
+          }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "❓ 常见问题",
+        "children": [
+          {
+            "type": "accordion",
+            "props": {
+              "expandFirst": true,
+              "items": [
+                {
+                  "title": "优惠券怎么领?",
+                  "content": "在领券中心点击「立即领取」,自动存入账户,下单自动抵扣。"
+                },
+                {
+                  "title": "支持哪些支付方式?",
+                  "content": "支持微信、支付宝、银行卡、花呗、白条等主流支付方式。"
+                },
+                {
+                  "title": "发货多久到?",
+                  "content": "现货商品 24 小时内发货,顺丰直达,一般 1-3 天到货。"
+                },
+                {
+                  "title": "退换货政策?",
+                  "content": "支持七天无理由退换,质量问题包运费。"
+                },
+                {
+                  "title": "会员有什么权益?",
+                  "content": "会员享专属折扣、优先客服、生日礼包、积分翻倍等。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "video",
+      "props": {
+        "src": "https://example.com/promo.mp4",
+        "poster": "https://picsum.photos/seed/poster/1200/400",
+        "controls": true
+      }
+    },
+    {
+      "type": "divider",
+      "props": {
+        "label": "活动说明"
+      }
+    },
+    {
+      "type": "richText",
+      "props": {
+        "html": "<p>本次活动最终解释权归本店所有。更多详情见 <a href=\"#\">活动规则</a>。</p>"
+      }
+    },
+    {
+      "type": "section",
+      "props": {
+        "title": "📬 订阅与反馈",
+        "children": [
+          {
+            "type": "input",
+            "props": {
+              "label": "邮箱订阅",
+              "placeholder": "输入邮箱接收优惠",
+              "inputType": "email"
+            }
+          },
+          {
+            "type": "select",
+            "props": {
+              "label": "兴趣分类",
+              "options": [
+                "手机",
+                "电脑",
+                "家电",
+                "配件"
+              ],
+              "value": "手机"
+            }
+          },
+          {
+            "type": "form",
+            "props": {
+              "action": "提交订阅",
+              "fields": [
+                {
+                  "name": "name",
+                  "label": "昵称",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "您的称呼"
+                },
+                {
+                  "name": "phone",
+                  "label": "手机号",
+                  "type": "text",
+                  "required": true,
+                  "placeholder": "11 位手机号"
+                },
+                {
+                  "name": "interest",
+                  "label": "感兴趣品类",
+                  "type": "select"
+                },
+                {
+                  "name": "remark",
+                  "label": "备注",
+                  "type": "textarea",
+                  "placeholder": "想对我们说的"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "footer",
+      "props": {
+        "links": [
+          {
+            "label": "关于我们",
+            "link": "#"
+          },
+          {
+            "label": "联系客服",
+            "link": "#"
+          },
+          {
+            "label": "退换货",
+            "link": "#"
+          },
+          {
+            "label": "隐私政策",
+            "link": "#"
+          }
+        ],
+        "contact": "客服热线:400-xxx-xxxx",
+        "copyright": "© 2026 数码专区"
+      }
+    }
+  ]
+}
