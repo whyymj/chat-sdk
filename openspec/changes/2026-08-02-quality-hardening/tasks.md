@@ -31,6 +31,10 @@
 - [ ] `doc/capability-boundaries.md`:B7 移「能做」+ automation 说明
 - [ ] CLAUDE.md 计数同步(selftest/e2e 新增)
 
+## 3b. 审计脚本修正(maliang-real-findings ⚠ 发现)
+- [ ] `tests/runtime/` 真 LLM 审计脚本:onEvent tool_call 在 send(invoke)模式不外发(仅 stream 模式发),任务级工具链收集为空 → 改用 `inspect().trace.metrics.toolCalls` 增量收(或 stream 模式收 tool_call),不依赖 onEvent
+- [ ] 审计脚本输出对齐 trace.metrics(轮次/工具成功率/压缩频次/model 调用数)
+
 ## 收尾
 - [ ] observability-tracing change 文档项完成 → 归档
 - [ ] 全测绿 + CHANGELOG
