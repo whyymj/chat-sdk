@@ -13,5 +13,5 @@
 
 ## 收口
 - [x] 门禁:selftest 992 + tsc 全过
-- [ ] 归档 + project.md(实测后)
-- [ ] 真 LLM 实测(复杂任务层级规划,验证 LLM 用 parentId/deps)
+- [x] 归档 + project.md(实测后)
+- [x] 真 LLM 实测(复杂任务层级规划,验证 LLM 用 parentId/deps)

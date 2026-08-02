@@ -30,7 +30,7 @@
 
 ## 收口
 - [x] 门禁:selftest 961 / e2e 254 / build / exports 6 / types / browser 全绿
-- [ ] 归档 + project.md 更新(实测后)
-- [ ] 实测:几百 K 真实 JSON 分块生成(码良 50+ 组件页面),验证 draft 流畅 + LLM 能拼合法 JSON + commit 校验链
+- [x] 归档 + project.md 更新(实测后)
+- [x] 实测:几百 K 真实 JSON 分块生成(码良 50+ 组件页面),验证 draft 流畅 + LLM 能拼合法 JSON + commit 校验链
 
 > 发布触发约定:apply 完 + 门禁全绿后,commit 停下询问是否发布,不自动 publish。
