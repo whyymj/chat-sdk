@@ -18,21 +18,57 @@ import type { Todo, TodoStatus } from './state'
 const PLAN_EXIT_TOOLS = new Set(['write', 'set_data', 'edit_data', 'delete_data'])
 
 /** todos 入参形状(id 可选,框架补全);兼容 write_todos zod 推导类型 / Todo / hydrate 旧数据 */
-type TodoInput = { id?: string; content: string; status: TodoStatus }
+type TodoInput = { id?: string; content: string; status: TodoStatus; parentId?: string; deps?: string[]; criteria?: string; evidence?: string }
 
 /** 补全 todos 的 id(无 id 的项按 index 生成 t-N);hydrate 旧数据 / write_todos 入参兼容 */
 function ensureIds(list: TodoInput[]): Todo[] {
-  return list.map((t, i) => ({ id: t.id || `t-${i + 1}`, content: t.content, status: t.status }))
+  return list.map((t, i) => ({
+    id: t.id || `t-${i + 1}`,
+    content: t.content,
+    status: t.status,
+    ...(t.parentId !== undefined ? { parentId: t.parentId } : {}),
+    ...(t.deps !== undefined ? { deps: t.deps } : {}),
+    ...(t.criteria !== undefined ? { criteria: t.criteria } : {}),
+    ...(t.evidence !== undefined ? { evidence: t.evidence } : {}),
+  }))
 }
 
-/** 渲染当前 todos 清单为 system prompt 段(带 id 供 LLM 引用 update_todo) */
+/** 渲染当前 todos 清单为 system prompt 段(带 id 供 LLM 引用 update_todo)。
+ *  有 parentId → 递归层级渲染(缩进 + deps ✓/⏳ 阻塞标注 + evidence);无 → 扁平(零破坏)。 */
 function renderTodos(todos: Todo[]): string | undefined {
   if (!todos.length) return undefined
-  const lines = todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`)
+  const hasTier = todos.some((t) => t.parentId || (t.deps && t.deps.length))
+  const lines: string[] = []
+  if (hasTier) {
+    // 层级递归渲染:roots(无 parentId)→ children(parentId 匹配)
+    const childrenOf = (pid: string) => todos.filter((t) => t.parentId === pid)
+    const statusMark = (id: string) => {
+      const t = todos.find((x) => x.id === id)
+      return t?.status === 'completed' ? '✓' : '⏳'
+    }
+    const render = (t: Todo, depth: number) => {
+      const indent = '  '.repeat(depth)
+      const depStr = t.deps?.length ? ` (依赖:${t.deps.map((d) => statusMark(d)).join('')})` : ''
+      const evStr = t.evidence ? ` [证据:${t.evidence}]` : ''
+      const critStr = t.criteria ? ` [标准:${t.criteria}]` : ''
+      lines.push(`${indent}- #${t.id} [${t.status}] ${t.content}${critStr}${depStr}${evStr}`)
+      childrenOf(t.id).forEach((c) => render(c, depth + 1))
+    }
+    todos.filter((t) => !t.parentId).forEach((t) => render(t, 0))
+  } else {
+    // 扁平渲染(无层级,现状)
+    todos.forEach((t, i) => {
+      const evStr = t.evidence ? ` [证据:${t.evidence}]` : ''
+      lines.push(`${i + 1}. #${t.id} [${t.status}] ${t.content}${evStr}`)
+    })
+  }
+  const rule = hasTier
+    ? '规则:write_todos 拆解(可带 parentId 表达层级、deps 表达依赖);有依赖的任务,deps 全 completed 后再标 in_progress;完成一个立即 update_todo({id, status:"completed"})。'
+    : '规则:开始前用 write_todos 拆解;首个任务标 in_progress;完成一个立即 update_todo({id, status:"completed"}) 标完成(不必重传整个清单);保持至少一个 in_progress 直到全部完成。'
   return [
     '## 当前任务清单(write_todos 整表替换 / update_todo 按 id 增量改单项)',
     lines.join('\n'),
-    '规则:开始前用 write_todos 拆解;首个任务标 in_progress;完成一个立即 update_todo({id, status:"completed"}) 标完成(不必重传整个清单);保持至少一个 in_progress 直到全部完成。',
+    rule,
   ].join('\n')
 }
 
@@ -78,6 +114,10 @@ export function createTodosMiddleware(
               id: z.string().optional().describe('任务 id(可选;不传框架自动生成 t-1/t-2...)'),
               content: z.string().describe('任务描述'),
               status: z.enum(['pending', 'in_progress', 'completed'] as const satisfies TodoStatus[]),
+              parentId: z.string().optional().describe('父任务 id(表达层级;structured-todos-tier)'),
+              deps: z.array(z.string()).optional().describe('依赖的任务 id 数组(必须先完成)'),
+              criteria: z.string().optional().describe('完成标准(可选)'),
+              evidence: z.string().optional().describe('完成证据(可选)'),
             }),
           )
           .describe('完整的任务清单(整表替换)'),
@@ -86,7 +126,7 @@ export function createTodosMiddleware(
   )
 
   const updateTodoTool = tool(
-    async ({ id, content, status }) => {
+    async ({ id, content, status, parentId, deps, criteria, evidence }) => {
       // planning 状态下同样受预算约束(防用 update_todo 绕过)
       if (inPlanning && planPhaseRounds > maxPlanRevisions) {
         return `规划阶段已达上限(${maxPlanRevisions} 轮)。停止修订,基于当前清单开始执行。当前任务 id:${todos.map((t) => t.id).join(', ') || '(空)'}`
@@ -97,6 +137,10 @@ export function createTodosMiddleware(
       }
       if (content !== undefined) todos[idx].content = content
       if (status !== undefined) todos[idx].status = status
+      if (parentId !== undefined) todos[idx].parentId = parentId
+      if (deps !== undefined) todos[idx].deps = deps
+      if (criteria !== undefined) todos[idx].criteria = criteria
+      if (evidence !== undefined) todos[idx].evidence = evidence
       return `已更新任务 #${id}:[${todos[idx].status}] ${todos[idx].content}`
     },
     {
@@ -107,6 +151,10 @@ export function createTodosMiddleware(
         id: z.string().describe('目标任务 id(见当前任务清单)'),
         content: z.string().optional().describe('新任务描述(不传则不改)'),
         status: z.enum(['pending', 'in_progress', 'completed'] as const satisfies TodoStatus[]).optional().describe('新状态(不传则不改)'),
+        parentId: z.string().optional().describe('父任务 id(改层级;不传则不改)'),
+        deps: z.array(z.string()).optional().describe('依赖任务 id 数组(不传则不改)'),
+        criteria: z.string().optional().describe('完成标准(不传则不改)'),
+        evidence: z.string().optional().describe('完成证据(不传则不改)'),
       }),
     },
   )

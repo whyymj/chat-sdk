@@ -15,6 +15,14 @@ export interface Todo {
   id: string
   content: string
   status: TodoStatus
+  /** 父 todo id(表达层级;structured-todos-tier Phase 2,可选) */
+  parentId?: string
+  /** 依赖的 todo id 数组(必须先完成;渲染时标 ✓/⏳) */
+  deps?: string[]
+  /** 完成标准(可选,LLM 自填) */
+  criteria?: string
+  /** 完成证据(可选,如工具调用结果摘要) */
+  evidence?: string
 }
 
 /** 会话级任务目标锚点(mission 中间件维护;capture 或集成方 setMission;revive-mission-anchor Phase 1) */
