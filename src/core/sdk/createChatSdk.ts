@@ -1045,6 +1045,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     async send(message: string, options?: { mission?: Partial<Mission> }): Promise<string> {
       await core.initDone
+      // 容错:partial 调用(headless 实测 sdk.send(msg) 不传 options)→ 默认空对象,避免 options.interceptors 误访问 undefined
+      options = (options ?? {}) as any
       // mission 显式覆盖(send({mission}) 优先于自动 capture)
       if (options?.mission && useMission) missionMw.setMission(options.mission)
       // input 拦截器:send 入口预处理 user message(可改写/审计)

@@ -336,6 +336,36 @@ const noticeBarSchema = z.object({
   }).describe('公告栏配置'),
 })
 
+/** 图标(emoji/符号字符,强调/装饰/列表前缀) */
+const iconSchema = z.object({
+  type: z.literal('icon'), ...baseProps,
+  props: z.object({
+    name: z.string().describe('图标字符(emoji 或 unicode 符号,如 🎁 / ★ / ✓)'),
+    size: z.number().int().min(8).max(120).optional().describe('字号 px,默认 24'),
+    color: z.string().optional().describe('颜色(十六进制,如 #e11d48)'),
+  }).describe('图标配置'),
+})
+/** 标签(胶囊:新品/热销/限量/包邮等商品或活动标记) */
+const tagSchema = z.object({
+  type: z.literal('tag'), ...baseProps,
+  props: z.object({
+    text: z.string().describe('标签文字(如「热销」「新品」)'),
+    color: z.enum(['red', 'blue', 'green', 'gray', 'orange']).optional().describe('颜色,默认 red'),
+    variant: z.enum(['solid', 'outline']).optional().describe('样式:纯色/描边,默认 solid'),
+  }).describe('标签配置'),
+})
+/** 价格(现价 + 原价划线,电商必备) */
+const priceSchema = z.object({
+  type: z.literal('price'), ...baseProps,
+  props: z.object({
+    current: z.number().min(0).describe('现价'),
+    original: z.number().min(0).optional().describe('原价(划线,需 > current 才显示)'),
+    unit: z.string().optional().describe('货币单位,默认 ¥'),
+    size: z.enum(['sm', 'md', 'lg']).optional().describe('字号档,默认 md'),
+    decimals: z.number().int().min(0).max(4).optional().describe('小数位数,默认 2'),
+  }).describe('价格配置'),
+})
+
 /** 组件联合(by type 区分,含容器,递归)。z.lazy 递归需显式标注类型避免 TS 循环推断 */
 export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discriminatedUnion('type', [
   headingSchema, richTextSchema, productGridSchema, imageSchema,
@@ -344,6 +374,7 @@ export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discrimi
   navbarSchema, bannerSchema, countdownSchema, couponSchema, tabsSchema, accordionSchema,
   statSchema, timelineSchema, footerSchema, ratingSchema, formSchema, inputSchema,
   selectSchema, stepperSchema, breadcrumbSchema, videoSchema, noticeBarSchema,
+  iconSchema, tagSchema, priceSchema,
 ]))
 
 /** 递归类型需手动声明(z.infer 无法推导 z.lazy 自引用) */
@@ -362,6 +393,7 @@ export type PageComponent =
   | z.infer<typeof ratingSchema> | z.infer<typeof formSchema> | z.infer<typeof inputSchema>
   | z.infer<typeof selectSchema> | z.infer<typeof stepperSchema> | z.infer<typeof breadcrumbSchema>
   | z.infer<typeof videoSchema> | z.infer<typeof noticeBarSchema>
+  | z.infer<typeof iconSchema> | z.infer<typeof tagSchema> | z.infer<typeof priceSchema>
 
 /** 整页 schema */
 export const pageSchema = z.object({

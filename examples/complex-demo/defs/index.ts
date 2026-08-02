@@ -48,19 +48,22 @@ import { breadcrumbDef } from './breadcrumb'
 import { formDef } from './form'
 import { inputDef } from './input'
 import { selectDef } from './select'
+import { iconDef } from './icon'
+import { tagDef } from './tag'
+import { priceDef } from './price'
 
 export { type ComponentCategory, type ComponentDef } from './_types'
 
 /** 全量组件定义(按 category 分组有序) */
 export const COMPONENT_DEFS: ComponentDef[] = [
   // 基础内容
-  headingDef, richTextDef, imageDef, buttonDef, listDef, cardDef, carouselDef, accordionDef, timelineDef, videoDef, noticeBarDef,
+  headingDef, richTextDef, imageDef, buttonDef, listDef, cardDef, carouselDef, accordionDef, timelineDef, videoDef, noticeBarDef, iconDef, tagDef,
   // 布局
   spacerDef, dividerDef,
   // 容器
   containerDef, sectionDef, gridDef, tabsDef,
   // 商品营销
-  productGridDef, bannerDef, countdownDef, couponDef, statDef, ratingDef,
+  productGridDef, bannerDef, countdownDef, couponDef, statDef, ratingDef, priceDef,
   // 导航
   navbarDef, footerDef, stepperDef, breadcrumbDef,
   // 表单交互

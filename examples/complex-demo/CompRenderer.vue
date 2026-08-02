@@ -33,6 +33,9 @@ import StepperComp from './components/StepperComp.vue'
 import BreadcrumbComp from './components/BreadcrumbComp.vue'
 import VideoComp from './components/VideoComp.vue'
 import NoticeBarComp from './components/NoticeBarComp.vue'
+import IconComp from './components/IconComp.vue'
+import TagComp from './components/TagComp.vue'
+import PriceComp from './components/PriceComp.vue'
 
 const ContainerComp = defineAsyncComponent(() => import('./components/ContainerComp.vue'))
 const SectionComp = defineAsyncComponent(() => import('./components/SectionComp.vue'))
@@ -70,6 +73,9 @@ const COMP_MAP: Record<string, Component> = {
   breadcrumb: BreadcrumbComp,
   video: VideoComp,
   noticeBar: NoticeBarComp,
+  icon: IconComp,
+  tag: TagComp,
+  price: PriceComp,
 }
 
 const props = defineProps<{ comp: any }>()
