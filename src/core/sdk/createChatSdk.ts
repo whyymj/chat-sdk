@@ -224,6 +224,7 @@ export interface ChatSdkOptions {
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
     tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))
+    todoDeps?: boolean       // todos 层级依赖 parentId/deps(默认 false;opt-in,LLM 维护依赖图;structured-todos-tier Phase 2)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -1216,7 +1217,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         contextPreset: options.contextPreset ?? 'auto',
         memory: memoryMw.get(),
         middleware: middlewares.map((m) => m.name),
-        todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({ id: t.id, content: t.content, status: t.status })),
+        todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({
+          id: t.id, content: t.content, status: t.status,
+          ...(t.parentId !== undefined ? { parentId: t.parentId } : {}),
+          ...(t.deps !== undefined ? { deps: t.deps } : {}),
+          ...(t.criteria !== undefined ? { criteria: t.criteria } : {}),
+          ...(t.evidence !== undefined ? { evidence: t.evidence } : {}),
+        })),
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,

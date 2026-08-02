@@ -17,7 +17,7 @@
 > **状态:待立项**。合理性:定位升级后「日常 JSON 100K+ / 复杂页面几百 K」确认真需求,但三项均 opt-in 高级特性,应待 Phase 1 实测验证瓶颈后再立项,避免过早投入。
 
 - [x] 立 `add-draft-write-commit`(draft_write/commit 分块构建,vfs drafts 池就绪)—— ✅ **已实施(2.19)**:几百 K 逼近 max_tokens 真需求确认;`commitSetToBind` 抽取共享校验链(draft_commit/set_data/writeSlot 共用);`capabilities.draftWrite` 默认关 opt-in。见 `2026-08-02-add-draft-write-commit/`
-- [ ] 立 `add-structured-todos-tier`(层级 parentId/deps,复用已做的 update_todo;evidence 可选)—— 合理性:复杂任务依赖链表达,但 LLM 维护依赖图可靠性存疑 → opt-in;`update_todo` 增量基础已由 adaptive-planning 落地
+- [x] 立 `add-structured-todos-tier` ✅(2.19 实施)(层级 parentId/deps,复用已做的 update_todo;evidence 可选)—— 合理性:复杂任务依赖链表达,但 LLM 维护依赖图可靠性存疑 → opt-in;`update_todo` 增量基础已由 adaptive-planning 落地
 - [ ] 立 `add-subagent-writable`(writablePaths 前缀白名单 + path guard)—— 合理性:动「子 agent 只读隔离」安全边界,需 writablePaths 白名单增复杂度 → opt-in 谨慎;**触发:子 agent「只读+返回结论」成明确功能瓶颈**
 - [ ] apply Phase 2 三 change
 
