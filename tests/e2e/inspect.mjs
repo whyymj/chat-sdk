@@ -90,6 +90,37 @@ export async function run() {
     sdkEnvOff.unmount()
     sdkVfs.unmount()
 
+    // draft_write/draft_commit(opt-in:capabilities.draftWrite + vfs + advanced 暴露;默认关)
+    const sdkDraft = createChatSdk({
+      ui: false, id: 'e2e-draft', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, vfs: true, draftWrite: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+      toolMode: 'advanced',
+    })
+    await sdkDraft.mount()
+    assert(sdkDraft.inspect().tools.some((t) => t.name === 'draft_write'), 'draftWrite:true + vfs + advanced → 含 draft_write')
+    assert(sdkDraft.inspect().tools.some((t) => t.name === 'draft_commit'), 'draftWrite:true + vfs + advanced → 含 draft_commit')
+    sdkDraft.unmount()
+    // vfs 但 draftWrite 未开 → 不含 draft(opt-in)
+    const sdkVfsNoDraft = createChatSdk({
+      ui: false, id: 'e2e-draft-off', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, vfs: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+      toolMode: 'advanced',
+    })
+    await sdkVfsNoDraft.mount()
+    assert(!sdkVfsNoDraft.inspect().tools.some((t) => t.name === 'draft_write'), 'vfs 但 draftWrite 未开 → 不含 draft(opt-in)')
+    sdkVfsNoDraft.unmount()
+    // draftWrite:true 但 toolMode simple → 隐藏 draft(SIMPLE_HIDDEN;advanced 才暴露)
+    const sdkDraftSimple = createChatSdk({
+      ui: false, id: 'e2e-draft-simple', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, vfs: true, draftWrite: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkDraftSimple.mount()
+    assert(!sdkDraftSimple.inspect().tools.some((t) => t.name === 'draft_write'), 'draftWrite:true 但 simple 模式 → 隐藏 draft(advanced 才暴露)')
+    sdkDraftSimple.unmount()
+
     // inspect().contextPreset 反映 complex(add-complex-preset-and-vfs-json)
     const sdkComplex = createChatSdk({
       ui: false, id: 'e2e-complex-preset', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,

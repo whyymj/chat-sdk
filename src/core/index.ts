@@ -44,7 +44,7 @@ export type { SkillSpec } from './harness/skills'
 export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, DataSnapshotEntry, ConflictInfo, ConflictResolution, DataInterceptors, ToolMode } from './tools/dataOps'
 export type { SkillsController } from './harness/skills'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataOps/fetch 关闭默认自动装配)
-export { createDataOps, filterByToolMode } from './tools/dataOps'
+export { createDataOps, filterByToolMode, commitSetToBind } from './tools/dataOps'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
 // 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)

@@ -32,8 +32,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,937 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,250 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,961 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,254 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
 
@@ -87,6 +87,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - **schema 形状自动白名单(2.4+)**:`data.schema` 为 `ZodObject` 时,顶层声明的 key 自动作为可读写白名单 —— `read` 整体读按 schema 投影隐藏未声明字段,**子路径读也按该位置的子 schema 递归投影**(如 `read components.0` 按 elements schema 隐藏 child 未声明字段);`write`/`edit`/`delete` 的 `jsonPath` **逐段校验**必须在 schema 声明内否则 `PATH_DENIED`;整体 set / set_data / eval transform 自动转 **merge 语义**(只更新声明字段,未声明字段保留防误删);**`interceptors.write` 补充的不可见字段(不在 schema 声明)在 schema 校验 + merge 后写回 bind,不丢失**。非 ZodObject(discriminatedUnion/record/lazy)全开放向后兼容。零新增配置,集成方用 `z.pick` 子集 schema 即生效
 - **isPathAllowed 逐段校验:ZodArray 严格判 + discriminatedUnion 降级(2.17.1 bug 修)**:`isPathAllowed`/`getSchemaAtPath` 遍历 jsonPath 时,ZodArray 用 `_def.type==='array'` 字符串相等严格识别(防误判);遇 `discriminatedUnion`/`ZodUnion` 静态无 bind 不知具体 option → **降级开放**(`isPathAllowed` 返 true / `getSchemaAtPath` 返 null,后续段交 `schema.safeParse` 兜底校验)。修 pre-existing bug:旧 `_def.type` 真值判断把 union 误当 array,致 `components.N.props.X`(穿过 union 选项的嵌套 object 子字段)深层路径误 `PATH_DENIED`,complex-demo 嵌套 schema 下 evolve patches 增量改单字段几乎废掉(只能退化 merge 整体)
 - **read/write/eval 增强(evolve 2.17+)**:`read` 增 `jsonPaths`(多路径一次读,非法路径单项标错不整批失败)+ `offset`/`limit`(仅数组目标分页,返回切片 + total/hasMore,默认 limit=50 上限 200);`write` 增 `dryRun`(四意图预检:走完整校验链 schema+白名单+patch 应用到 clone,但**不落盘/入快照/写 bind**,乐观锁冲突照常检测返回 VERSION_CONFLICT 不挂起);`eval_script` 增 `jsonPath`(子树模式:仅 clone/执行子树降大 JSON 成本,子树>100KB 超时自适应延至 8s;transform 返回值作为子树新值 set 到子路径 + 整体校验)
+- **分块写 draft_write/draft_commit(Phase 2,opt-in)**:几百 K JSON 逼近 LLM `max_tokens` 单次 write 装不下 → 分块构建(类 git add→commit)。`draft_write({draftId, chunk, mode})` mode:start 新建/append 追加(拼 JSON 片段到 vfs drafts 池);`draft_commit({draftId})` 合并+`JSON.parse`(失败 JSON_INVALID)+ schema 校验(失败 SCHEMA_INVALID,草稿保留可修后重试)+ 原子写 bind + 快照(成功清草稿)。**复用 `commitSetToBind` 纯函数**(抽自 write(set) 的校验+快照+merge+audit 链,与 set_data/writeSlot 共用,单一真相源)。`capabilities.draftWrite` 默认关(opt-in;需 dataOps+vfs;toolMode advanced 暴露,simple/minimal 隐藏)。小改仍用 write/patch,draft 只在大 JSON 从零生成。新增导出 `commitSetToBind`
 - **历史与差异工具(evolve 2.17+)**:`history_data({id?,jsonPath?})`(归 simple,只读查看快照默认最近,填 list_data_snapshots 仅元信息 / restore_data 破坏性之间的空档,**不改当前 bind**);`diff_data({snapshotId?,against?})`(归 advanced,对比当前与快照/一段 JSON 返结构化 `{path,from,to}[]`,纯函数 `diffObjects` 顶层导出);`snapshot_data`/`list_data_snapshots` 从 simple 移 advanced(被自动快照+restore+history 覆盖,simple 数据工具 8→7)。`toolMode` simple=7 / advanced=16 / minimal=2
 - **字段约束可见性(expose-schema 2.17+)**:`describeSchemaNode(schema)` 纯函数结构化提取 zod 约束(返回 `{type,constraints?,optional?,nullable?,default?,description?}`,**zod 4.4+ adapter**:集中 `readCheckDefs`/`describeSchemaNode` 的 switch,结构探测失败返 type-only 兜底 + dev 模式 console.warn 去重;未来 zod5/别的库只改 adapter,接口与消费不变);两处消费:`extractSchemaHint` 注入 systemPrompt「可操作数据」段带 `key (Type)[约束]: desc` + `schema_data({jsonPath?})` 工具(advanced)查任意路径完整约束(含嵌套 shape)。read 概览段**不带**约束(去 systemPrompt 重复)。新增导出 `describeSchemaNode`/`renderSchemaHint`/`renderSchemaOverview`/`formatConstraints` + `SchemaNodeDesc`。**大 schema 分层披露(add-schema-tiered-disclosure)**:`extractSchemaHint(schema, opts?)` 阈值触发(默认 maxKeys=15/maxChars=4000,集成方经 `schemaHint` 配置可调)→ 大 schema 自动转「顶层概览」(`renderSchemaShallow`:key+type+一句描述,**不带**约束/不递归 shape)+ 尾部提示(深层约束查 `schema_data`);小 schema(≤阈值)仍全量(现状不变,无感)。新增 `renderSchemaShallow`/`SchemaHintOptions` 导出
 - **`toolMode` 工具呈现模式**(`simple` 默认 / `advanced` / `minimal`):simple 主推 read/write,隐藏底层 9 个(describe/get/set/edit/delete/schema_data/snapshot_data/list_data_snapshots/diff_data),共 **7 个**数据工具(read/write/query_data/search_data/eval_script/restore_data/history_data);advanced 全暴露(**16**);minimal 只 read/write(2)。`filterByToolMode(tools, mode)` 纯函数筛选(已导出);`usageHints` 按 toolMode 注入提示
@@ -194,14 +195,14 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),937 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),961 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(27 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools / proxyLlm(代理/直连两模式)。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),250 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),254 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -272,7 +273,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(937 全过) → `npm run test:e2e`(250 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(961 全过) → `npm run test:e2e`(254 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -295,7 +296,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 
 **最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
 
-**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(937/250)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(961/254)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
 
 **自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
 
@@ -382,7 +383,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 937 全过 → `npm run test:e2e` 250 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 961 全过 → `npm run test:e2e` 254 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
 7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进

@@ -221,6 +221,7 @@ export interface ChatSdkOptions {
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
+    draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -642,6 +643,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
   const caps = options.capabilities
   const useDataOps = caps?.dataOps !== false
+  const useDraft = caps?.draftWrite === true  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
@@ -656,6 +658,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         onConflict: conflictMgr.set,
         autoLock: options.autoLock,
         interceptors: options.interceptors,
+        vfsStore: useDraft ? vfsStore : undefined,  // draft 工具(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit
       })
     : []
   // toolMode 筛选:simple(默认)主推 read/write 但保留高级能力;advanced 全暴露;minimal 只 read/write

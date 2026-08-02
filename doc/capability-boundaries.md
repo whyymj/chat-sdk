@@ -57,15 +57,11 @@
 - **升级路径**:subagents 配置增 `allowedTools?`(含 write)+ `writablePaths?`(jsonPath 前缀白名单);write 工具 wrap path guard,越界 `PATH_OUT_OF_SCOPE`
 - **工作量**:~100 行 + path guard + 测试
 
-### B4. MB 级单次 JSON 生成
+### B4. MB 级单次 JSON 生成(已解锁:draft 分块)
 
-- **现状**:单次 write 可扛几十~几百 KB(complex-demo 量级);MB 级单次生成会被 max_tokens 截断。vfs `drafts` 池已分(2.16.0)但 `draft_write`/`draft_commit` 未实现(空池占位)。
-- **为什么**:页面 Agent 典型 JSON 几十~几百 KB,「超大 JSON 单次写不完」真实瓶颈未验证;drafts 空池无害,LRU 就绪。
-- **对应提案**:🟡 `add-data-paging-and-chunked-write`(read 分页/eval 子树已做;draft 部分暂缓)
-- **重启触发**:真实「单次 write 装不下的超大 JSON 生成」场景
-- **当前缓解**:分页 read + write patches 批量 + eval_script transform 分块计算
-- **升级路径**:实现 `draft_write` / `draft_commit`(分块构建到 vfs drafts 池,校验后原子 commit)
-- **工作量**:~200 行 + drafts 池协议
+- **现状**:`draft_write`/`draft_commit`(2.19+)分块构建超大 JSON → 原子提交。几百 K~MB 级单次 write 装 max_tokens 装不下时,LLM 分块 `draft_write` 累积到 vfs drafts 池(2MB),`draft_commit` 合并 + schema 校验 + 写 bind(失败草稿保留可修后重试,成功清草稿)。`draft_commit` 复用 `commitSetToBind`(与 write(set)/set_data 共用校验+快照+乐观锁链)。
+- **为什么 opt-in**:`capabilities.draftWrite` 默认关(有 token/复杂度成本);`toolMode: 'advanced'` 暴露(simple/minimal 隐藏)。小改仍用 write/patch。
+- **当前缓解**(未开 draft 时):分页 read + write patches 批量 + eval_script transform 分块计算。
 
 ### B5. 长任务目标锚定(防跑偏 / 压缩丢主线)
 

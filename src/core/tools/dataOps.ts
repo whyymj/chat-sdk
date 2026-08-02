@@ -25,6 +25,7 @@ import {
   type EditOp,
 } from './jsonUtils'
 import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode } from './schemaUtils'
+import type { VfsStore } from '../backends/vfs'
 
 /** 单主对象配置 */
 export interface DataConfig {
@@ -37,7 +38,7 @@ export interface DataConfig {
 }
 
 export interface DataAuditEntry {
-  op: 'set' | 'edit' | 'delete' | 'restore' | 'snapshot'
+  op: 'set' | 'edit' | 'delete' | 'restore' | 'snapshot' | 'draft_commit'
   value?: unknown
   detail?: string
   timestamp: number
@@ -69,12 +70,14 @@ export interface DataOpsOptions {
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>
   autoLock?: boolean
   interceptors?: DataInterceptors
+  /** vfs store(提供则装配 draft_write/draft_commit 分块写工具;由 createChatSdk 经 capabilities.draftWrite 控制)。draft 写 drafts/{draftId}.json(drafts 池) */
+  vfsStore?: VfsStore
 }
 
 export interface DataSnapshotEntry {
   id: number
   ts: number
-  op: 'set' | 'edit' | 'delete' | 'manual' | 'restore'
+  op: 'set' | 'edit' | 'delete' | 'manual' | 'restore' | 'draft_commit'
   label?: string
   value: unknown
 }
@@ -88,13 +91,53 @@ export interface DataOpsController {
 
 export type ToolMode = 'simple' | 'advanced' | 'minimal'
 
-const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data'])
+const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data', 'draft_write', 'draft_commit'])
 const MINIMAL_ALLOWED = new Set(['read', 'write'])
 
 export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
   if (mode === 'advanced') return tools
   if (mode === 'minimal') return tools.filter((t) => MINIMAL_ALLOWED.has(t.name))
   return tools.filter((t) => !SIMPLE_HIDDEN.has(t.name))
+}
+
+/**
+ * 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。
+ * 调用方负责:maybeParseValue(前,字符串→对象)+ handleConflict(前,乐观锁)+ lastReadHash 更新(后)+ 成功/dryRun message 构造。
+ * 在 bindRef 就地写(经校验,失败不写不入快照)。返回 {ok,hash,data}(dryRun 不写 hash='')或 {ok:false,error}。
+ */
+export function commitSetToBind(args: {
+  bindRef: unknown
+  value: unknown
+  schema: ZodType
+  allowKeys: string[] | null
+  snapshots: DataSnapshotEntry[]
+  maxSnapshots: number
+  audit: (e: DataAuditEntry) => void
+  dryRun?: boolean
+  op?: 'set' | 'draft_commit'  // 默认 'set';draft_commit 用 'draft_commit'(快照/审计标记区分)
+}): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
+  const { bindRef, value, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set' } = args
+  const res = schema.safeParse(value)
+  if (!res.success) return { ok: false, error: zodError('', res.error.issues) }
+  if (dryRun) return { ok: true, hash: '', data: res.data }
+  if (bindRef === null || typeof bindRef !== 'object') {
+    return { ok: false, error: toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' }) }
+  }
+  // pushSnapshot 内联(纯函数不依赖 createDataOps 闭包的 pushSnapshot)
+  const before = deepClone(bindRef)
+  const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
+  snapshots.push({ id, ts: Date.now(), op, value: before })
+  while (snapshots.length > maxSnapshots) snapshots.shift()
+  if (res.data !== null && typeof res.data === 'object') {
+    if (allowKeys) {
+      // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
+      safeMerge(bindRef as Record<string, any>, res.data)
+    } else {
+      restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
+    }
+  }
+  audit({ op, value: res.data, timestamp: Date.now() })
+  return { ok: true, hash: hashValue(bindRef), data: res.data }
 }
 
 /** 基于单主对象配置构建数据操作工具集 */
@@ -194,27 +237,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const effHash = expectedHash || (autoLock ? lastReadHash : undefined)
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      let parsed: unknown
       const pr = maybeParseValue(value)
       if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      parsed = pr.parsed
-      const res = schema.safeParse(parsed)
-      if (!res.success) return zodError('', res.error.issues)
-      if (bindRef === null || typeof bindRef !== 'object') {
-        return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),set_data 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组(低代码主 JSON 本就是);叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' })
-      }
-      pushSnapshot('set')
-      if (res.data !== null && typeof res.data === 'object') {
-        if (allowKeys) {
-          // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
-          safeMerge(bindRef as Record<string, any>, res.data)
-        } else {
-          restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
-        }
-      }
-      audit({ op: 'set', value: res.data, timestamp: Date.now() })
-      lastReadHash = hashValue(bindRef)
-      return `已设置主数据 = ${safeStringify(res.data, 600)} (新 hash=${hashValue(bindRef)})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit })
+      if (!r.ok) return r.error
+      lastReadHash = r.hash
+      return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
     },
     {
       name: 'set_data',
@@ -727,33 +755,16 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         return `已 write(edit) 主数据(${applied.length} 个 patch)。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
       }
 
-      // set 整体
-      let parsed: unknown
+      // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 set_data/draft_commit 共用)
       const pr = maybeParseValue(payload)
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
-      parsed = pr.parsed
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      const res = schema.safeParse(parsed)
-      if (!res.success) return zodError('', res.error.issues)
-      if (dryRun) {
-        return `dryRun(set): schema 校验通过。预览新值:${safeStringify(res.data, 600)}。未实际写入、未入快照。`
-      }
-      if (bindRef === null || typeof bindRef !== 'object') {
-        return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),write(set) 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' })
-      }
-      pushSnapshot('set')
-      if (res.data !== null && typeof res.data === 'object') {
-        if (allowKeys) {
-          // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
-          safeMerge(bindRef as Record<string, any>, res.data)
-        } else {
-          restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
-        }
-      }
-      audit({ op: 'set', value: res.data, timestamp: Date.now() })
-      lastReadHash = hashValue(bindRef)
-      return `已 write(set) 主数据 = ${safeStringify(res.data, 600)} (新 hash=${hashValue(bindRef)})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun })
+      if (!r.ok) return r.error
+      if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
+      lastReadHash = r.hash
+      return `已 write(set) 主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
     },
     {
       name: 'write',
@@ -817,11 +828,69 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     { name: 'diff_data', description: '对比当前主数据与某快照(默认最近)或一段 JSON(against)的差异,返回结构化 {path, from→to} 列表。供 verify 自纠/冲突诊断/操作审计("刚才改了啥")。snapshotId 指定快照;against 传一段 JSON 值(与 snapshotId 互斥,传则忽略快照)。', schema: z.object({ snapshotId: z.number().int().optional().describe('对比的快照序号;不传则最近一次'), against: z.unknown().optional().describe('对比的一段 JSON 值(与 snapshotId 互斥;传则忽略快照)') }) },
   )
 
+  // ============ draft_write / draft_commit(分块构建超大 JSON;opt-in:opts.vfsStore 提供时装配,capabilities.draftWrite 控制)============
+  // 场景:几百 K JSON 逼近 LLM max_tokens,单次 write 装不下。LLM 分块 draft_write 累积 → draft_commit 原子校验+写 bind
+  // draft_commit 复用 commitSetToBind(与 write(set)/set_data 共用校验+快照+乐观锁链)
+  const draftTools: StructuredToolInterface[] = []
+  if (opts.vfsStore) {
+    const store = opts.vfsStore
+    const draftKey = (id: string) => `drafts/${id}.json`
+    const draftWrite = tool(
+      ({ draftId, chunk, mode }) => {
+        const key = draftKey(draftId)
+        const existing = store.files[key]
+        const append = mode === 'append' && existing
+        const content = append ? existing.content + chunk : chunk
+        store.files[key] = { content, updatedAt: Date.now() }
+        return JSON.stringify({ draftId, bytes: content.length, mode: append ? 'append' : 'start' })
+      },
+      {
+        name: 'draft_write',
+        description:
+          '分块写 JSON 草稿到 drafts 池(累积构建超大 JSON,解决单次 write 装不下 LLM max_tokens)。mode:"start" 新建/覆盖草稿;"append" 追加 chunk 到已有草稿(拼接字符串)。草稿存 drafts/{draftId}.json(2MB 池,与 offload 分池互不挤占)。返回 {draftId,bytes,mode} 看累计进度。配合 draft_commit 合并+校验+提交。LLM 负责分块拼成合法 JSON(最后 draft_commit 时整体 JSON.parse 校验;拼接不合法返回 JSON_INVALID,草稿保留可继续修正)。',
+        schema: z.object({
+          draftId: z.string().describe('草稿标识(自起,如 "page-gen-1")'),
+          chunk: z.string().describe('JSON 片段字符串(分块输出,append 拼接成完整 JSON;如 \'{"components":[\' / \'{"type":"heading",...},\' / \']}\')'),
+          mode: z.enum(['start', 'append']).optional().describe('start=新建/覆盖(默认);append=追加 chunk 到已有草稿'),
+        }),
+      },
+    )
+    const draftCommit = tool(
+      async ({ draftId }) => {
+        const key = draftKey(draftId)
+        const entry = store.files[key]
+        if (!entry) return toolError({ code: 'DRAFT_NOT_FOUND', message: `草稿 "${draftId}" 不存在`, hint: '先 draft_write({draftId, chunk, mode:"start"}) 新建,再 append 累积分块' })
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(entry.content)
+        } catch (e) {
+          return toolError({ code: 'JSON_INVALID', message: `草稿 "${draftId}" 拼接后非合法 JSON: ${(e as Error).message}`, hint: '检查 chunk 拼接(逗号/括号/引号是否匹配,首尾是否闭合);草稿保留未删,可继续 draft_write 修正后重 commit', details: { bytes: entry.content.length, preview: entry.content.slice(0, 200) + (entry.content.length > 200 ? '…' : '') } })
+        }
+        // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
+        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit' })
+        if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
+        lastReadHash = r.hash
+        delete store.files[key]  // 成功:清草稿
+        return `已 draft_commit 草稿 "${draftId}" → 主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段)' : ''}。草稿已清理。`
+      },
+      {
+        name: 'draft_commit',
+        description:
+          '把 draft_write 累积的草稿合并 + schema 校验 + 原子提交到主数据(失败不污染 bind,草稿保留供修后重试)。流程:读 drafts/{draftId}.json → JSON.parse(失败 JSON_INVALID,草稿保留)→ schema 校验(失败 SCHEMA_INVALID,草稿保留)→ 写 bind + 自动快照(与 write(set)/set_data 共用 commitSetToBind,restore_data 可回退)→ 清草稿。适合从零生成大 JSON(如 50+ 组件页面):分块 draft_write 累积 → draft_commit 一次提交。小改仍用 write/patch(无需 draft)。',
+        schema: z.object({
+          draftId: z.string().describe('要提交的草稿标识(对应 draft_write 的 draftId)'),
+        }),
+      },
+    )
+    draftTools.push(draftWrite, draftCommit)
+  }
+
   const tools: StructuredToolInterface[] = [
     describeData, getData, setData, editData, deleteData,
     snapshotData, listDataSnapshots, restoreData, historyData,
     queryData, searchData, evalScript,
     readSlot, writeSlot, schemaData, diffData,
+    ...draftTools,
   ]
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
   return tools

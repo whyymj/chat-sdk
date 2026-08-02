@@ -149,7 +149,7 @@ createChatSdk({
   schemaHint: { maxKeys?, maxChars? },               // large-schema tiered disclosure thresholds (2.18+; default 15/4000); see §6
 
   // capability toggles (default all on; verify default off)
-  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, inspectEnv?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; inspectEnv (inspect_env, reads window/env, 2.18+) default on; workingMemory default on
+  capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, inspectEnv?, draftWrite?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; inspectEnv (inspect_env, reads window/env, 2.18+) default on; draftWrite (draft_write/draft_commit chunked build, 2.19+) default off opt-in; workingMemory default on
 
   // human-in-the-loop
   humanConfirm: true,               // proactive inquiry (default on; AI asks when uncertain/multi-plan)
@@ -455,6 +455,34 @@ The agent calls `inspect_env({ key? })`:
 `safeSerialize` skips functions/DOM/circular refs + caps depth/key-count/length to avoid blowups. Large results auto-offload to vfs. Unlike `get_dom` (reads DOM structure, deep traversal, opt-in): `inspect_env` is a lightweight environment summary, **on by default**, non-mutating.
 
 > Manual inject: `import { inspectTools } from 'page-agent-sdk'`. Pure functions `safeSerialize`/`getEnvSummary` are exported and unit-testable without a browser.
+
+#### Chunked write `draft_write` / `draft_commit` (huge JSON, default off)
+
+Huge JSON (e.g. 50+ component pages) approaching LLM `max_tokens` won't fit in a single `write({value})`. Build it in chunks via draft: `capabilities.draftWrite` defaults to **off** (opt-in; needs dataOps + vfs; toolMode advanced exposes it, simple/minimal hide it).
+
+```ts
+createChatSdk({
+  capabilities: { draftWrite: true, vfs: true },  // opt-in, default off
+  toolMode: 'advanced',  // draft exposed in advanced (hidden in simple/minimal)
+  // ...
+}).mount()
+```
+
+Agent flow: `draft_write({draftId, chunk, mode})` accumulates chunks → `draft_commit({draftId})` atomically commits:
+
+- `draft_write` mode: "start" creates/overwrites / "append" appends chunk (concat JSON fragments into the vfs drafts pool, 2MB)
+- `draft_commit` reads draft → `JSON.parse` (fail → JSON_INVALID) → schema validate (fail → SCHEMA_INVALID, draft kept for fix-and-retry) → write bind + snapshot (auto-clears draft on success)
+
+```jsonc
+// agent builds a 50+ component page in chunks
+draft_write({draftId:"p1", chunk:'{"components":[', mode:"start"})
+draft_write({draftId:"p1", chunk:'{"type":"heading","props":{...}},', mode:"append"})
+// ... more components appended ...
+draft_write({draftId:"p1", chunk:']}', mode:"append"})
+draft_commit({draftId:"p1"})  // merge + validate + write + clear draft
+```
+
+> Small edits still use `write` patch; draft is only for generating large JSON from scratch. `draft_commit` runs through `commitSetToBind` (shared with write(set)/set_data for validation+snapshot+optimistic-lock chain).
 
 #### Host actions `actions` (trigger save/publish/page ops)
 

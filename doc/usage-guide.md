@@ -180,7 +180,7 @@ createChatSdk({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.18+)默认开排查用;workingMemory=跨压缩记忆(2.18+)默认开)
+  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.18+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.19+)默认关 opt-in;workingMemory=跨压缩记忆(2.18+)默认开)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -506,6 +506,34 @@ agent 调用 `inspect_env({ key? })`:
 `safeSerialize` 跳过 function/DOM/循环引用 + 限深度/键数/长度截断防超大;大结果自动外存 vfs。区别于 `get_dom`(读 DOM 结构,深度遍历,opt-in):`inspect_env` 轻量读环境摘要,**默认开**,不改数据。
 
 > 手动注入:`import { inspectTools } from 'page-agent-sdk'`。纯函数 `safeSerialize`/`getEnvSummary` 已导出,可脱离浏览器单测。
+
+#### 分块写 `draft_write` / `draft_commit`(超大 JSON,默认关)
+
+几百 K JSON(如 50+ 组件页面)逼近 LLM `max_tokens`,单次 `write({value})` 装不下。用 draft 分块构建:`capabilities.draftWrite` 默认**关**(opt-in;需 dataOps + vfs;toolMode advanced 暴露,simple/minimal 隐藏)。
+
+```ts
+createChatSdk({
+  capabilities: { draftWrite: true, vfs: true },  // opt-in,默认关
+  toolMode: 'advanced',  // draft 在 advanced 暴露(simple/minimal 隐藏)
+  // ...
+}).mount()
+```
+
+agent 流程:`draft_write({draftId, chunk, mode})` 分块累积 → `draft_commit({draftId})` 原子提交:
+
+- `draft_write` mode:"start" 新建草稿 / "append" 追加 chunk(拼 JSON 片段到 vfs drafts 池,2MB)
+- `draft_commit` 读草稿 → `JSON.parse`(失败 JSON_INVALID)→ schema 校验(失败 SCHEMA_INVALID,草稿保留可修后重试)→ 写 bind + 快照(成功自动清草稿)
+
+```jsonc
+// agent 分块构建一个 50+ 组件页面
+draft_write({draftId:"p1", chunk:'{"components":[', mode:"start"})
+draft_write({draftId:"p1", chunk:'{"type":"heading","props":{...}},', mode:"append"})
+// ... 更多组件分块 append ...
+draft_write({draftId:"p1", chunk:']}', mode:"append"})
+draft_commit({draftId:"p1"})  // 合并 + 校验 + 写主数据 + 清草稿
+```
+
+> 小改仍用 `write` patch;draft 只在大 JSON 从零生成。`draft_commit` 走 `commitSetToBind`(与 write(set)/set_data 共用校验+快照+乐观锁链,单一真相源)。
 
 #### 宿主动作 `actions`(触发保存/发布等页面操作)
 
