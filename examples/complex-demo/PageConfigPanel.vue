@@ -6,7 +6,7 @@
  * Agent 经 actions(save_draft/publish/refresh_preview)触发同等操作 → 闭环:Agent 改 → 人校验 → 发布。
  * 演示「胜任自动化 agent」:Agent 不仅能改数据,还能触发宿主页面动作(保存/发布)。
  */
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 
 const props = defineProps<{
   page: { title: string; components: unknown[] }
@@ -30,10 +30,21 @@ function serialize(): string {
   return JSON.stringify({ title: props.page.title, components: props.page.components }, null, 2)
 }
 
-// agent write 改 page → 同步 jsonText(仅未手动编辑时,避免覆盖人工编辑)
-watch(() => [props.page.title, props.page.components.length], () => {
-  if (!dirty.value) jsonText.value = serialize()
-})
+// agent write 改 page(任意字段,含组件内部 props/style/children)→ 同步 jsonText
+// deep:组件内部 patch 也触发(原仅监听 title + components.length,漏掉「改价格/换图/调样式」等 length 不变的
+//      改动 → 面板 JSON 落后于页面渲染);debounce(200ms):合并连续 patch,避免大页面全量 serialize 抖动
+// dirty 保护:用户手动编辑 textarea 期间暂不同步(见模板「未应用编辑」提示),避免覆盖未应用的人工编辑
+let syncTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  () => props.page,
+  () => {
+    if (dirty.value) return
+    clearTimeout(syncTimer)
+    syncTimer = setTimeout(() => { jsonText.value = serialize() }, 200)
+  },
+  { deep: true },
+)
+onUnmounted(() => clearTimeout(syncTimer))
 
 function onInput() { dirty.value = true }
 
@@ -81,6 +92,7 @@ function flash(msg: string) {
       placeholder="页面 JSON:{ title, components[] }"
     />
     <div v-if="error" class="error">⚠️ {{ error }}</div>
+    <div v-if="dirty" class="dirty-hint">✏️ 有未应用的手动编辑——点「应用 JSON」整页写回(会覆盖期间 AI 的改动),或「重置」放弃;期间 AI 改动不显示在此</div>
     <div class="config-actions">
       <button @click="applyJson" title="把 textarea 的 JSON 写回页面">应用 JSON</button>
       <button @click="save" title="保存草稿(序列化到 localStorage)">保存草稿</button>
@@ -128,6 +140,12 @@ function flash(msg: string) {
   color: #dc2626;
   font-size: 12px;
   margin: 4px 0;
+}
+.dirty-hint {
+  color: #b45309;
+  font-size: 12px;
+  margin: 4px 0;
+  line-height: 1.4;
 }
 .config-actions {
   display: flex;

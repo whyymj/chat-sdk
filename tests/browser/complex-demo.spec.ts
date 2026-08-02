@@ -141,6 +141,29 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   })
 
   /**
+   * 配置面板 JSON 与 page 双向同步(deep watch 修复):
+   * agent write 改组件内部字段(components.0.props.title,length 不变)→ 面板 textarea 的 JSON 跟随更新。
+   * 原 watch 仅监听 title + components.length,漏掉 length 不变的组件内部 patch → 面板 JSON 落后于页面渲染。
+   */
+  test('配置面板 JSON 同步:agent 改组件内部字段(length 不变)→ textarea 跟随更新', async ({ page }) => {
+    await expect(page.locator('.config-panel .json-editor')).toBeVisible()
+    const initial = await page.inputValue('.config-panel .json-editor')
+    expect(initial).not.toContain('面板同步测试标题')
+
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { value: '面板同步测试标题', patch: { op: 'set', jsonPath: 'components.0.props.title' } } }] },
+      { text: '已修改导航栏标题。' },
+    ])
+    await fillInput(page, '把导航栏标题改成「面板同步测试标题」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // debounce 200ms 后 jsonText 同步:组件内部 patch length 不变,旧 watch 漏触发 → 验证 deep watch 修复
+    await page.waitForTimeout(400)
+    const synced = await page.inputValue('.config-panel .json-editor')
+    expect(synced, 'agent 改组件内部字段(length 不变)→ 配置面板 JSON 同步(deep watch)').toContain('面板同步测试标题')
+  })
+
+  /**
    * agent save_draft(宿主动作)+ get_dom(读渲染 DOM)闭环:
    * save_draft → 草稿写 localStorage;get_dom → 返回导航栏 DOM 结构(验证 agent 能"看"渲染结果)
    */
