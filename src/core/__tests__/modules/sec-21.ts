@@ -294,6 +294,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(tPassthrough['write'], { value: '新标题', patch: { op: 'set', jsonPath: 'title' } })
     assert(pagePassthrough.title === '新标题', '修复3: write edit 单 patch + 透传拦截器 → 取 .value 落地(原 bug:把 {op,jsonPath,value} 整个对象当 value 写入 → SCHEMA_INVALID)')
 
+    // 治本(write value 双语义,#76):patch 自带 value(与 patches 元素一致),消除顶层 value 双语义歧义;双支持(向后兼容)
+    const pagePV: any = { title: 'old', items: [] as string[] }
+    const toolsPV = createDataOps(
+      { schema: z.object({ title: z.string(), items: z.array(z.string()) }), bind: pagePV, description: 'p-pv' },
+    )
+    const tPV = byName(toolsPV)
+    r = await invoke(tPV['write'], { patch: { op: 'set', jsonPath: 'title', value: 'patch自带值' } })
+    assert(pagePV.title === 'patch自带值', '治本: write patch 自带 value → patch.value 落地(消除顶层 value 双语义歧义)')
+    r = await invoke(tPV['write'], { value: '兼容旧用法', patch: { op: 'set', jsonPath: 'title' } })
+    assert(pagePV.title === '兼容旧用法', '治本: write 双支持 → 顶层 value(无 patch.value)向后兼容')
+    r = await invoke(tPV['write'], { value: '顶层', patch: { op: 'set', jsonPath: 'title', value: 'patch优先' } })
+    assert(pagePV.title === 'patch优先', '治本: patch.value 与顶层 value 都传时 → patch.value 优先')
+
     // 白名单严格(fix-dataops-write-correctness):write(set) / set_data 的未声明字段一律丢弃,
     // 即便 interceptors.write 补充或用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明;
     // 拦截器改声明字段值仍生效,只是不能借机塞非声明字段)。2.15.0 曾把"补充字段写回"当修复,实为白名单绕过口子,此处收窄。

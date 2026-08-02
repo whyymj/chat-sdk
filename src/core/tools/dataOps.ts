@@ -604,14 +604,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (del) intent = 'delete'
       else if (patches && patches.length) intent = 'edit'
       else if (patch) intent = 'edit'
-      let payload: unknown = value
+      let payload: unknown = patch?.value !== undefined ? patch.value : value  // patch 自带 value 优先(与 patches 一致,消除双语义歧义);未填回退顶层 value(向后兼容)
       let patchList: { op: EditOp; jsonPath: string; value?: unknown }[] | undefined
       if (opts.interceptors?.write) {
         try {
           const interceptInput =
             intent === 'delete' ? { del: true, jsonPath: patch?.jsonPath }
             : intent === 'edit' && patches && patches.length ? { patches }
-            : intent === 'edit' ? { op: patch!.op, jsonPath: patch!.jsonPath || '', value }
+            : intent === 'edit' ? { op: patch!.op, jsonPath: patch!.jsonPath || '', value: payload }
             : value
           const intercepted = opts.interceptors.write(interceptInput, bindRef)
           if (intercepted && typeof intercepted === 'object' && 'error' in (intercepted as any)) {
@@ -740,13 +740,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'write',
       description:
-        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四种意图:① 整体替换 write({ value }) value 为 JSON 对象(推荐)或字符串;② 单个增量 patch write({ value, patch:{op,jsonPath} }) op=set/remove/merge/append,jsonPath 相对主数据根(如 components.0.text),value 作为该 patch 的值;③ 批量增量 write({ patches:[{op,jsonPath,value},...] }) 一次原子应用多个 patch(任一失败整体不写入,适合一次改多处);④ 删除 write({ patch:{jsonPath}, del:true })。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝(批量模式拦截器收到 {patches},返回新 patches 数组或 {error})。dryRun(可选):预检模式,走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘/入快照,返回预览(四意图均支持,复杂改动先看会改成啥、能否过 schema)。',
+        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四种意图:① 整体替换 write({ value }) value 为整个 JSON 对象(推荐)或字符串;② 单个增量 patch write({ patch:{op,jsonPath,value} }) op=set/remove/merge/append,jsonPath 相对主数据根(如 components.0.props.title),patch.value 是该 patch 的值(自带,与 patches 一致——string/number 直传该字段新值,勿包成 {字段:值} 对象);也兼容 write({ value, patch:{op,jsonPath} }) 顶层 value 形式(向后兼容,但优先用 patch.value 避免与①整体 set 的 value 语义混淆);③ 批量增量 write({ patches:[{op,jsonPath,value},...] }) 一次原子应用多个 patch(任一失败整体不写入,适合一次改多处);④ 删除 write({ patch:{jsonPath}, del:true })。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝(批量模式拦截器收到 {patches},返回新 patches 数组或 {error})。dryRun(可选):预检模式,走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘/入快照,返回预览(四意图均支持,复杂改动先看会改成啥、能否过 schema)。',
       schema: z.object({
         value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
         patch: z.object({
           op: z.enum(['set', 'remove', 'merge', 'append']),
           jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填则作用于根'),
-        }).optional().describe('单个增量编辑;传 patch(无 patches)走单 patch edit 语义,value 作为该 patch 的 value'),
+          value: z.unknown().optional().describe('该 patch 的值(JSON 直传或 JSON 字符串);set/merge/append 必填,remove 不需。与顶层 value 二选一:优先 patch.value,未填则回退顶层 value(向后兼容)。推荐用 patch.value(自带,与 patches 元素一致,无歧义)'),
+        }).optional().describe('单个增量编辑(自带 value,与 patches 元素一致);传 patch(无 patches)走单 patch edit 语义'),
         patches: z.array(z.object({
           op: z.enum(['set', 'remove', 'merge', 'append']),
           jsonPath: z.string().optional().describe('相对主数据根的点号路径;set/remove 必填,merge/append 不填则作用于根'),
