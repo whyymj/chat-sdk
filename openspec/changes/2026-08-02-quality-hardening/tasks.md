@@ -3,11 +3,12 @@
 > 关联 `proposal.md`。P1 第一批(budget 运行时测 + batch splice + usage 注释)已在 commit 499dad9 完成。剩集成测 + 小 perf + 文档。
 
 ## 1. stub BaseChatModel(先验证)
-- [ ] `tests/e2e/_stub-model.mjs`:stub BaseChatModel(_generate → AIMessage,bindTools 返回 this,stream 走 _generate fallback);可控响应队列(文本/工具调用/抛错)
-- [ ] 验证 stub 可用:automation.mjs 写 budget 端到端测(stub 响应 → 触发 budget 超限 → agent 停止),跑通证明 chunk 解析 OK
-- [ ] (若 stub 不稳)降级:运行时测标 TODO + manual,不阻塞
+- [x] `tests/e2e/_stub-model.mjs`:stub BaseChatModel(_streamResponseChunks yield ChatGenerationChunk{message:AIMessageChunk} + _generate 聚合 + bindTools 返回 this);可控响应队列(文本/工具调用/抛错/usage)
+- [x] 验证 stub 可用:automation.mjs budget 端到端测(stub 注入 usage.total_tokens=1000 → 第二轮 wrapModelCall 拦截 model.calls=1 + emit BUDGET_EXCEEDED),chunk 解析 OK,踩坑风险排除
+- [ ] (若 stub 不稳)降级:运行时测标 TODO + manual,不阻塞 —— stub 已跑通,无需降级
 
 ## 1. automation 运行时测(stub)
+- [x] budget 超限 → agent 停止(commit 499dad9 测中间件层,本次补端到端:stub 注入大 usage → 第二轮拦截 + BUDGET_EXCEEDED)
 - [ ] send 致命错误恢复:stub 第一次抛错第二次成功 → 验证 restore_last_checkpoint + retry(maxAutoRetries)+ 最终成功
 - [ ] batch 任务隔离:stub [成功,抛错,成功] → results.ok=[true,false,true],失败任务 messages truncate(无残留 user)
 - [ ] 断点续跑:store 写 checkpoints/usage → switchSession 恢复 → listCheckpoints 有值 + usage 连续 + restoreLastCheckpoint 可用
