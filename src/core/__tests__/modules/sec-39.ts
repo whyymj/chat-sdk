@@ -88,4 +88,12 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ✓ 无参 → 环境摘要(含 location/navigator/viewport/document 四段)
   const envNoArg = JSON.parse(await invoke(inspectEnvTool, {}))
   assert(envNoArg.location !== undefined && envNoArg.navigator !== undefined && envNoArg.viewport !== undefined && envNoArg.document !== undefined, '✓ inspect_env() 无参 → 返回四段环境摘要')
+
+  // ===== inspect_env key denylist(安全审查 perf-security HIGH:localStorage/cookie/敏感命名 不读取防泄漏) =====
+  const denied1 = JSON.parse(await invoke(inspectEnvTool, { key: 'localStorage' }))
+  assert(denied1.denied === true, '✓ inspect_env({key:"localStorage"}) → denylist 拒绝(防 dump 凭据)')
+  const denied2 = JSON.parse(await invoke(inspectEnvTool, { key: 'appToken' }))
+  assert(denied2.denied === true, '✓ inspect_env({key:"appToken"}) → 敏感命名(token)拒绝')
+  const denied3 = JSON.parse(await invoke(inspectEnvTool, { key: 'document' }))
+  assert(denied3.denied === true, '✓ inspect_env({key:"document"}) → document 整体拒绝(摘要已有安全字段)')
 }

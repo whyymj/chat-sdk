@@ -147,6 +147,8 @@ export interface SubagentConfig {
   temperature?: number;
   maxTokens?: number;
   maxToolRounds?: number;
+  /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
+  writablePaths?: string[];
 }
 export interface AgentInfo {
   id: string;
@@ -996,7 +998,15 @@ export interface SubagentsController {
   remove(id: string): boolean;
   get(): SubagentConfig[];
 }
-export interface SubagentOptions { [k: string]: any }
+/** spawn_agent / spawn_agents 运行时选项(role/tools/writablePaths 等可运行时覆盖) */
+export interface SubagentOptions {
+  role?: string;
+  tools?: string[];
+  /** 子 agent 可写路径前缀白名单(运行时覆盖;写工具包 path guard,越界 PATH_OUT_OF_SCOPE)。subagent-writable Phase 2 */
+  writablePaths?: string[];
+  model?: string;
+  [k: string]: any;
+}
 export interface SubagentLlmConfig { [k: string]: any }
 
 // checkpoint / dataOps / permissions

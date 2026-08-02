@@ -2,6 +2,19 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [2.20.1] - 2026-08-02
+
+### Fixed(4 agent 交叉审查 P0)
+- **[CRITICAL] 安全:eval_script 沙箱动态 import() 旁路**:WORKER_PREAMBLE 禁了 fetch/XHR/importScripts/WebSocket,但漏了动态 `import()`(classic Worker 支持拉外网 ES 模块外泄 data)。修复:runSandboxedScript 入口静态扫描拒绝 `import(`/`eval(`/`Function(`/`new Function`/`require(`,运行时 fn 创建后禁 `self.eval`/`self.Function` 双保险。
+- **[HIGH] 安全:get_dom attrs LLM 可控读敏感**:`attrs` 是 LLM 入参,传 `["value","data-token"]` 读表单值/凭据,默认白名单形同虚设。修复:加 `DENY_ATTR_RE`(value/on*/srcdoc/formaction)+ `DENY_ATTR_SENSITIVE_RE`(token/secret/key/auth/cred/csrf/session),即使 LLM 加进白名单也硬排除。
+- **[HIGH] 安全:inspect_env 无 denylist**:key LLM 可控,`inspect_env({key:"localStorage"})` dump token/PII。修复:`ENV_DENY_KEYS`(localStorage/sessionStorage/cookie/document/窗口指针)+ `ENV_SENSITIVE_KEY_RE` 拒绝。
+- **types 漂移:SubagentConfig 缺 writablePaths**:types/index.d.ts 补 `writablePaths`;`SubagentOptions` 从 `{[k:string]:any}` 改具体(role/tools/writablePaths/model)。
+- **importStack 未校验 id 类型**:脏数据 `cp.id` 字符串 → `Math.max` 成 NaN → `nextId=NaN` → 后续 save 产出 NaN id。修复:`typeof number && isFinite` 过滤。
+- 含 2.20.0 后续:`send` 不传 options 容错(2.20.0 含 bug)+ `renderTodos` 加 seen 循环防护。
+
+### Tests
+- selftest 补:`runSandboxedScript` 静态扫描拒 import()/eval()/Function() + `domToStructure` DENY(value/data-token) + `inspect_env` denylist(localStorage/token/document) + `importStack` id 类型校验。1019→1026
+
 ## [2.20.0] - 2026-08-02
 
 ### Added

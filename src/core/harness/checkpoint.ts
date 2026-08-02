@@ -203,8 +203,11 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
       stack.length = 0
       const arr = Array.isArray(cps) ? cps : []
       for (const cp of arr) {
-        // 仅灌入结构完整的 checkpoint(防脏数据;windowVals/messages/vfs/todos 透传,restore 时按需 clone)
-        if (cp && typeof cp === 'object' && 'id' in cp && 'messages' in cp) stack.push(cp as Checkpoint)
+        // 仅灌入结构完整的 checkpoint(防脏数据 + id 必须是有限数,否则 Math.max 成 NaN → nextId=NaN → 后续 save 产出 NaN id)
+        if (cp && typeof cp === 'object' && 'id' in cp && 'messages' in cp
+          && typeof (cp as { id: unknown }).id === 'number' && Number.isFinite((cp as { id: number }).id)) {
+          stack.push(cp as Checkpoint)
+        }
       }
       // 重置 nextId 为栈中最大 id + 1,防后续 save 的 id 与恢复的 checkpoint 冲突(list/restore 按 id 定位)
       nextId = stack.reduce((m, c) => Math.max(m, c.id), 0) + 1

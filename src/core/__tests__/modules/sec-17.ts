@@ -197,5 +197,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mgr3.list().length === 0, 'importStack 过滤脏数据(缺 messages 不灌入)')
     mgr3.importStack(undefined as any)
     assert(mgr3.list().length === 0, 'importStack 非数组不抛(空栈)')
+    // id 类型校验(bug-review LOW:脏数据 cp.id 字符串 → Math.max 成 NaN → nextId=NaN → 后续 save 产出 NaN id)
+    const mgr4 = createCheckpointManager({ getData: () => bind, vfsStore: { files: {} } as any, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+    mgr4.importStack([{ id: 'bad', messages: [] }, { id: 5, messages: [] }] as any)
+    assert(mgr4.list().length === 1, 'importStack 过滤非数字 id(字符串 id 不灌入,防 nextId=NaN)')
   }
 }

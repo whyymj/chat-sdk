@@ -89,9 +89,18 @@ export function getEnvSummary(win?: Window & typeof globalThis): Record<string, 
   }
 }
 
+// inspect_env 的 key denylist(安全审查 perf-security HIGH:key LLM 可控,localStorage/sessionStorage/cookie 可 dump token/PII)
+// localStorage/sessionStorage/cookie:存储型,可全量 dump 凭据;document:巨大且含 cookie;frames/opener/parent/top/self/window:窗口指针/递归;history/navigation:跳转态
+const ENV_DENY_KEYS = /^(localStorage|sessionStorage|cookie|document|frames|frameElement|opener|parent|top|self|window|globalThis|closed|history|navigation|trustedTypes|origin|crossOriginIsolated)$/
+// 敏感命名 key(token/secret/password/apikey/auth/cred/csrf/session/ticket):window.token / window.apiKey 等,脱敏不读
+const ENV_SENSITIVE_KEY_RE = /token|secret|password|passwd|api[-_]?key|auth|cred|csrf|session|ticket/i
+
 export const inspectEnvTool = tool(
   ({ key }) => {
     if (key) {
+      if (ENV_DENY_KEYS.test(key) || ENV_SENSITIVE_KEY_RE.test(key)) {
+        return JSON.stringify({ key, denied: true, reason: '安全:该 key 在 denylist(localStorage/sessionStorage/cookie/document 或敏感命名 token/secret/key/auth),不读取防泄漏' }, null, 2)
+      }
       const w = (typeof window !== 'undefined' ? window : {}) as Record<string, unknown>
       const value = w[key]
       return JSON.stringify({

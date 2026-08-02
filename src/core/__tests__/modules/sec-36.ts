@@ -90,7 +90,10 @@ export async function run(ctx: TestCtx): Promise<void> {
   // M5: 默认白名单不含 value(防 <input value>/<textarea> 敏感表单值灌入 LLM 上下文;原 value 在默认白名单与"防敏感属性泄露"定位矛盾)
   const s5 = domToStructure(mockEl('input', { id: 'u', value: '密码明文' }), { depth: 0 })
   assert(s5?.attrs.id === 'u' && s5.attrs.value === undefined, '✓ domToStructure → 默认不含 value(防表单敏感值泄露)')
-  // 显式 attrs:['value'] 仍可暴露(集成方按需 opt-in)
+  // 显式 attrs:['value'] 也 DENY(安全审查 perf-security HIGH:value 是表单敏感值,即使 LLM 把它加进白名单也排除)
   const s6 = domToStructure(mockEl('input', { value: 'x' }), { depth: 0, attrs: ['value'] })
-  assert(s6?.attrs.value === 'x', '✓ domToStructure → 显式 attrs:["value"] 可暴露(opt-in)')
+  assert(s6?.attrs.value === undefined, '✓ domToStructure → value 硬 DENY(即使显式 attrs:["value"] 也排除,防表单敏感值泄露)')
+  // 敏感命名 attr(data-token / data-api-key)即使默认 data-* 白名单也 DENY(data-id 正常保留)
+  const s7 = domToStructure(mockEl('div', { 'data-token': 'abc', 'data-id': '7' }), { depth: 0 })
+  assert(s7?.attrs['data-token'] === undefined && s7?.attrs['data-id'] === '7', '✓ domToStructure → data-token 等 DENY_ATTR_SENSITIVE_RE 排除(data-id 保留)')
 }

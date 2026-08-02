@@ -19,6 +19,14 @@ import { z } from 'zod'
  * 默认暴露会把敏感值灌入 LLM 上下文(进而可能被写数据/外发)。需要时集成方显式传 attrs:['value']。 */
 const DEFAULT_ATTRS = ['id', 'class', 'href', 'src', 'alt', 'title', 'style', 'role', 'aria-label', 'name', 'type']
 
+/** 硬禁 attr 名(即使 LLM 把它们加进 attrs 白名单也排除):value 表单值(密码/token/PII)、
+ * on* 事件处理器(可嵌脚本)、srcdoc/formaction 可嵌脚本/改表单动作。
+ * 安全审查(perf-security HIGH):attrs 是 LLM 可控入参,不硬禁则默认白名单形同虚设。 */
+const DENY_ATTR_RE = /^(value|srcdoc|formaction|on\w+)$/i
+/** 敏感命名 attr(token/key/secret/password/auth/cred/csrf/session,如 data-token / data-api-key / data-csrf):
+ * 即使命中白名单也排除,防凭据泄漏。 */
+const DENY_ATTR_SENSITIVE_RE = /token|secret|password|passwd|api[-_]?key|auth|cred|csrf|session/i
+
 /** 结构化 DOM 节点 */
 export interface DomNode {
   tag: string
@@ -54,7 +62,10 @@ export function domToStructure(node: Element | null, opts: DomReadOptions): DomN
     const out: Record<string, string> = {}
     for (const a of Array.from(el.attributes)) {
       const ok = strict ? allow.includes(a.name) : (allow.includes(a.name) || a.name.startsWith('data-'))
-      if (ok) out[a.name] = a.value
+      if (!ok) continue
+      // 硬 DENY(安全):即使 LLM 把敏感 attr 加进 attrs 白名单也排除,防表单值/凭据/脚本泄漏
+      if (DENY_ATTR_RE.test(a.name) || DENY_ATTR_SENSITIVE_RE.test(a.name)) continue
+      out[a.name] = a.value
     }
     return out
   }
