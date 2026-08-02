@@ -24,9 +24,9 @@
 ## P1 — 文档
 - [x] `CHANGELOG.md`:[Unreleased] Added
 - [x] `CLAUDE.md`:capabilities.tracing 注释
-- [ ] `doc/usage-guide.md`/`.en.md`:tracing 用法(发布时补)
-- [ ] `doc/capability-boundaries.md`:B7 移「能做」(发布时补)
+- [x] `doc/usage-guide.md`/`.en.md`:tracing 用法 —— ⏭ 转 `quality-hardening` §3(连同 automation 统一补,避免两次编辑 usage-guide)
+- [x] `doc/capability-boundaries.md`:B7 移「能做」—— ⏭ 转 `quality-hardening` §3
 
 ## 收口
 - [x] 门禁:selftest 980 / e2e 256 / build / exports 6 / types / 真 LLM 实测 全过
-- [ ] 归档 + project.md 更新
+- [x] 归档 + project.md 更新(2026-08-02 收尾归档;功能已随 2.19 发布,文档债转 quality-hardening 统一补)

@@ -24,31 +24,37 @@
 
 ## 进行中的 change
 
-- **`complex-agent-roadmap`(umbrella 规划)**:SDK 定位升级为「胜任复杂多组件 + 浏览器内后台自动化的胜任级 Agent SDK」。Phase 1 三大瓶颈进行中:
-  - `revive-mission-anchor` —— ✅ 已归档(2.18 落地:mission capture + pin 段跨压缩)
-  - `revive-cross-round-working-memory` —— 🔄 活跃:P0 代码+文档完成,剩真场景实测
-  - `add-schema-tiered-disclosure` —— 🔄 活跃:P0 代码+文档完成,剩真场景实测
-  - Phase 2/3/4(draft-write / todos-tier / subagent-writable / observability-tracing / automation)待立项(opt-in 高级特性,待 Phase 1 实测验证瓶颈)
-  
-  详细路线见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md);进度见 [`complex-agent-roadmap/tasks.md`](./changes/2026-08-01-complex-agent-roadmap/tasks.md)。
+> 2026-08-02 状态:`complex-agent-roadmap` umbrella(Phase 1-4 全完成发布 2.18-2.20)已归档。当前活跃 change 为 4 agent 交叉审查 + 业务标尺扩充衍生的 4 项:
 
-## 已评估暂缓 → 已重启的 change(2026-08-01 定位升级)
+- **`quality-hardening`(P1)**:补审查发现的运行时集成测盲区(stub BaseChatModel 基建 + automation/subagent-writable/todos-tier 运行时测,违反测试同步约定)+ 小 perf(formatForLog/proxyLlm/schema hint 缓存)+ 文档债(observability/automation usage-guide 中英同步,接管 observability 遗留)+ 审计脚本修正。**stub 基建是 checkpoint 跨轮 restore 测试的前置**。
+- **`checkpoint-incremental-snapshot`(P1 perf HIGH)**:checkpoint save 从每轮整体深 clone(vfs 默认 8MB × maxCheckpoints)改为脏标记增量,省 80%+ clone。⚠ 风险:restore 正确性(改错静默数据错乱),需专项会话 + 跨轮 restore 测试(复用 quality-hardening stub 基建)。用户明确优先。
+- **`component-library-expansion`(P2)**:complex-demo 组件类型 34→~80,标尺真实度 + 大 schema 分层披露量级压测。纯 demo/schema 扩充,不动核心,可穿插。
+- **`p2-architecture-refactor`(P2)**:审查发现的结构债集中清理(createChatSdk god module 拆分 / createAgent 回归中间件契约 / dataOps patch 装饰器 / capabilities 注册表 / types 漂移根治),5 子项独立 commit 全测守护。
 
-> 经 2026-08-01 评估,以下 5 个 change 曾「暂缓 / 缩水 / 拆分」(决策见 [`deferred.md`](./deferred.md))。**`complex-agent-roadmap` 定位升级后标尺②推翻,5 个全部重启授权**,落地情况:
+**推进顺序建议**(2026-08-02 定):收尾归档(本批已完成)→ quality-hardening(stub 基建)→ checkpoint(复用 stub)→ component-library(穿插)→ p2-refactor(最后,功能稳定后动结构)。umbrella 定位升级决策记录见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md)(已归档)。
+
+## 已评估暂缓 → 已重启并全部落地(2026-08-01 定位升级 → 2026-08-02 完成)
+
+> 经 2026-08-01 评估,以下 5 个 change 曾「暂缓 / 缩水 / 拆分」(决策见 [`deferred.md`](./deferred.md))。**`complex-agent-roadmap` 定位升级后标尺②推翻,5 个全部重启授权**,落地情况(2026-08-02 全完成):
 >
 > | 旧 change | 重启落地 |
 > |---|---|
 > | `add-mission-anchor` | ✅ `revive-mission-anchor`(已归档,Phase 1,2.18 发布) |
-> | `add-cross-round-working-memory` | 🔄 `revive-cross-round-working-memory`(活跃,Phase 1,P0 完成) |
-> | `add-data-paging-and-chunked-write` | ✅ read 分页/eval 子树并入 `evolve-default-toolset`(已归档);🔄 draft 部分 → `add-draft-write-commit`(Phase 2 待立项) |
-> | `add-structured-todos-and-subagent-writes` | ✅ `update_todo` 增量由 `add-adaptive-planning` 落地(已归档);🔄 剩余 → `add-structured-todos-tier` + `add-subagent-writable`(Phase 2 待立项) |
-> | `observability-structured-tracing` | 🔄 `revive-observability-tracing`(Phase 3 待立项) |
+> | `add-cross-round-working-memory` | ✅ `revive-cross-round-working-memory`(已归档,Phase 1,2.18 发布;#57 验证 locatedPaths 跨任务保留) |
+> | `add-data-paging-and-chunked-write` | ✅ read 分页/eval 子树并入 `evolve-default-toolset`(已归档);✅ draft 部分 → `add-draft-write-commit`(已归档,Phase 2,2.19 发布) |
+> | `add-structured-todos-and-subagent-writes` | ✅ `update_todo` 增量由 `add-adaptive-planning` 落地(已归档);✅ `add-structured-todos-tier`(已归档,Phase 2,2.19)+ subagent-writable 直接落地(2.19,未走独立 change) |
+> | `observability-structured-tracing` | ✅ `revive-observability-tracing`(已归档,Phase 3,2.19 发布;TraceSpan 树 + getTraceMetrics + DebugDrawer 🌳 tab) |
 >
-> 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。各重启调整见旧 proposal 顶部 🔄 块 + `deferred.md`。
+> 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。`complex-agent-roadmap` umbrella 本身也于 2026-08-02 归档(Phase 1-4 全完成)。
 
 ## 最近完成的 change(已归档)
 
+> **2026-08-02 收尾归档(本次)**:`complex-agent-roadmap` umbrella + `revive-observability-tracing` 归档。Phase 1-4 全部完成发布(2.18-2.20):Phase 1(mission/workingMemory/schema-tiered)/ Phase 2(draft-write/todos-tier/subagent-writable)/ Phase 3(observability tracing)/ Phase 4(automation 资源预算+错误恢复+断点续跑+批处理)。observability 的 2 个文档项(usage-guide tracing + capability-boundaries B7)转 `quality-hardening` §3 统一补。`automation-layer` 与 `subagent-writable` 直接落地未走独立 change 文件(代码已随 2.19/2.20 发布)。活跃列表转 4 项(quality-hardening / checkpoint-incremental-snapshot / component-library-expansion / p2-architecture-refactor)。
+
 > **2026-08-02 openspec 整理**:归档 5 个被 `complex-agent-roadmap` 重启取代的旧版 proposal(`add-cross-round-working-memory` / `add-mission-anchor` / `add-structured-todos-and-subagent-writes` / `add-data-paging-and-chunked-write` / `observability-structured-tracing`)→ `archive/2026-07-31-*/`。活跃列表 8→3(剩 `add-schema-tiered-disclosure` / `complex-agent-roadmap` / `revive-cross-round-working-memory`)。`project.md` / `deferred.md` / roadmap tasks 回填 Phase 1 进度;补 CHANGELOG 漏记的 workingMemory/schema-tiered 条目。
+
+- `archive/2026-08-02-revive-observability-tracing/`:结构化追踪 TraceSpan 树(Phase 3 opt-in,2.19 发布)—— `createAgent` 内 `spans` shallowRef + `startSpan`/`endSpan`(round/model/tool/compression 4 埋点)+ `onSpan`/`onTrace` 回调(tracing 关 no-op);`getTraceMetrics(spans)` 纯函数(轮次/延迟/工具成功率/重试/压缩/token);`inspect().trace` + `onEvent('trace')`;`capabilities.tracing` opt-in(默认关);DebugDrawer 第 4 tab 🌳 Trace(metrics 卡片 + span 列表)。selftest sec-42(11 项)+ e2e inspect.mjs(tracing 开/关)+ 真 LLM 实测(spans 72 / round:23 / 工具成功率 84%)。文档债(usage-guide tracing / capability-boundaries B7)转 quality-hardening §3。
+- `archive/2026-08-01-complex-agent-roadmap/`:umbrella 规划框架(不写代码,定义 SDK 定位升级「胜任复杂多组件 + 浏览器内后台自动化的胜任级 Agent SDK」+ 6 层能力全景 + 分层默认 + 分期路线)。Phase 1-4 全完成:① Phase 1(mission-anchor + cross-round-working-memory + schema 分层披露,核心默认开)② Phase 2(draft-write/commit + structured-todos-tier + subagent-writable,opt-in)③ Phase 3(observability TraceSpan 树,opt-in)④ Phase 4(automation 资源预算/错误恢复/断点续跑/批处理,opt-in)。详细报告见 `doc/complex-agent-roadmap.md`(11 节)。后续增强走独立 change(非本 umbrella)。
 
 - `archive/2026-08-01-add-adaptive-planning/`:自适应规划(① `update_todo({id,content?,status?})` 增量更新 + `Todo` 稳定 id;② `maxPlanRevisions` 规划阶段防死循环(与 `maxIterations` 正交);③ usageHints planning 段 + 内置 `adaptive-planning` skill;④ `inspect().planPhase`。2.18 发布)。选型见其 `decision-record.md`,能力边界见 `doc/capability-boundaries.md`。
 - `archive/2026-08-01-revive-mission-anchor/`:任务目标锚定 Phase 1(会话级 Mission 状态 + capture 启发式 + pin 段跨压缩 + `getMission`/`setMission`/`send({mission})` API + `capabilities.missionAnchor` 默认开。2.18 发布)。

@@ -22,7 +22,7 @@
 
 - [x] 立 `revive-observability-tracing`(完整 TraceSpan 树 + timing/status/usage + DebugDrawer 树形 + getTraceMetrics)
 - [x] apply Phase 3 ✅(2.19 实施 + 真 LLM 实测通过:spans 72 / round:23 / model:23 / tool:25 / 工具成功率 84%)
-- [ ] 归档 `revive-observability-tracing` —— ⏳ 剩 2 文档项(usage-guide tracing 用法 + capability-boundaries B7 移「能做」)已转 `quality-hardening` 文档债,补完后归档
+- [x] 归档 `revive-observability-tracing` —— ✅ 已归档(2026-08-02);2 文档项转 quality-hardening §3 统一补
 
 ## Phase 4 —— 自动化(高级 opt-in,浏览器内后台)✅ 全完成
 
@@ -33,7 +33,7 @@
 
 - [x] Phase 1 归档(mission/working-memory/schema-tiered 全归档)
 - [x] Phase 2 归档(draft/todos-tier 归档;subagent-writable 直接落地)
-- [ ] Phase 3 归档(observability 文档债补完后)
+- [x] Phase 3 归档 —— ✅ observability 已归档(2026-08-02)
 - [x] Phase 4 落地(automation 2.20 发布)
 - [x] `openspec/project.md` 更新(进行中/已完成)
 - [x] `doc/capability-boundaries.md` 联动(能力从「做不到」移「能做」)—— Phase 1-4 主能力已联动;observability B7 待 quality-hardening 补
