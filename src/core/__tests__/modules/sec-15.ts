@@ -79,6 +79,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     let r2 = await p2
     assert(r2.status === 'error' && !denied, 'resolve(false) → 返回 error 且不执行工具')
 
+    // M7: 拒绝消息含被拒 scope(兼容 vfs path / 数据 jsonPath / write patch.jsonPath;原 bug:只显 args.path,write 嵌套结构路径不显)
+    captured = null
+    let pM7 = mw.wrapToolCall!(mkCtx('set_data', { jsonPath: 'secret.field', value: 1 }), async () => ({ content: 'x', status: 'done' }))
+    captured.resolve(false)
+    let rM7 = await pM7
+    assert(rM7.status === 'error' && /path=.*secret\.field/.test(rM7.content), 'M7: 拒绝消息含 jsonPath(原:只显 args.path)')
+    captured = null
+    let pM7b = mw.wrapToolCall!(mkCtx('set_data', { patch: { jsonPath: 'a.b' } }), async () => ({ content: 'x', status: 'done' }))
+    captured.resolve(false)
+    let rM7b = await pM7b
+    assert(/path=.*a\.b/.test(rM7b.content), 'M7: 拒绝消息含 patch.jsonPath(write 嵌套结构路径)')
+
     // 4. abort 联动:signal 已 aborted → 自动拒绝
     const ac = new AbortController(); ac.abort()
     captured = null

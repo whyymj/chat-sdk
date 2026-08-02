@@ -14,8 +14,10 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 
-/** 默认暴露的 attribute 白名单(不传 attrs 时);data-* 始终包含(业务标记常挂此) */
-const DEFAULT_ATTRS = ['id', 'class', 'href', 'src', 'alt', 'title', 'style', 'role', 'aria-label', 'name', 'type', 'value']
+/** 默认暴露的 attribute 白名单(不传 attrs 时);data-* 始终包含(业务标记常挂此)。
+ * 注意:`value` 不进默认白名单 —— 表单 <input value>/<textarea> 可能含敏感数据(密码/token/PII),
+ * 默认暴露会把敏感值灌入 LLM 上下文(进而可能被写数据/外发)。需要时集成方显式传 attrs:['value']。 */
+const DEFAULT_ATTRS = ['id', 'class', 'href', 'src', 'alt', 'title', 'style', 'role', 'aria-label', 'name', 'type']
 
 /** 结构化 DOM 节点 */
 export interface DomNode {

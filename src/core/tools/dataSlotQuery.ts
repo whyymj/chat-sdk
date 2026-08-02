@@ -483,13 +483,15 @@ export function runSandboxedScript(
       '    self.postMessage({ ok: false, error: String((err && err.message) || err) });\n' +
       '  }\n' +
       '};'
-    let url: string
+    let url = '' // 空串初始:createObjectURL 失败时 catch 的 if(url) 为假,不 revoke(正确);成功后被覆盖
     let worker: Worker
     try {
       const blob = new Blob([workerCode], { type: 'application/javascript' })
       url = URL.createObjectURL(blob)
       worker = new Worker(url)
     } catch (e) {
+      // createObjectURL 已成功但 new Worker 抛错:url 已分配需释放,防每次创建失败累积泄漏 blob URL
+      if (url) URL.revokeObjectURL(url)
       resolve({ ok: false, error: `无法创建 Worker 沙箱: ${(e as Error).message}`, elapsedMs: 0 })
       return
     }

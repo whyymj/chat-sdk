@@ -44,8 +44,14 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           settled = true
           cleanup.forEach((fn) => fn())
           if (approved === false) {
+            // 兼容 vfs path / 数据 jsonPath / write 的 patch.jsonPath / patches[],让 LLM 知道被拒的精确范围
+            const a = (ctx.args ?? {}) as Record<string, any>
+            const scope =
+              a.path || a.jsonPath || a.patch?.jsonPath ||
+              (Array.isArray(a.patches) ? a.patches.map((p: any) => p?.jsonPath).filter(Boolean).join(',') : '') ||
+              ''
             resolve({
-              content: `用户拒绝了 ${ctx.name} 调用${ctx.args?.path ? `(path=${ctx.args.path})` : ''}。请改用只读工具、调整路径或换方案后再试。`,
+              content: `用户拒绝了 ${ctx.name} 调用${scope ? `(path=${scope})` : ''}。请改用只读工具、调整路径或换方案后再试。`,
               status: 'error' as const,
             })
           } else {

@@ -95,10 +95,30 @@ function extractWrites(messages: BaseMessage[]): Array<{ path: string; op: strin
     const tcs = (m as any)?.tool_calls
     if (!Array.isArray(tcs)) continue
     for (const tc of tcs) {
-      if (WRITE_DATA_TOOLS.has(tc.name)) {
-        // 单对象:jsonPath 为子路径(整体写 set_data/write 不传 jsonPath → '')
-        const p = typeof tc?.args?.jsonPath === 'string' ? tc.args.jsonPath : ''
-        byPath.set(p, { path: p, op: tc.name, callId: tc.id })
+      if (!WRITE_DATA_TOOLS.has(tc.name)) continue
+      const callId = tc.id
+      const args = (tc?.args ?? {}) as Record<string, any>
+      if (tc.name === 'write') {
+        // write 高层工具:jsonPath 嵌在 patch/patches,展开逐条;op 归一化为 set_data/edit_data/delete_data,
+        // 复用 createWriteBackCheck 现有判断(op==='delete_data' → 删后读回应空;否则读回应有值 + schema 校验)
+        if (args.del && args.patch?.jsonPath) {
+          byPath.set(args.patch.jsonPath, { path: args.patch.jsonPath, op: 'delete_data', callId })
+        } else if (Array.isArray(args.patches) && args.patches.length) {
+          for (const p of args.patches) {
+            const pp = typeof p?.jsonPath === 'string' ? p.jsonPath : ''
+            byPath.set(pp, { path: pp, op: p?.op === 'remove' ? 'delete_data' : 'edit_data', callId })
+          }
+        } else if (args.patch) {
+          const pp = typeof args.patch.jsonPath === 'string' ? args.patch.jsonPath : ''
+          byPath.set(pp, { path: pp, op: args.patch.op === 'remove' ? 'delete_data' : 'edit_data', callId })
+        } else {
+          // write({value}) 整体 set → path ''
+          byPath.set('', { path: '', op: 'set_data', callId })
+        }
+      } else {
+        // set_data/edit_data/delete_data:扁平 jsonPath(整体写不传 → '')
+        const p = typeof args.jsonPath === 'string' ? args.jsonPath : ''
+        byPath.set(p, { path: p, op: tc.name, callId })
       }
     }
   }

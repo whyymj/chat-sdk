@@ -146,5 +146,40 @@ export async function run(ctx: TestCtx): Promise<void> {
     check = createWriteBackCheck({ window: w, schemas })
     r = await check({ messages: [mkAi([{ name: 'edit_data', args: { jsonPath: 'theme', op: 'set' } }])], state: createState() })
     assert(r.ok === true, 'root 省略 → 回退 window(向后兼容)')
+
+    // H2: write 高层工具的 patch/patches 路径提取(原 bug:extractWrites 只取 args.jsonPath →
+    // patch/patches 真实路径全丢,批量 N 条只在 root "" 校验 1 次;与 #76 同根)
+    // write patch:提取 patch.jsonPath,读回该子路径校验(而非只在 root 整体校验)
+    bind = { theme: undefined, count: 0 }
+    check = createWriteBackCheck({ window: bind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'write', args: { patch: { op: 'set', jsonPath: 'theme' } } }])], state: createState() })
+    const fbH2a = r.feedback
+    assert(r.ok === false && !!fbH2a && /读回为空/.test(fbH2a), 'H2: write patch → 提取 patch.jsonPath 读回(原 bug:路径丢 → 漏校验)')
+
+    // write patches 批量:每条 patch 路径独立提取(theme 读回空 → feedback;原 bug:N 条只提取 path="" )
+    bind = { theme: undefined, count: 0 }
+    check = createWriteBackCheck({ window: bind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'write', args: { patches: [{ op: 'set', jsonPath: 'theme' }, { op: 'set', jsonPath: 'count' }] } }])], state: createState() })
+    const fbH2b = r.feedback
+    assert(r.ok === false && !!fbH2b && /读回为空/.test(fbH2b), 'H2: write patches 批量 → 每条路径独立校验(原 bug:N 条只在 root 校验 1 次)')
+
+    // write del:op 归一化为 delete_data → 删后读回空 = ok
+    bind = { theme: undefined, count: 0 }
+    check = createWriteBackCheck({ window: bind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'write', args: { patch: { jsonPath: 'theme' }, del: true } }])], state: createState() })
+    assert(r.ok === true, 'H2: write del → op 归一化 delete_data,删后读回空 → ok')
+
+    // write del 后读回仍有值 → feedback(证明 op=delete_data 判断对 write del 生效)
+    bind = { theme: 'dark', count: 0 }
+    check = createWriteBackCheck({ window: bind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'write', args: { patch: { jsonPath: 'theme' }, del: true } }])], state: createState() })
+    const fbH2c = r.feedback
+    assert(r.ok === false && !!fbH2c && /删除后读回仍有值/.test(fbH2c), 'H2: write del 后读回仍有值 → feedback(op=delete_data 判断生效)')
+
+    // write 整体 set(无 patch/patches)→ path="" op=set_data,读回 root 校验
+    bind = { theme: 'dark', count: 0 }
+    check = createWriteBackCheck({ window: bind, schemas })
+    r = await check({ messages: [mkAi([{ name: 'write', args: { value: { theme: 'dark', count: 0 } } }])], state: createState() })
+    assert(r.ok === true, 'H2: write 整体 set → path="" 读回 root 校验 → ok')
   }
 }

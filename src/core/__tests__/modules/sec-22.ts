@@ -103,5 +103,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 修复 1:isPathAllowed 逐段检查 —— 读非 schema 声明的深层字段被拒
     r = await invoke(t['read'], { jsonPath: 'components.1.extra' })
     assert(/PATH_DENIED/.test(r), '修复1: read 非 schema 声明的深层字段 → PATH_DENIED(逐段校验)')
+
+    // L2: read 非法段(__proto__)→ 显式 PATH_UNSAFE(原:依赖 getByPath 内部兜底返 undefined → 报"(undefined)"不清晰,LLM 可能误判数据缺失去 set)
+    r = await invoke(t['read'], { jsonPath: 'components.__proto__' })
+    assert(/PATH_UNSAFE/.test(r), 'L2: read __proto__ 等非法段 → PATH_UNSAFE(非 undefined)')
   }
 }

@@ -169,6 +169,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const getData = tool(
     async ({ jsonPath }) => {
       const jp = jsonPath || ''
+      if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text(数组索引用数字)' })
       if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `get_data @ "${jp}" 不在 schema 声明字段内(仅 schema 声明的 key 可读)`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
@@ -353,6 +354,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let val: unknown = deepClone(entry.value)
       const jp = jsonPath || ''
       if (jp) {
+        if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径' })
         if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `history_data @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可读' })
         val = getByPath(val, jp)
         const subSchema = getSchemaAtPath(schema, jp)
@@ -549,6 +551,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         return `多路径读取(共 ${jsonPaths.length} 项,hash=${h}):\n${lines.join('\n')}`
       }
       const jp = jsonPath || ''
+      if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text(数组索引数字)' })
       if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
@@ -611,7 +614,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const interceptInput =
             intent === 'delete' ? { del: true, jsonPath: patch?.jsonPath }
             : intent === 'edit' && patches && patches.length ? { patches }
-            : intent === 'edit' ? { op: patch!.op, jsonPath: patch!.jsonPath || '', value: payload }
+            : intent === 'edit' ? { op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }
             : value
           const intercepted = opts.interceptors.write(interceptInput, bindRef)
           if (intercepted && typeof intercepted === 'object' && 'error' in (intercepted as any)) {
@@ -677,7 +680,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const list: { op: EditOp; jsonPath: string; value?: unknown }[] = patchList
           ? patchList
           : (patches && patches.length) ? patches
-          : [{ op: patch!.op, jsonPath: patch!.jsonPath || '', value: payload }]
+          : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
         const clone = deepClone(bindRef)
         const applied: { op: EditOp; jp: string; value: unknown }[] = []
         for (let i = 0; i < list.length; i++) {
@@ -744,7 +747,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       schema: z.object({
         value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
         patch: z.object({
-          op: z.enum(['set', 'remove', 'merge', 'append']),
+          op: z.enum(['set', 'remove', 'merge', 'append']).optional().describe('增量操作:set 设值/remove 删/merge 合并对象/append 追加数组。单 patch edit 缺省按 set;del 模式(write({patch:{jsonPath},del:true}))不读 op 可省略'),
           jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填则作用于根'),
           value: z.unknown().optional().describe('该 patch 的值(JSON 直传或 JSON 字符串);set/merge/append 必填,remove 不需。与顶层 value 二选一:优先 patch.value,未填则回退顶层 value(向后兼容)。推荐用 patch.value(自带,与 patches 元素一致,无歧义)'),
         }).optional().describe('单个增量编辑(自带 value,与 patches 元素一致);传 patch(无 patches)走单 patch edit 语义'),
@@ -775,7 +778,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let base: unknown
       let label: string
       if (useAgainst) {
-        base = against
+        // against 可能是 JSON 字符串(LLM 直传),走 maybeParseValue 与 set_data/write 的 value 处理对齐(parse 失败保留原串)
+        let v = against
+        if (typeof v === 'string') {
+          const pr = maybeParseValue(v)
+          if (!pr.parseError) v = pr.parsed
+        }
+        base = v
         label = 'against'
       } else {
         if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可对比', hint: 'set/edit/delete 自动存快照;或传 against 一段 JSON 值直接对比' })

@@ -307,6 +307,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(tPV['write'], { value: '顶层', patch: { op: 'set', jsonPath: 'title', value: 'patch优先' } })
     assert(pagePV.title === 'patch优先', '治本: patch.value 与顶层 value 都传时 → patch.value 优先')
 
+    // M1: write del 模式可不传 op(原 bug:patch.op 必填 + description 删除示例不带 op → LLM 照描述写 SCHEMA_INVALID 浪费一轮重试)
+    r = await invoke(tPV['write'], { patch: { jsonPath: 'items' }, del: true })
+    assert(/已删除/.test(r), 'M1: write del 不传 op → 通过(del 分支不读 op;原 bug:op 必填致 zod 校验失败)')
+
     // 白名单严格(fix-dataops-write-correctness):write(set) / set_data 的未声明字段一律丢弃,
     // 即便 interceptors.write 补充或用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明;
     // 拦截器改声明字段值仍生效,只是不能借机塞非声明字段)。2.15.0 曾把"补充字段写回"当修复,实为白名单绕过口子,此处收窄。

@@ -60,6 +60,25 @@ function decideAccess(rules: PermissionRule[], op: PermissionOp, scope: string):
   return 'allow'
 }
 
+/**
+ * 提取一次工具调用涉及的所有 scope(点号路径)。
+ * 兼容 `write` 高层工具的嵌套结构:jsonPath 可能在 `patch.jsonPath` 或 `patches[].jsonPath`(批量逐条独立判断)。
+ * 整体操作(write({value}) 整体 set / set_data 无 jsonPath)返回空数组 → 不校验,由 schema 白名单兜底(与历史行为一致)。
+ */
+function extractScopes(args: unknown): string[] {
+  const a = (args ?? {}) as Record<string, any>
+  const scopes = new Set<string>()
+  if (typeof a.jsonPath === 'string' && a.jsonPath) scopes.add(a.jsonPath)
+  if (typeof a.path === 'string' && a.path) scopes.add(a.path)
+  if (a.patch && typeof a.patch.jsonPath === 'string' && a.patch.jsonPath) scopes.add(a.patch.jsonPath)
+  if (Array.isArray(a.patches)) {
+    for (const p of a.patches) {
+      if (p && typeof p.jsonPath === 'string' && p.jsonPath) scopes.add(p.jsonPath)
+    }
+  }
+  return [...scopes]
+}
+
 export function createPermissionsMiddleware(rules: PermissionRule[]): Middleware {
   return {
     name: 'permissions',
@@ -69,13 +88,15 @@ export function createPermissionsMiddleware(rules: PermissionRule[]): Middleware
         : READ_TOOLS.has(ctx.name)
           ? 'read'
           : null
-      const scope = (ctx.args?.jsonPath as string) || (ctx.args?.path as string) || ''
-      if (op && scope) {
-        const mode = decideAccess(rules, op, scope)
-        if (mode === 'deny') {
-          return {
-            content: `权限拒绝:${op} 操作 "${scope}" 被 permissions 规则禁止。`,
-            status: 'error' as const,
+      // write 的 jsonPath 嵌在 patch/patches,需展开逐条校验(任一 deny 则整体拒绝)
+      const scopes = extractScopes(ctx.args)
+      if (op && scopes.length) {
+        for (const scope of scopes) {
+          if (decideAccess(rules, op, scope) === 'deny') {
+            return {
+              content: `权限拒绝:${op} 操作 "${scope}" 被 permissions 规则禁止。`,
+              status: 'error' as const,
+            }
           }
         }
       }

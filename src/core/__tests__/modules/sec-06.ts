@@ -58,5 +58,22 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     r = await mw.wrapToolCall!({ id: '3', name: 'custom_tool', args: {}, state: createState() }, next)
     assert(r.content === 'ok', 'permissions 不影响非 data/vfs 工具')
+
+    // H1: write 高层工具的 jsonPath 嵌在 patch/patches(顶层 args.jsonPath 为 undefined),
+    // permissions 必须展开逐条校验(原 bug:scope 恒空 → deny 规则对 write 完全失效,与 #76 write.value 同根)
+    r = await mw.wrapToolCall!({ id: '4', name: 'write', args: { patch: { op: 'set', jsonPath: 'secret', value: 'x' } }, state: createState() }, next)
+    assert(/权限拒绝/.test(r.content) && r.status === 'error', 'H1: permissions write patch.jsonPath 命中 deny(原 bug:嵌套结构绕过)')
+
+    r = await mw.wrapToolCall!({ id: '5', name: 'write', args: { patches: [{ op: 'set', jsonPath: 'secret', value: 'x' }, { op: 'set', jsonPath: 'theme', value: 'y' }] }, state: createState() }, next)
+    assert(/权限拒绝/.test(r.content) && r.status === 'error', 'H1: permissions write patches[] 任一命中 deny → 整体拒绝')
+
+    r = await mw.wrapToolCall!({ id: '6', name: 'write', args: { patch: { jsonPath: 'secret' }, del: true }, state: createState() }, next)
+    assert(/权限拒绝/.test(r.content) && r.status === 'error', 'H1: permissions write del patch.jsonPath 命中 deny')
+
+    r = await mw.wrapToolCall!({ id: '7', name: 'write', args: { patch: { op: 'set', jsonPath: 'theme', value: 'dark' } }, state: createState() }, next)
+    assert(r.content === 'ok', 'H1: permissions write patch 未命中 deny 的 path → allow')
+
+    r = await mw.wrapToolCall!({ id: '8', name: 'write', args: { value: { secret: 'x' } }, state: createState() }, next)
+    assert(r.content === 'ok', 'H1: permissions write 整体 set(无 patch/patches)→ scope 空,不校验(schema 白名单兜底)')
   }
 }
