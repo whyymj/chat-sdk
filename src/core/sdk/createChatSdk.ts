@@ -58,6 +58,7 @@ import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
 import { getTraceMetrics } from '../utils/traceMetrics'
+import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
@@ -201,6 +202,10 @@ export interface ChatSdkOptions {
   maxPlanRevisions?: number
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number
+  /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
+  tokenBudget?: number
+  /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
+  timeBudgetMs?: number
   /** 同轮多个工具调用的并发上限(默认 1 串行;>1 并发,可能影响有状态中间件如 todos 的计数) */
   maxParallelTools?: number
   /** 模型上下文窗口(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表。影响 offload 阈值与压缩触发 */
@@ -225,6 +230,7 @@ export interface ChatSdkOptions {
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
     tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))
     todoDeps?: boolean       // todos 层级依赖 parentId/deps(默认 false;opt-in,LLM 维护依赖图;structured-todos-tier Phase 2)
+    automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -648,6 +654,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useDataOps = caps?.dataOps !== false
   const useDraft = caps?.draftWrite === true  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
   const useTracing = caps?.tracing === true  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
+  const useAutomation = caps?.automation === true  // 无人值守自动化(预算闸+错误恢复;opt-in,最远)
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
@@ -945,6 +952,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentsMw ? [subagentsMw] : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(options.middleware || []),
+    // 资源预算闸(automation-layer Phase 4):wrapModelCall 每轮检查 token/time,超限 → aborted response 停止 agent + emit BUDGET_EXCEEDED
+    ...(useAutomation ? [createBudgetMiddleware(usage, { tokenBudget: options.tokenBudget, timeBudgetMs: options.timeBudgetMs }, emit)] : []),
     // SDK 事件中间件(最末,最后观察):数据写后发 data_change;每轮结束发 message_update
     // 始终装载 —— 集成方可能运行时 sdk.hook() 订阅,构造时无 onEvent 也需就绪;无监听器时 emit 为 no-op,开销可忽略
     createSdkEventMiddleware(emit, messages, liveData, usage),
