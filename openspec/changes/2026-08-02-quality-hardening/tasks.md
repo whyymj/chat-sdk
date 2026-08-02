@@ -21,10 +21,10 @@
 - [ ] write_todos 层级输入(parentId/deps)+ update_todo 增量改层级 → inspect().todos + render 行为
 
 ## 2. 小 perf
-- [ ] `createAgent.ts:274,458-480` formatForLog short-circuit:`if (!debug && !onLog) return`(debug=false 不 stringify)
-- [ ] `llm/proxyLlm.ts:81-88`:生产 direct 模式 throw(需 dangerouslyAllowDirectInProduction:true;默认 warn 保留兼容)
-- [ ] `sdk/promptBuilder.ts` extractSchemaHint:按 schema 引用缓存 hint,setData/controller.set 失效
-- [ ] 性能对比(可选 bench):长任务 formatForLog/augmentPrompt 前后
+- [x] `createAgent.ts:458` formatForLog short-circuit:`if (!debug && !onLog) return []`(生产不 stringify,每轮 O(context)→O(1);debugLogs 仍 push entry 供 round/model 诊断,仅 messages 字段空)
+- [x] `llm/proxyLlm.ts` direct 生产安全闸:新增 `throwOnDirectInProduction`(默认 false=warn 向后兼容;true=throw opt-in 升级防 apiKey 泄露)。按 proposal §Impact「默认 warn 保留 + 配置升级 throw」实现(§决策2 命名 dangerouslyAllow 与默认 warn 语义矛盾,采清晰命名)
+- [x] `presets.ts` extractSchemaHint:WeakMap 按 schema 对象引用 + optsKey 缓存(setData 传新 schema → 新引用自动 miss,无需手动失效;controller.set 同理);原逻辑抽 computeSchemaHintImpl 便于缓存层包裹
+- [ ] 性能对比(可选 bench):长任务 formatForLog/augmentPrompt 前后 —— 留 TODO;perf 改动对外行为不变,正确性靠现有 selftest(sec-19/31/37)覆盖
 
 ## 3. 文档债(中英同步)
 - [ ] `doc/usage-guide.md`:tracing 用法 + automation §1-4 用法

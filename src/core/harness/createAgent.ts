@@ -456,6 +456,10 @@ export function createAgent(options: CreateAgentOptions) {
 
   /** 格式化消息为接近实际请求体的结构(role 用接口名 user/assistant/tool/system,含 tool_calls/tool_call_id),按发送顺序 */
   function formatForLog(messages: BaseMessage[]) {
+    // short-circuit:生产(debug=false 且无 onLog 下沉)不 stringify,省长任务每轮 O(context) → O(1)
+    // (debugLogs 仍 push llm_request entry 供 round/model/tools 诊断,只是 messages 字段为空数组;
+    //  debug 或 onLog 时全量格式化 —— 这两个标志在闭包内,formatForLog 可直接访问)
+    if (!debug && !onLog) return []
     // map 返回独立对象;配合外层 shallowRef(不深度代理),快照天然独立,无需深拷贝
     return messages.map((m) => {
       const t = typeOf(m)

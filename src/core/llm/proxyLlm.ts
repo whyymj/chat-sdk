@@ -49,6 +49,10 @@ export interface ProxyLlmOptions {
   refreshToken?: () => Promise<string>
   /** 附加 headers(注入每个请求;proxy 模式生效) */
   headers?: Record<string, string>
+  /** direct 模式生产安全闸:生产环境(https + 非本地域)检测到 direct 模式时,
+   *  - false/不传(默认):仅 console.warn 提醒 apiKey 泄露风险(向后兼容,不阻断)
+   *  - true:直接 throw 阻断 —— 防 apiKey 进 bundle 泄露(集成方 opt-in 升级强安全;direct 本就标注「仅开发」) */
+  throwOnDirectInProduction?: boolean
 }
 
 /** body 是否为可重复发送的类型(string/ArrayBuffer/Blob/FormData/URLSearchParams);ReadableStream 不可重复 */
@@ -83,7 +87,12 @@ export function createProxyLlm(opts: ProxyLlmOptions): BaseChatModel {
         && location.protocol === 'https:'
         && !['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname)
       if (isProd) {
-        console.warn('[page-agent-sdk][proxyLlm] direct 模式在生产环境会泄露 apiKey,建议改用 proxy 模式')
+        const msg = '[page-agent-sdk][proxyLlm] direct 模式在生产环境(https + 非本地)会泄露 apiKey(进 bundle),建议改用 proxy 模式'
+        if (opts.throwOnDirectInProduction) {
+          // opt-in 强安全闸:throwOnDirectInProduction:true → throw 阻断 direct 误用于生产(防 key 泄露)
+          throw new Error(msg + '(throwOnDirectInProduction 已启用强安全闸;若确需生产直连,设为 false 显式承认风险)')
+        }
+        console.warn(msg)
       }
     } catch { /* location 不可用时静默 */ }
     if (!opts.apiKey) {

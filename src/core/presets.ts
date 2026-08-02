@@ -79,8 +79,26 @@ export interface SchemaHintOptions {
 const DEFAULT_SCHEMA_HINT_MAX_KEYS = 15
 const DEFAULT_SCHEMA_HINT_MAX_CHARS = 4000
 
+// schema hint 缓存:按 schema 对象引用 + opts(WeakMap 随 schema GC 自动清,无需手动失效)。
+// extractSchemaHint 每轮经 augmentPrompt → replaceSystem → buildSystemPrompt 调用,schema 引用不变时省
+// renderSchemaOverview/Shallow 重算;setData 传新 schema 对象 → 新引用自动 miss(controller.set 同理)。
+const schemaHintCache = new WeakMap<object, { optsKey: string; hint: string }>()
+
 export function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string {
   if (!schema) return ''
+  const optsKey = opts ? `${opts.maxKeys ?? ''}|${opts.maxChars ?? ''}` : ''
+  // 仅对象 schema 缓存(WeakMap key 限对象;非对象走直算)
+  if (typeof schema === 'object') {
+    const cached = schemaHintCache.get(schema)
+    if (cached && cached.optsKey === optsKey) return cached.hint
+  }
+  const hint = computeSchemaHintImpl(schema, opts)
+  if (typeof schema === 'object') schemaHintCache.set(schema, { optsKey, hint })
+  return hint
+}
+
+/** extractSchemaHint 的无缓存计算体(抽离便于缓存层包裹) */
+function computeSchemaHintImpl(schema: any, opts?: SchemaHintOptions): string {
   // 全量渲染(带 min/max/enum 约束 + 嵌套);非 object / 空 shape fallback 到根节点描述
   const overview = renderSchemaOverview(schema)
   if (overview) {
