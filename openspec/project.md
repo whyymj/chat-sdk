@@ -24,23 +24,34 @@
 
 ## 进行中的 change
 
-(无。最近完成 `add-adaptive-planning`(自适应规划:`update_todo` 增量 + `maxPlanRevisions` 规划阶段防死循环 + skill/prompt 引导,见 archive/;选型见其 `decision-record.md`,能力边界见 `doc/capability-boundaries.md`)+ `followup-from-live-llm-audit`。暂缓项见下;新需求另行立项。)
+- **`complex-agent-roadmap`(umbrella 规划)**:SDK 定位升级为「胜任复杂多组件 + 浏览器内后台自动化的胜任级 Agent SDK」。Phase 1 三大瓶颈进行中:
+  - `revive-mission-anchor` —— ✅ 已归档(2.18 落地:mission capture + pin 段跨压缩)
+  - `revive-cross-round-working-memory` —— 🔄 活跃:P0 代码+文档完成,剩真场景实测
+  - `add-schema-tiered-disclosure` —— 🔄 活跃:P0 代码+文档完成,剩真场景实测
+  - Phase 2/3/4(draft-write / todos-tier / subagent-writable / observability-tracing / automation)待立项(opt-in 高级特性,待 Phase 1 实测验证瓶颈)
+  
+  详细路线见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md);进度见 [`complex-agent-roadmap/tasks.md`](./changes/2026-08-01-complex-agent-roadmap/tasks.md)。
 
-## 已评估暂缓的 change
+## 已评估暂缓 → 已重启的 change(2026-08-01 定位升级)
 
-> 经 2026-08-01 评估,以下 change **暂缓 / 缩水 / 拆分**实施(不占进行中心智)。决策依据、核心理由、重启触发条件、缩水替代方案见 [`deferred.md`](./deferred.md);各 change proposal 顶部亦加 `⏸` 标注。
+> 经 2026-08-01 评估,以下 5 个 change 曾「暂缓 / 缩水 / 拆分」(决策见 [`deferred.md`](./deferred.md))。**`complex-agent-roadmap` 定位升级后标尺②推翻,5 个全部重启授权**,落地情况:
 >
-> 核心判断:这些多为「复杂任务 + 超大 JSON 编排」方向的规划,与 SDK「轻量页面 JSON 操作 Agent」定位有张力,或属绑定一坨的重型演进 —— 无真需求驱动前止损暂缓。
-
-| change | 结论 | 一句话理由 |
-|---|---|---|
-| `observability-structured-tracing` | ❌ 缩水 | TraceSpan 树 + APM 是后端框架需求,debugLogs 已够调试;只留 `getTraceMetrics` 想法 |
-| `add-mission-anchor` | ⏸ 暂缓 | LLM 自律问题非框架 invariant;4-Phase 重型路线,启发式 capture 误判风险高 |
-| `add-cross-round-working-memory` | ⏸ 暂缓 | 绑定 C 组;先扩 `preserveLastToolResults` 默认(软改进)替代 |
-| `add-structured-todos-and-subagent-writes` | ⏸ 暂缓 | 「子 agent 可写」动只读隔离安全边界;todos 依赖图 LLM 难可靠维护 |
-| `add-data-paging-and-chunked-write`(draft 部分) | 🟡 部分完成 | read 分页/eval 子树**已并入 evolve-default-toolset**;`draft_write/commit` 暂缓(超大 JSON 场景存疑) |
+> | 旧 change | 重启落地 |
+> |---|---|
+> | `add-mission-anchor` | ✅ `revive-mission-anchor`(已归档,Phase 1,2.18 发布) |
+> | `add-cross-round-working-memory` | 🔄 `revive-cross-round-working-memory`(活跃,Phase 1,P0 完成) |
+> | `add-data-paging-and-chunked-write` | ✅ read 分页/eval 子树并入 `evolve-default-toolset`(已归档);🔄 draft 部分 → `add-draft-write-commit`(Phase 2 待立项) |
+> | `add-structured-todos-and-subagent-writes` | ✅ `update_todo` 增量由 `add-adaptive-planning` 落地(已归档);🔄 剩余 → `add-structured-todos-tier` + `add-subagent-writable`(Phase 2 待立项) |
+> | `observability-structured-tracing` | 🔄 `revive-observability-tracing`(Phase 3 待立项) |
+>
+> 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。各重启调整见旧 proposal 顶部 🔄 块 + `deferred.md`。
 
 ## 最近完成的 change(已归档)
+
+> **2026-08-02 openspec 整理**:归档 5 个被 `complex-agent-roadmap` 重启取代的旧版 proposal(`add-cross-round-working-memory` / `add-mission-anchor` / `add-structured-todos-and-subagent-writes` / `add-data-paging-and-chunked-write` / `observability-structured-tracing`)→ `archive/2026-07-31-*/`。活跃列表 8→3(剩 `add-schema-tiered-disclosure` / `complex-agent-roadmap` / `revive-cross-round-working-memory`)。`project.md` / `deferred.md` / roadmap tasks 回填 Phase 1 进度;补 CHANGELOG 漏记的 workingMemory/schema-tiered 条目。
+
+- `archive/2026-08-01-add-adaptive-planning/`:自适应规划(① `update_todo({id,content?,status?})` 增量更新 + `Todo` 稳定 id;② `maxPlanRevisions` 规划阶段防死循环(与 `maxIterations` 正交);③ usageHints planning 段 + 内置 `adaptive-planning` skill;④ `inspect().planPhase`。2.18 发布)。选型见其 `decision-record.md`,能力边界见 `doc/capability-boundaries.md`。
+- `archive/2026-08-01-revive-mission-anchor/`:任务目标锚定 Phase 1(会话级 Mission 状态 + capture 启发式 + pin 段跨压缩 + `getMission`/`setMission`/`send({mission})` API + `capabilities.missionAnchor` 默认开。2.18 发布)。
 - `archive/2026-08-01-followup-from-live-llm-audit/`:真 LLM 全覆盖审计(4 agent:complex/人工确认+嵌套/子agent+多agent/RAG)收口 —— ① 修 `isPathAllowed`/`getSchemaAtPath` discriminatedUnion pre-existing bug(误当 ZodArray 致 `components.N.props.X` 深层路径误 PATH_DENIED;严格判 + union 降级开放,safeParse 兜底;sec-31 +8 断言);② browser flaky 修(`_helpers` clearStorage 入 clearChat + waitForAgentIdle timeout 30→60s,跨 spec 状态污染);③ usageHints 补 history_data/diff_data 提示;④ 补 `nested-demo.spec.ts` + `error-recovery.spec.ts` + `rag-demo.spec.ts` + page-demo offset 翻页用例(browser 7→15,连跑 2 次稳);⑤ planner-demo systemPrompt 加"收到方案必须 write 落地"。selftest 780→782、browser 7→15(2 次稳)。
 - `archive/2026-08-01-refine-dataops-reachability/`:dataOps 精修(内部,未发布)—— read 概览去约束(与 systemPrompt 去重复,约束靠 systemPrompt + schema_data)+ usageHints 补分页/多路径/dryRun(让 evolve 能力 LLM 可达)+ describeSchemaNode zod 版本防御(adapter 集中声明 + dev warn 去重)。微行为变化。
 - `archive/2026-08-01-fix-unify-error-half-done/`:unify-error 缩水(内部,未发布)—— routeError 降级为导出工具 + 扩展口注释(框架内置 catch 未消费),middleware 删空头契约承诺。零行为变化,为未来 wrapToolCall 自动路由补全留低改动面。
