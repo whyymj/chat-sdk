@@ -1,5 +1,7 @@
 # Change: p2-architecture-refactor (P2 架构重构)
 
+> 📦 **已归档(2026-08-03,部分完成)**:实际完成 ③(dataOps patch 装饰器)+ ④(capabilities 注册表)+ ⑤(types 防漂移)。**①(createChatSdk 1787 行拆分)+ ②(createAgent 回归中间件契约)+ ③剩余(read/get_data 合并 + writeSlot 拆 4 子函数)拆出暂缓** —— 纯内部重构零用户价值,当前无维护痛点驱动,等真实痛点再重启(理由 + 重启触发见 [`../../../deferred.md`](../../../deferred.md)「2026-08-03 新增」段)。下方原 proposal/tasks 保留作重启底稿(行号 + 步骤齐全,直接 apply)。
+
 > 4 agent 交叉审查(arch + maintain)发现的结构债集中清理:createChatSdk god module 拆分 + createAgent 回归中间件契约 + dataOps patch 装饰器 + capabilities 注册表 + types 漂移根治。
 > **来源**:arch-review(createAgent 绕过契约 / dataOps 三处 patch 重复)+ maintain-review(createChatSdk 1787 行 / capabilities 混 / types 漂移)。
 > **状态:proposal(未实施)**。大重构,分 5 子项独立推进,每子项全测守护,可分多次会话。

@@ -2,7 +2,7 @@
 
 > 关联 `proposal.md`。5 子项独立推进,每子项独立 commit + 全测守护(selftest 1030 / e2e 263 / browser)。纯重构零行为变化。
 
-## 子项 1 — createChatSdk 拆分(优先级最高)
+## 子项 1 — createChatSdk 拆分(优先级最高)⏸ 拆出 deferred(2026-08-03,等痛点驱动;见 deferred.md)
 - [ ] 抽 `sdk/buildToolset.ts`(tools 装配 + subagent/verify 筛选 + rebuildExtraTools,从 buildCore 671-820)
 - [ ] 抽 `sdk/buildMiddlewareStack.ts`(capability 门控 + compose,复用 middlewareStack.ts,755-968)
 - [ ] 抽 `sdk/coreOperations.ts`(AgentCore send/batch/switchSession/setTools/setLlm/getInfo,972-1338)
@@ -12,7 +12,7 @@
 - [ ] getInfo() 拆独立函数(90 行内联 13 spread)
 - [ ] 全测绿 + 行为不变(selftest/e2e 对比)
 
-## 子项 2 — createAgent 回归契约(最险,动主循环)
+## 子项 2 — createAgent 回归契约(最险,动主循环)⏸ 拆出 deferred(2026-08-03,等痛点驱动;见 deferred.md)
 - [ ] DSML/garbled 解析 → `format-guard` 中间件(beforeModel 解析补 toolCalls,不 mutate 主循环 L62-108)
 - [ ] format retry 状态 → HarnessState(非 formatRetries/pendingFormatRetry 主循环局部)
 - [ ] wrap_up 末轮综合 → 经 composeModelCall 洋葱(不直调 coreModelCall L662-678)
