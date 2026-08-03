@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-08-03
+
 ### Changed
 - **dataOps patch 装饰器(p2-architecture-refactor 子项 3)**:edit_data / write(edit) / eval-patches / eval-subtree 四处各自 clone+循环校验(isUnsafePath/isPathAllowed/maybeParseValue)+applyPatchToClone+schema 校验+snapshot+applyPatchToLive 重复(乐观锁×拦截器×dryRun 三轴组合的 bug 高发区)。抽 `applyPatchesToBind(args)` 单一真相源纯函数(参数化 schemaErrorMode 'zod'/'schema_invalid' + snapshotLabel + dryRun;调用方保留 bindRef 守卫/audit detail/lastReadHash/message 差异)。四处改调装饰器消除重复。纯重构零行为变化。
 - **capabilities 注册表 + 单一解析(p2-architecture-refactor 子项 4)**:17 个能力开关此前在 createChatSdk/toolsets/usageHints 三处 `===true`(opt-in)/`!==false`(opt-out)混用解析(新增开关改 5 处易错)。新增 `src/core/capabilities.ts`:`CAPABILITIES` 注册表(`Capability { name, defaultOn, requires? }` 显式标 opt-in/opt-out + 依赖)+ `resolveCapabilities(caps)` 单一解析函数。createChatSdk / toolsets / usageHints 统一经 resolveCapabilities(签名向后兼容,内部各自 resolve)。**requires 强制依赖**:draftWrite 需 dataOps+vfs,任一关则 draftWrite 强制关(防"开 draft 但关 dataOps"无意义组合)。新增导出 `resolveCapabilities`/`CAPABILITIES`/`Capability`/`CapabilityFlags`/`ResolvedCapabilities`。纯重构零行为变化。
