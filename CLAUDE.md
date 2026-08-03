@@ -378,7 +378,7 @@ createChatSdk({
 
 > ⚠️ **发布触发约定**:不要在修 bug / 加功能后自动发布。每次 `git commit` 后**停下来询问用户「是否发布」**,由用户决定是否 bump + push + publish。仅在用户明确说「发布」/「publish」/「推上去」等时才执行本 checklist。
 
-1. **改代码**:`src/` 改实现 → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
+1. **切到 develop 开发 + 改代码**:新功能/修 bug 一律在 `develop` 分支开发(当前在 master 先 `git checkout develop`;日常可 `git push origin develop` 保留细粒度 commit)。改实现 `src/` → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
 2. **更新中英文文档**(同步,勿漏单边):
    - `README.md`(英)/ `README.zh-CN.md`(中):特性、用法、场景、本地 npm 测试
    - `doc/README.md`(中)/ `doc/README.en.md`(英):文档索引
@@ -388,10 +388,9 @@ createChatSdk({
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
 4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 1097 全过 → `npm run test:e2e` 286 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
-6. **推 Gitee**(日常存储,保留全部细粒度 commit):`git push origin master`;若刚 rebase 重写历史 → `git push --force-with-lease origin master`(gitee 为个人仓库,安全)
-7. **推 GitHub**(正式开源):`git push github master`;若落后远程(`non-fast-forward`)→ 先 `git fetch github master && git pull --rebase github master` 再推;个人笔记 `doc/待确认问题.md` 不进
-8. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)
-9. **验证**:`npm view page-agent-sdk version` 确认最新版 + 临时目录 `npm i page-agent-sdk` 验证可装可导入 + CDN 可达性验证(「### 测试流程」§5:esm.sh 拉取 + 导出齐全)
+6. **发布(总结到 master + 推双远程)**:`git checkout master` → `./scripts/publish-github.sh "release x.x.x: 一句话总结"` —— 自动在 master 上 `merge --squash develop` 总结成一个发布 commit,再 fast-forward 推 Gitee + GitHub(两边 master 历史一致,零冲突;个人笔记 `doc/待确认问题.md` 不进)。完成后切回 develop 继续开发
+7. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)
+8. **验证**:`npm view page-agent-sdk version` 确认最新版 + 临时目录 `npm i page-agent-sdk` 验证可装可导入 + CDN 可达性验证(「### 测试流程」§5:esm.sh 拉取 + 导出齐全)
 
 > 双远程职责分工、npm 凭据/2FA 细节见下两节。
 
@@ -401,13 +400,14 @@ createChatSdk({
 
 | remote | URL | 定位 |
 |---|---|---|
-| `origin` | gitee.com/whyymj/**chat-agent**.git | 📦 日常存储(保留全部细粒度 commit) |
-| `github` | github.com/whyymj/**chat-sdk**.git | ✅ 正式开源(只接收整理过的提交) |
+| `origin` | gitee.com/whyymj/**chat-agent**.git | 📦 日常存储(develop 细粒度 commit + master 发布 commit) |
+| `github` | github.com/whyymj/**page-agent-sdk**.git | ✅ 正式开源(只收 master,即整理过的发布提交) |
 
-- **日常开发**:提交后只推 Gitee —— `git push origin master`。
-- **发布到 GitHub**:推之前**必须整理 commit**(squash 合并零碎提交、写规范 message),并剔除个人笔记 `doc/待确认问题.md`。**不要直接 `git push github master`**。
-- **一键发布脚本**:`./scripts/publish-github.sh "feat: 整理后的总结"`(自动 fetch → 检查待整理提交 → public 分支基于 github/master 重置 → squash merge master → 剔除笔记 → 提交 → push → 回 master)。
-- **个人笔记** `doc/待确认问题.md` 已在 `.gitignore`,仅存 Gitee,不进 GitHub。
+**分支工作流(develop → master)**:
+- **日常开发在 `develop`**:新功能/修 bug 一律先 commit 到 develop(细粒度自由提交),`git push origin develop`(gitee 保留全部细粒度)。**master 只在发布时动,不直接开发**。
+- **发布时总结到 `master`**:`./scripts/publish-github.sh "release x.x.x: 总结"`(在 master 上 `merge --squash develop` 总结成一个发布 commit → push origin master → push github master)。master 永远只含发布总结 commit,github 公开历史保持干净。
+- **个人笔记** `doc/待确认问题.md` 已在 `.gitignore`(未跟踪),仅存 Gitee,不进 GitHub。
+- 历史:曾直接在 master 细粒度开发 + public/read-tree 整理推 github,每次发布必冲突;2026-08-03 改 develop 工作流(见 git 历史)。
 
 ## npm 发布约定(包名 `page-agent-sdk`)
 
