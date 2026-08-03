@@ -1,7 +1,7 @@
 # page-agent-sdk 项目
 
 ## 概述
-`page-agent-sdk` 是一个**框架无关的 JS SDK**,以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 直接读写/调用宿主页面 `window` 对象上的属性(基于**属性注册表 + schema 校验**)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
+`page-agent-sdk` 是一个**框架无关的 JS SDK**,以对话框形态挂载到任意网页,内置一个基于 ReAct 模式的 Tool-Calling Agent。Agent 通过自定义 tool 读写集成方声明的 `data.bind` 单主对象(基于 **schema 校验 + jsonPath 增量 patch + 乐观锁 + 快照回退**;集成方按需自己挂 window,SDK 不再自动挂)、GET 抓取文档,并具备 planning / skills / 内存工作区 / context 管理能力。
 
 本项目由 `zhuanti-agent`(Vue3 库模式、深度绑定"什么值得买专题"业务)重构而来,目标是剥离业务身份、补齐"操作所在页面"能力,并自研一套架构对齐 Deep Agents 的轻量 harness。
 

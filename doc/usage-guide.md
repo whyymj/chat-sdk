@@ -167,8 +167,8 @@ createChatSdk({
   memory: '...',                // AGENTS.md 风格持久指令
   permissions: [...],           // scope 白名单(默认不启用)
   middleware: [...],            // 自定义中间件(见第 7 节)
-  actions: { name: { description, run, params? } },  // 宿主动作(2.18+):SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调触发页面操作;见 §6
-  schemaHint: { maxKeys?, maxChars? },               // 大 schema 分层披露阈值(2.18+;默认 15/4000,超阈值转顶层概览省 token);见 §6
+  actions: { name: { description, run, params? } },  // 宿主动作(2.20+):SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调触发页面操作;见 §6
+  schemaHint: { maxKeys?, maxChars? },               // 大 schema 分层披露阈值(2.20+;默认 15/4000,超阈值转顶层概览省 token);见 §6
 
   /* ===== 持久化与会话 ===== */
   storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象/false(默认关闭)
@@ -180,7 +180,7 @@ createChatSdk({
   maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
-  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.18+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.18+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.19+)默认关 opt-in;workingMemory=跨压缩记忆(2.18+)默认开)
+  capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.20+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.20+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.20+)默认关 opt-in;workingMemory=跨压缩记忆(2.20+)默认开)
   verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
@@ -451,7 +451,7 @@ sdk.hook((e) => {
 
 > **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read`/`get_data` 返回值里的 `hash` 字段即可,无需集成方自己算。
 
-### 自动化闭环与规模化:`get_dom` / `actions` / `schemaHint` / `workingMemory`(2.18+)
+### 自动化闭环与规模化:`get_dom` / `actions` / `schemaHint` / `workingMemory`(2.20+)
 
 四个互补能力,组合出「胜任自动化的 agent」:改数据 → 看渲染 DOM → 触发宿主页面动作;并在大 schema / 频繁压缩场景下保持可控。
 
@@ -1049,7 +1049,7 @@ sdk.listCheckpoints()  // 查看可用回退点
 
 > **与 dataOps 快照区别**:dataOps 快照(`restore_data`)随 set/edit/delete 自动入栈,单次回退最近一次写;checkpoint 整体,回滚到某轮起点(跨多次写 + 对话 + vfs + todos)。二者叠加:小错用 dataOps 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
 
-### 6.13 结构化追踪 TraceSpan(性能归因 / 调试,2.19+)
+### 6.13 结构化追踪 TraceSpan(性能归因 / 调试,2.20+)
 
 长任务/复杂场景下,扁平日志不知哪轮慢、哪轮失败、哪轮烧 token。开启结构化追踪得到 **TraceSpan 树**(每轮 `model`/`tool`/`compression` 的 timing/status/usage),供性能归因与错误追溯。opt-in(采集有性能开销,默认关)。
 

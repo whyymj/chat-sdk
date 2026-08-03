@@ -18,6 +18,10 @@
 ### Tests
 - 3 agent 审计高优先遗漏补强(违反测试同步约定):① `selftest sec-45`(proxyLlm `throwOnDirectInProduction` 5 分支,暴露并修复上述 throw 被 catch 吞 bug);② e2e `workingMemory:false` 关闭路径(与 `missionAnchor:false` 已测对称,原零覆盖);③ e2e `send(text,{mission})` 显式 capture(公共 API,原 e2e 全用 setMission,send 入口零覆盖)。selftest 1092→1097 / e2e 283→286。
 
+### Docs
+- 批 E 文档结构(部分完成):① README/doc 计数同步 → **1097/286**(selftest +5 / e2e +3 后;含 doc/README.en 文档表补 capability-boundaries + complex-agent-roadmap 2 行);② 「2.18+/2.19+」→「2.20+」(README + usage-guide;实际随 2.20 发布,CHANGELOG 无 2.18/2.19);③ `openspec/project.md` 概述:`window` 属性注册表(1.x 旧模型)→ `data.bind` 单主对象(schema 校验 + jsonPath 增量 patch + 乐观锁;3.0 现状)。
+- **deferred(高风险/大工作量,留专门会话)**:`usage-guide.md` 段号重排(§6.9×2 / §6.10×3 / §6.11×2 / §6.12×2 / 两个 §8,目录也不同步 —— 段号+目录+子节多处一致易错,错段号比重复更糟)、`usage-guide.en.md` 补译 6 节(残缺 ~40%)、`capability-boundaries.md` B1-B5 全迁「能做」(L92 已有「⚠ 整体过时」强标注,非阻塞)。
+
 ## [2.22.0] - 2026-08-03
 
 ### Changed
