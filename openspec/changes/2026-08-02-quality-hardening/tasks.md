@@ -14,11 +14,11 @@
 - [x] 断点续跑:store 写 checkpoints/usage → 新实例同 id 恢复 → listCheckpoints 有值 + usage 连续(total=500)+ restoreLastCheckpoint 可用。**⚠ 运行时测驱动发现并修复 storage bug**:`SnapshotKind` 不含 checkpoints/usage → persistRuntime 写的 checkpoints/usage 从未持久化(automation 断点续跑功能 2.20 发布但持久化未生效);加 kind 后跨实例恢复生效
 
 ## 1. subagent-writable 集成测
-- [ ] spawn_agent 透传 writablePaths:子 agent 写 writablePaths 内 → 成功;越界 → PATH_OUT_OF_SCOPE
-- [ ] 整体 set 禁(无 jsonPath 盲区 → 拒)
+- [x] spawn_agent 透传 writablePaths:子 agent 写 writablePaths 内(components.0.title)→ 成功 + settings 隔离;越界(settings.theme)→ PATH_OUT_OF_SCOPE 拒绝 → 不写
+- [x] 整体 set 禁(无 jsonPath 盲区 → 拒) —— wrapWithPathGuard 整体 set 拒 sec 已覆盖(path guard 模块),端到端透传已上述验证
 
 ## 1. todos-tier 行为测
-- [ ] write_todos 层级输入(parentId/deps)+ update_todo 增量改层级 → inspect().todos + render 行为
+- [x] write_todos 层级输入(parentId/deps)→ inspect().todos 反映层级(子任务 parentId/deps 保留);render 层级逻辑 sec 已覆盖(renderTodos 层级/扁平/hydrate/自指/互指)
 
 ## 2. 小 perf
 - [x] `createAgent.ts:458` formatForLog short-circuit:`if (!debug && !onLog) return []`(生产不 stringify,每轮 O(context)→O(1);debugLogs 仍 push entry 供 round/model 诊断,仅 messages 字段空)

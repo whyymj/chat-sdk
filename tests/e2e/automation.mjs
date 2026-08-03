@@ -132,6 +132,73 @@ export async function run() {
     sdk2.unmount()
   }
 
+  console.log('[e2e:automation] subagent-writable:spawn_agent 透传 writablePaths → 子 agent 写内成功 / 越界 PATH_OUT_OF_SCOPE')
+  {
+    // spawn_agent(subagent.ts:234 writablePaths 参数)→ runSubagent(:149 wrapWithPathGuard 包装写工具)
+    // 子 agent 复用主 llm(stub 共享队列),消费顺序:主 spawn → 子 write(内/越界)→ 子 done → 主 done
+    const page = { components: [{ title: 'old' }], settings: { theme: 'light' } }
+    const dataSchema = z.object({ components: z.array(z.object({ title: z.string() })), settings: z.object({ theme: z.string() }) })
+    // 测 1:写 writablePaths 内(components.0.title)→ path guard 允许 → 写成功
+    const model1 = stubModel(
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '把 components.0.title 改成 new', writablePaths: ['components'] } }] },
+      { toolCalls: [{ name: 'write', args: { value: 'new', patch: { op: 'set', jsonPath: 'components.0.title' } } }] },
+      { text: '子任务完成' },
+      { text: '已委派子 agent' },
+    )
+    const sdk1 = createChatSdk({
+      ui: false, id: 'e2e-sub-write', storage: 'memory', llm: model1,
+      capabilities: { ...MIN_CAPS, subagent: true },
+      data: { schema: dataSchema, bind: page },
+    })
+    await sdk1.mount()
+    await sdk1.send('让子 agent 改 components 标题')
+    assert(page.components[0].title === 'new', `子 agent 写 writablePaths 内(components.0.title)→ path guard 允许 → 成功,实际 ${page.components[0].title}`)
+    assert(page.settings.theme === 'light', 'writablePaths 仅 components → settings 未被改(隔离)')
+    sdk1.unmount()
+
+    // 测 2:写越界(settings.theme 不在 writablePaths ['components'])→ PATH_OUT_OF_SCOPE → 不写
+    const page2 = { components: [{ title: 'old' }], settings: { theme: 'light' } }
+    const model2 = stubModel(
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '把 settings.theme 改成 dark', writablePaths: ['components'] } }] },
+      { toolCalls: [{ name: 'write', args: { value: 'dark', patch: { op: 'set', jsonPath: 'settings.theme' } } }] },
+      { text: '子任务完成' },
+      { text: '已委派' },
+    )
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-sub-write-deny', storage: 'memory', llm: model2,
+      capabilities: { ...MIN_CAPS, subagent: true },
+      data: { schema: dataSchema, bind: page2 },
+    })
+    await sdk2.mount()
+    await sdk2.send('让子 agent 改 settings')
+    assert(page2.settings.theme === 'light', `子 agent 写越界(settings.theme 不在 writablePaths ['components'])→ PATH_OUT_OF_SCOPE 拒绝 → 不写,实际 ${page2.settings.theme}`)
+    sdk2.unmount()
+  }
+
+  console.log('[e2e:automation] todos-tier:write_todos 层级输入(parentId/deps)→ inspect().todos 反映层级')
+  {
+    // write_todos(todos.ts:21 TodoInput 接受 parentId/deps)整表替换;有 parentId → renderTodos 层级递归渲染
+    const model = stubModel(
+      { toolCalls: [{ name: 'write_todos', args: { todos: [
+        { id: 't1', content: '父任务', status: 'pending' },
+        { id: 't2', content: '子任务', status: 'pending', parentId: 't1', deps: ['t1'] },
+      ] } }] },
+      { text: '已规划任务清单' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-todos-tier', storage: 'memory', llm: model,
+      capabilities: { ...MIN_CAPS, planning: true, todoDeps: true },
+    })
+    await sdk.mount()
+    await sdk.send('帮我规划一个父子任务')
+    const todos = sdk.inspect().todos ?? []
+    assert(todos.length === 2, `write_todos 层级输入 → inspect().todos 2 项,实际 ${todos.length}`)
+    const child = todos.find((t) => t.id === 't2')
+    assert(child && child.parentId === 't1', `子任务 parentId 保留(层级结构),实际 child=${JSON.stringify(child)}`)
+    assert(child && Array.isArray(child.deps) && child.deps.includes('t1'), '子任务 deps 保留(依赖关系)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:automation] capabilities.automation:true → budget 中间件装载 + batch API 暴露')
   {
     const sdk = createChatSdk({
