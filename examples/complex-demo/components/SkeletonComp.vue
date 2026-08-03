@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 骨架屏:加载占位灰块(文本/卡片/头像/列表,可选闪烁) */
-defineProps<{ variant?: 'text' | 'card' | 'avatar' | 'list'; rows?: number; shimmer?: boolean; id?: string; style?: Record<string, string>; visible?: boolean; className?: string }>()
+defineProps<{ variant: 'text' | 'card' | 'avatar' | 'list'; rows?: number; shimmer?: boolean; id?: string; style?: Record<string, string>; visible?: boolean; className?: string }>()
 </script>
 <template>
   <div class="cmp-skeleton" :class="[className, { shimmer: shimmer !== false }]" :id="id" :style="style" v-show="visible !== false">

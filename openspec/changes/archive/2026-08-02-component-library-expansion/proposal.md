@@ -1,8 +1,12 @@
 # Change: component-library-expansion (P2 持续/验证层)
 
+> 📦 **已归档(2026-08-03,范围调整)**:用户决策「不需要 80,加几个意思意思就可以」。实际完成批 A **3 个简单展示类**(badge/progress/skeleton:def + Vue + schema + 实例),`tsc` 通过 + complex-demo browser spec **9 passed** 回归。批 B-E(到 80)取消。
+>
+> **意外发现(澄清核心担忧)**:`extractSchemaHint(pageSchema)` 对 `components[discriminatedUnion]` 数组字段不展开每个 type(只简短描述 +「用 read 查看实际形状」)→ 原担忧「80 type 撑爆 systemPrompt」**不成立**(union 在数组字段内不全量注入,深入靠 `schema_data` 工具)。即 proposal 的核心验证目标(分层披露在 80 类可控)基于一个不适用前提 —— schema hint 本就不全量展开 union array。
+
 > complex-demo 组件类型 34→~80,作为 SDK「复杂场景标尺」的真实度扩充 + 大 schema 分层披露的量级压测。
 > **来源**:TaskList #66 pending(A2 组件类型 30→~80 脚本生成 + 泛型渲染)+ roadmap §6「持续」行(50+ 组件压测)+ §4 码良业务场景(50+ 组件深嵌套)。
-> **状态:proposal(未实施)**。纯 demo/schema 扩充,不动 SDK 核心,优先级低于 P1(checkpoint/quality)。
+> ~~状态:proposal(未实施)~~ → **2026-08-03:范围缩减到 3 个(用户决策),完成归档。**
 
 ## Why
 - **标尺真实度缺口**:complex-demo 是 SDK「胜任复杂多组件场景」的演示标尺,当前 34 组件类型距离 roadmap §4「码良 50+ 组件深嵌套」运营级有缺口。标尺不够复杂 → 难以暴露真实瓶颈。

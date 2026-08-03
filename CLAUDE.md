@@ -222,13 +222,14 @@ npm run test:browser  # Playwright + mock LLM,自动启 dev server,确定性 SSE
 > Claude Code 里也可用 `/browser-test` 斜杠命令一键跑(见 `.claude/commands/browser-test.md`);写新测试的模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 OpenAI 兼容 SSE 流(tool_calls + 文本),使 agent ReAct 循环确定性走完,不依赖真 LLM。`playwright.config.ts` 已内置 `PLAYWRIGHT_BROWSERS_PATH`,无需手动设 env。**与手动浏览器验证(下节 3)互补**:手动验体感,自动化验回归。
-**按 demo 拆分**:测试代码在 `tests/browser/<demo>.spec.ts`(20 项断言):
+**按 demo 拆分**:测试代码在 `tests/browser/<demo>.spec.ts`(25 项断言):
 - `page-demo.spec.ts`(4 项:read→write→read 标题 / theme 切换 / **offset·limit 数组分页翻页** / **write_todos→update_todo→write 自适应规划端到端**)
 - `human-confirm-demo.spec.ts`(2 项:两层确认——主动征询→选方案→写前确认→允许/拒绝)
-- `complex-demo.spec.ts`(7 项:read 全量改 navbar title / read title 改页面 title / fields 裁剪 / **mission capture+深嵌套 patch** / read 大 JSON+深路径 / **配置面板渲染+agent publish action** / **save_draft→localStorage+get_dom 读 DOM**)
+- `complex-demo.spec.ts`(9 项:read 全量改 navbar title / read 子路径改页面 title / read fields 裁剪 / **mission capture+深嵌套 patch** / read 大 JSON+深路径子树 / **配置面板渲染+publish action** / **配置面板 JSON 同步(deep watch)** / **save_draft→localStorage+get_dom** / **huge ?huge=1 read 分页+800 组件**)
 - `nested-demo.spec.ts`(3 项:嵌套子路径 write patch + 确认允许/拒绝 gating / 两轮 write + checkpoint ↩ 回退→数据 + 对话历史回滚)
 - `error-recovery.spec.ts`(2 项:write 违反 schema→SCHEMA_INVALID 回灌不写 / 非法→修正→read 确认自纠)
 - `rag-demo.spec.ts`(2 项:memory 异步注入→systemPrompt/preview 含文档 / 切知识库→memory 替换)
+- `queue.spec.ts`(3 项:生成中 loading 回车入排队区 → 完成后依次执行 + 撤销/修改)
 - 共享 mock/交互工具在 `tests/browser/_helpers.ts`(mockLlm SSE/fillInput/clickSend/clickByText/waitForAgentIdle/clearChat + clearStorage 清 indexedDB/cookies 防跨 spec 污染)
 
 覆盖 selftest/e2e 触不到的「浏览器 + ChatDialog + 真实 DOM 渲染」层。**改 ChatDialog 组件、dataOps 工具行为、确认/冲突 UI 后必跑**。新增 demo 时按「新增功能测试同步约定」新建 spec 文件。

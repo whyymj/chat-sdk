@@ -45,6 +45,8 @@ export interface DebugLog {
   timestamp: number
   type: 'context' | 'llm_request' | 'llm_response' | 'tool_call' | 'tool_result' | 'error' | 'middleware'
   data: any
+  /** 日志来源(主 agent 省;子 agent 转发时为 '子:label',便于区分) */
+  source?: string
 }
 
 /** 检测模型把工具调用写成文本(伪 XML/标签/DeepSeek 内部标记)而非走标准 tool_calls 通道的异常格式。导出供测试。
@@ -105,14 +107,6 @@ function parseDsmlValue(s: string): unknown {
   if (s === 'false') return false
   if (s === 'null') return null
   try { return JSON.parse(s) } catch { return s }
-}
-
-export interface DebugLog {
-  timestamp: number
-  type: 'context' | 'llm_request' | 'llm_response' | 'tool_call' | 'tool_result' | 'error' | 'middleware'
-  data: any
-  /** 日志来源(主 agent 省;子 agent 转发时为 '子:label',便于区分) */
-  source?: string
 }
 
 /** 结构化追踪 span(revive-observability-tracing Phase 3)。debugLogs 扁平数组的层级+timing+metrics 升级,供 DebugDrawer 树形 + getTraceMetrics */

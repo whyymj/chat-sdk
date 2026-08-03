@@ -17,7 +17,6 @@ import PageConfigPanel from './PageConfigPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
 import { generateHugePage } from './hugePage'
 import { generateDeepNestedPage } from './deepNestedPage'
-console.log('pageSchema---->>>>', pageSchema)
 const cfg = useAgentConfig()
 
 // 顶层(同步):先建响应式 page 挂到 window,供 PageRenderer 绑定(PageRenderer setup 在 onMounted 之前执行)

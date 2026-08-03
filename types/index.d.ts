@@ -980,7 +980,7 @@ export declare function agentError(severity: ErrorSeverity, message: string, cod
 // === 与 src/core/index.ts 导出对齐(消费者类型完整;复杂内部类型用宽松声明,消费者主要消费工厂返回值) ===
 // 上下文压缩预设
 export declare function resolveContextOptions(options: any, modelContextWindow: number): any;
-export type ContextPreset = 'auto' | 'conservative' | 'aggressive';
+export type ContextPreset = 'auto' | 'conservative' | 'aggressive' | 'complex';
 export declare const CONTEXT_PRESETS: Record<string, any>;
 
 // MCP

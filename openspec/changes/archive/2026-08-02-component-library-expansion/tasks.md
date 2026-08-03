@@ -1,29 +1,29 @@
 # Tasks: component-library-expansion (P2 持续/验证层)
 
-> 关联 `proposal.md`。纯 demo/schema 扩充,优先级低于 P1。可分批推进(每批 10-15 类型)。复用 #65 baseProps + CompRenderer + #68 组件文档模式(均已落地)。
+> 关联 `proposal.md`。
+>
+> 📦 **2026-08-03 范围调整 + 归档**:用户决策「不需要 80,加几个意思意思就可以」。实际完成批 A **3 个简单展示类**(badge/progress/skeleton):def + Vue + pageSchema(schema + union + PageComponent)+ defs/index + CompRenderer + initialPage 实例。`tsc` 类型检查通过 + complex-demo browser spec **9 passed** 回归(新组件不破渲染/交互)。批 B-E(到 80)取消。
+>
+> **意外发现(澄清 proposal 核心担忧)**:`extractSchemaHint(pageSchema)` 对 `components[discriminatedUnion]` 数组字段**不展开每个 type**(只简短描述 +「用 read 查看实际形状」)→ proposal 担忧的「80 type 撑爆 systemPrompt」**实际不成立**(union 在数组字段内,不全量注入;深入靠 `schema_data` 工具按需查)。
 
 ## 1. 脚手架
-- [ ] 写组件生成脚本(`examples/complex-demo/_gen/`):模板化 def(id+schema 继承 baseProps)+ Vue 骨架,批量产出
-- [ ] 规划 ~50 新类型清单(电商专题页高频:轮播/瀑布流/倒计时/优惠券/楼层/导航/弹窗/表单/步进器/筛选/排序/标签页/抽屉/骨架屏/空状态/徽标/进度条/评分/面包屑/分页/搜索框/地址选择/规格选择/加购浮层/分享面板/客服/返回顶部/广告位/推荐位/榜单/秒杀队列/拼团/预售/赠品/满减/阶梯价/库存/限购/预约/核销/会员/积分/红包/直播/视频/图文/富文本/分割线/占位 等)
+- [x] ~~写组件生成脚本~~ —— 范围缩减(3 个手写,无需脚本)
+- [x] 类型清单:批 A badge / progress / skeleton(简单展示类,用户「意思意思」足够)
 
-## 2. 批量生成(可分批,每批 10-15)
-- [ ] 批 1:基础展示类(轮播/瀑布流/楼层/图文/富文本/分割线/占位/广告位/推荐位/榜单)
-- [ ] 批 2:营销类(倒计时/优惠券/优惠券列表/红包/秒杀队列/拼团/预售/赠品/满减/阶梯价/限购)
-- [ ] 批 3:交互类(表单/步进器/筛选/排序/搜索框/地址选择/规格选择/加购浮层/分享面板/客服/返回顶部)
-- [ ] 批 4:反馈类(弹窗/抽屉/标签页/骨架屏/空状态/徽标/进度条/评分/面包屑/分页)
-- [ ] 批 5:复合类(会员/积分/库存/预约/核销/直播/视频/导航 等,补足到 ~80)
-- [ ] 每批:Vue 组件(CompRenderer 泛型分发,交互复杂者定制)+ def 注册(defs/index.ts)
+## 2. 批量生成
+- [x] 批 A:badge / progress / skeleton —— def(`defs/*.ts`)+ Vue(`components/*Comp.vue`)+ schema(`pageSchema.ts`)+ `defs/index.ts`(import + push 基础内容)+ `CompRenderer.vue`(import + COMP_MAP)+ initialPage 实例(footer 前 3 个)
+- [~] 批 B-E(营销 / 交互 / 反馈 / 复合,到 ~80):**取消**(用户「不需要 80」)
 
 ## 3. schema + 实例
-- [ ] `pageSchema.ts`:union 扩到 ~80 类型 + PageComponent 类型
-- [ ] `initialPage`:真实专题页实例(80 类型混搭,贴近码良运营页,非随机堆砌)
+- [x] `pageSchema.ts`:union 扩 3 类型(33 → 36)+ PageComponent 类型
+- [x] `initialPage`:加 3 实例(progress 年中进度 / badge HOT / skeleton card 占位,footer 前)
 
 ## 4. 文档 + 测试
-- [ ] skill 文档同步:80 类型组件业务说明/参数(扩展 #68 B2 模式)
-- [ ] browser spec 回归:complex-demo 大 schema 不撑爆 + 渲染正确 + schema hint 分层披露触发验证
-- [ ] 真 LLM 实测(复用 #57 maliang 模式):80 类型下生成/批量改/深嵌套/问答四类闭环,审计 systemPrompt 体积(目标 <10K chars)+ 分层披露触发
-- [ ] CLAUDE.md 计数同步 + CHANGELOG
+- [~] skill 文档同步:范围缩减,3 个新组件 def 已含 description(系统经 `.describe()` 自动注入 systemPrompt),无需额外 skill 文档
+- [x] browser spec 回归:complex-demo **9 passed**(normal 8 + huge 1;新组件不破渲染/交互/huge 800 计数)
+- [~] 真 LLM 实测(80 类型):取消(范围缩减)
+- [~] CLAUDE.md 计数同步:无新增 selftest/e2e(纯 demo 改动),计数不变
 
 ## 收口
-- [ ] 验证分层披露在 80 类型量级仍可控(<10K chars 或触发阈值调优)
-- [ ] 归档(全部批完成后)+ project.md 更新
+- [x] 验证 schema hint 行为:`extractSchemaHint(pageSchema)` 对 components[union] 不全量展开 → 「80 type 撑爆」担忧不成立(union 在数组字段内)
+- [x] 归档(范围调整,批 A 3 个完成)+ project.md 更新

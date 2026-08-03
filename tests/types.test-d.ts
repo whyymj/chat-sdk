@@ -80,6 +80,7 @@ export const _ai: Pick<AgentInfo, 'id' | 'model' | 'systemPrompt' | 'tools' | 's
 export const _cp: ContextPreset = 'auto'
 export const _cp2: ContextPreset = 'conservative'
 export const _cp3: ContextPreset = 'aggressive'
+export const _cp4: ContextPreset = 'complex'  // 防漂移:曾漏 'complex'(types/index.d.ts:983),test:types 字段级断言锁死
 
 // McpTransport 是字面量联合
 export const _mt: McpTransport = 'http'
