@@ -1,8 +1,10 @@
 # Change: checkpoint-incremental-snapshot (P1 perf)
 
+> 📦 **已归档(2026-08-03,Phase A 完成 + Phase B 有意延后)**。Phase A(vfs + bind 脏标记)全部实现并随 **2.21.0** 发布(selftest 1030→1055 / e2e 263 / browser 全绿 + 跨轮 restore 一致性测试)。Phase B(messages 结构共享)按本文件决策 3「MVP 先不做 messages 增量,正确性优先」**有意延后**,留未来评估。详细勾选见 tasks.md。
+
 > checkpoint save 从「每轮整体深 clone bind+messages+vfs」改为「脏标记增量」:未变部分复用上次快照,省 80%+ clone。
 > **来源**:4 agent 交叉审查 perf-security HIGH(checkpoint 每轮 clone vfs 8MB × maxCheckpoints 5)+ arch 认同。
-> **状态:proposal(未实施)**。风险高(restore 正确性),需专项会话 + 充分测试。
+> ~~状态:proposal(未实施)~~ → **2026-08-03:Phase A 已实施发布,Phase B 延后,见 tasks.md。**
 
 ## Why
 checkpoint 是会话级回退核心(restore_last_checkpoint / 异常回退 / automation send 错误恢复 / UI 一键回退 全依赖)。当前 `save()`(checkpoint.ts:136)每轮 beforeModel 首次触发,**无脑整体深 clone** 4 样:

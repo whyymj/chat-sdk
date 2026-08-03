@@ -24,13 +24,12 @@
 
 ## 进行中的 change
 
-> 2026-08-03 状态:`complex-agent-roadmap` umbrella(Phase 1-4 全完成发布 2.18-2.20)已归档;`p2-architecture-refactor` 部分归档(③④⑤ 完成,①② 拆 deferred,见 [`deferred.md`](./deferred.md))。当前活跃 change 为 3 项:
+> 2026-08-03 状态:`complex-agent-roadmap` umbrella(Phase 1-4 全完成发布 2.18-2.20)已归档;`p2-architecture-refactor` 部分归档(③④⑤ 完成,①② 拆 deferred,见 [`deferred.md`](./deferred.md));`checkpoint-incremental-snapshot` 已归档(Phase A 完成发布 2.21.0,Phase B 有意延后,见下「最近完成」)。当前活跃 change 为 **2 项**:
 
-- **`quality-hardening`(P1)**:补审查发现的运行时集成测盲区(stub BaseChatModel 基建 + automation/subagent-writable/todos-tier 运行时测,违反测试同步约定)+ 小 perf(formatForLog/proxyLlm/schema hint 缓存)+ 文档债(observability/automation usage-guide 中英同步,接管 observability 遗留)+ 审计脚本修正。**stub 基建是 checkpoint 跨轮 restore 测试的前置**。
-- **`checkpoint-incremental-snapshot`(P1 perf HIGH)**:checkpoint save 从每轮整体深 clone(vfs 默认 8MB × maxCheckpoints)改为脏标记增量,省 80%+ clone。⚠ 风险:restore 正确性(改错静默数据错乱),需专项会话 + 跨轮 restore 测试(复用 quality-hardening stub 基建)。用户明确优先。
+- **`quality-hardening`(P1)**:补审查发现的运行时集成测盲区(stub BaseChatModel 基建 + automation/subagent-writable/todos-tier 运行时测,违反测试同步约定)+ 小 perf(formatForLog/proxyLlm/schema hint 缓存)+ 文档债(observability/automation usage-guide 中英同步,接管 observability 遗留)+ 审计脚本修正。
 - **`component-library-expansion`(P2)**:complex-demo 组件类型 34→~80,标尺真实度 + 大 schema 分层披露量级压测。纯 demo/schema 扩充,不动核心,可穿插。
 
-**推进顺序建议**(2026-08-02 定,2026-08-03 更新):收尾归档(本批已完成)→ quality-hardening(stub 基建)→ checkpoint(复用 stub)→ component-library(穿插)。~~p2-refactor(最后,功能稳定后动结构)~~ → 已部分归档(③④⑤ 完成;① createChatSdk 拆分 / ② createAgent 契约拆 deferred,等痛点驱动)。umbrella 定位升级决策记录见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md)(已归档)。
+**推进顺序建议**(2026-08-02 定,2026-08-03 更新):收尾归档(本批已完成)→ quality-hardening(运行时测 + perf + 文档债)→ component-library(穿插,纯 demo)。~~p2-refactor(最后,功能稳定后动结构)~~ → 已部分归档(③④⑤ 完成;① createChatSdk 拆分 / ② createAgent 契约拆 deferred,等痛点驱动)。umbrella 定位升级决策记录见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md)(已归档)。
 
 ## 已评估暂缓 → 已重启并全部落地(2026-08-01 定位升级 → 2026-08-02 完成)
 
@@ -47,6 +46,8 @@
 > 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。`complex-agent-roadmap` umbrella 本身也于 2026-08-02 归档(Phase 1-4 全完成)。
 
 ## 最近完成的 change(已归档)
+
+> **2026-08-03 checkpoint-incremental-snapshot 归档(本次)**:核对收尾发现 tasks.md 滞后于代码 —— Phase A 全部完成并随 **2.21.0** 发布(selftest 1030→1055 / e2e 263 / browser 全绿):① **vfs 脏标记**(`backends/vfs.ts` `_dirty` 经 Proxy set/delete 统一置脏零遗漏 + `consumeDirty`/`isDirty`,checkpoint save 复用闭包 `lastVfsClone`);② **bind 脏标记**(dataOps controller `markDataDirty`/`consumeDataDirty` + 全写路径标脏,`commitSetToBind` 新增 `onWrite` 回调收敛 set_data/write(set)/draft_commit,dryRun 不触发;checkpoint save 复用 `lastBindClone`);③ **restore/importStack 重置增量基线**(测试驱动发现:restore 走 restoreInPlace 不经 dataOps 脏标记 → 重置 `lastBindClone`/`lastVfsClone` 强制下次 save 重建,防静默错乱);④ **跨轮 restore 一致性测试** sec-17(写→save→写→save→restore id1/id2/id3 → bind/vfs 数据一致)。Phase B(messages 结构共享)按 proposal 决策 3 **有意延后**(MVP 正确性优先,summarization splice 与快照 length 基线冲突险,留未来评估;messages 保持整体 clone)。性能 bench 为可选项未做。对外 API 零变(纯内部 perf)。活跃列表 3→2。
 
 > **2026-08-03 p2-architecture-refactor 部分归档(本次)**:实际完成 ③(dataOps patch 装饰器 `applyPatchesToBind` 消除 patch 应用重复)+ ④(capabilities 注册表 `resolveCapabilities` 单一解析)+ ⑤(types 防漂移:`tests/types.test-d.ts` 字段级 Pick/Extract 断言)。**①(createChatSdk 1787 行拆分)+ ②(createAgent 回归中间件契约)+ ③剩余(read/get_data 合并 + writeSlot 拆)拆出暂缓** —— 纯内部重构零用户价值,无维护痛点驱动,等真实痛点再重启(见 [`deferred.md`](./deferred.md))。活跃列表 4→3。
 
