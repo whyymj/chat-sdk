@@ -81,20 +81,22 @@ export function createProxyLlm(opts: ProxyLlmOptions): BaseChatModel {
 
   if (opts.mode === 'direct') {
     // 直连模式:浏览器持真实 key,仅开发环境安全
-    // 生产环境提醒(检测 https + 非本地域;仅作提醒,不阻断)
+    // 先算 isProd(try 只兜底 location 访问异常);判断 + throw/warn 必须在 try 外,
+    // 否则 throwOnDirectInProduction 的 throw 会被下面的 catch 吞掉(opt-in 强安全闸失效)。
+    let isProd = false
     try {
-      const isProd = typeof location !== 'undefined'
+      isProd = typeof location !== 'undefined'
         && location.protocol === 'https:'
         && !['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname)
-      if (isProd) {
-        const msg = '[page-agent-sdk][proxyLlm] direct 模式在生产环境(https + 非本地)会泄露 apiKey(进 bundle),建议改用 proxy 模式'
-        if (opts.throwOnDirectInProduction) {
-          // opt-in 强安全闸:throwOnDirectInProduction:true → throw 阻断 direct 误用于生产(防 key 泄露)
-          throw new Error(msg + '(throwOnDirectInProduction 已启用强安全闸;若确需生产直连,设为 false 显式承认风险)')
-        }
-        console.warn(msg)
+    } catch { /* location 不可用时静默,isProd 保持 false(开发环境正常直连) */ }
+    if (isProd) {
+      const msg = '[page-agent-sdk][proxyLlm] direct 模式在生产环境(https + 非本地)会泄露 apiKey(进 bundle),建议改用 proxy 模式'
+      if (opts.throwOnDirectInProduction) {
+        // opt-in 强安全闸:throwOnDirectInProduction:true → throw 阻断 direct 误用于生产(防 key 泄露)
+        throw new Error(msg + '(throwOnDirectInProduction 已启用强安全闸;若确需生产直连,设为 false 显式承认风险)')
       }
-    } catch { /* location 不可用时静默 */ }
+      console.warn(msg)
+    }
     if (!opts.apiKey) {
       throw new Error('[page-agent-sdk][proxyLlm] direct 模式需提供 apiKey(开发环境用真实 key)')
     }

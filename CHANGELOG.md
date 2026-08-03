@@ -8,11 +8,15 @@
 - **complex-demo 新增 3 组件(component-library-expansion,范围调整)**:badge(徽标)/ progress(进度条)/ skeleton(骨架屏)—— `defs/*.ts` + `components/*Comp.vue` + `pageSchema.ts`(discriminatedUnion 33→36 + PageComponent)+ `CompRenderer.vue` + initialPage 实例。用户决策「不需要 80,加几个意思意思就可以」。tsc 类型检查通过 + complex-demo browser spec 9 passed 回归。意外发现:`extractSchemaHint` 对 `components[union]` 数组字段不全量展开(深入靠 `schema_data`)→ 原「80 type 撑爆 systemPrompt」担忧不成立。
 
 ### Fixed
+- **`proxyLlm` `throwOnDirectInProduction` 强安全闸失效(测试驱动发现真 bug)**:`throw` 写在 `try` 块内(L93)被 `catch { location 不可用静默 }`(L97)**吞掉** → opt-in 强安全闸(防 apiKey 进 bundle 泄露)never throw 到调用方,集成方设 `throwOnDirectInProduction:true` 实际不阻断。修复:`if(isProd)` 判定 + throw/warn 移出 `try`(try 只兜底 `location` 属性访问异常,isProd 判定在 try 外)。补 `selftest sec-45`(mock `globalThis.location` 测 throw/warn/localhost/http/SSR 五分支)暴露此 bug —— 3 agent 审计高优先遗漏 #1 驱动。
 - **`types/index.d.ts` `ContextPreset` 漏 `'complex'`**:集成方传 `contextPreset:'complex'` 类型报错(types 写三值,src 真值四值)。补 `| 'complex'`;`tests/types.test-d.ts` 加 `_cp4: ContextPreset = 'complex'` 字段级断言防回归(原 `test:types`/`test:exports` 只查符号不查字面值,漏过此 bug)。
 
 ### Changed
 - `createAgent.ts` `DebugLog` interface 重复声明合并(L44 无 `source` + L110 含 `source`,declaration merge 掩盖意图;合并为 L44 一处含 `source`)。
 - `SkeletonComp` `variant` Vue prop 改必填(对齐 schema 必填契约);删 `App.vue` 调试 `console.log` 残留。
+
+### Tests
+- 3 agent 审计高优先遗漏补强(违反测试同步约定):① `selftest sec-45`(proxyLlm `throwOnDirectInProduction` 5 分支,暴露并修复上述 throw 被 catch 吞 bug);② e2e `workingMemory:false` 关闭路径(与 `missionAnchor:false` 已测对称,原零覆盖);③ e2e `send(text,{mission})` 显式 capture(公共 API,原 e2e 全用 setMission,send 入口零覆盖)。selftest 1092→1097 / e2e 283→286。
 
 ## [2.22.0] - 2026-08-03
 

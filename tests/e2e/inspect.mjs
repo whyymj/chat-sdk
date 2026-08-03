@@ -1,5 +1,6 @@
 // inspect 反映配置:tools / middleware / id / model / subagent / verify / mcp / 初始状态
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool } from './_helpers.mjs'
+import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
   setupEnv()
@@ -419,6 +420,22 @@ export async function run() {
     assert(sdkOff.getMission() === undefined, 'missionAnchor:false → setMission 忽略(getMission 仍 undefined)')
     assert(!sdkOff.inspect().middleware.includes('mission'), 'missionAnchor:false → middleware 不含 mission')
     sdkOff.unmount()
+
+    // capabilities.workingMemory:false → 不装,inspect 不捕获(与 missionAnchor:false 对称;3 agent 审计高优先遗漏 #3 —— 原只测 missionAnchor:false,workingMemory:false 零覆盖)
+    const sdkWmOff = createChatSdk({ ui: false, id: 'e2e-wm-off', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, workingMemory: false } })
+    await sdkWmOff.mount()
+    assert(!sdkWmOff.inspect().middleware.includes('workingMemory'), 'workingMemory:false → middleware 不含 workingMemory(与 missionAnchor:false 对称)')
+    const wmOff = sdkWmOff.inspect().workingMemory
+    assert(wmOff === undefined || !wmOff?.locatedPaths?.length, 'workingMemory:false → inspect().workingMemory 空(无定位捕获)')
+    sdkWmOff.unmount()
+
+    // send(text,{mission}) 显式 capture(公共 API;3 agent 审计高优先遗漏 #2 —— e2e 此前全用 setMission,send 入口零覆盖)
+    const sdkSendM = createChatSdk({ ui: false, id: 'e2e-send-mission', storage: 'memory', llm: stubModel({ text: '已处理' }), capabilities: { ...MIN_CAPS, missionAnchor: true } })
+    await sdkSendM.mount()
+    await sdkSendM.send('执行任务A', { mission: { goal: '显式锚定目标', acceptanceCriteria: ['标准1'] } })
+    const sm = sdkSendM.inspect().mission
+    assert(sm?.goal === '显式锚定目标' && sm?.explicit === true, 'send(text,{mission}) → 显式 capture(inspect().mission.explicit=true,覆盖自动 capture)')
+    sdkSendM.unmount()
   }
 
   return { pass: ctx.pass, fail: ctx.fail }
