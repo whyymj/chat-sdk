@@ -202,4 +202,104 @@ export async function run(ctx: TestCtx): Promise<void> {
     mgr4.importStack([{ id: 'bad', messages: [] }, { id: 5, messages: [] }] as any)
     assert(mgr4.list().length === 1, 'importStack 过滤非数字 id(字符串 id 不灌入,防 nextId=NaN)')
   }
+
+  // vfs 脏标记增量(checkpoint save 省 8MB 深拷贝;vfsStore 写经 Proxy 统一标脏,零遗漏)
+  {
+    console.log('\n[checkpoint vfs 脏标记增量]')
+    const vfsStore = createVfs({ 'a.txt': 'AAA' })
+    const todosMw = { reset: (_t: any[]) => {} }
+    const mgr = createCheckpointManager({
+      vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any,
+    })
+    assert(vfsStore.isDirty!() === true, 'vfs 初始脏=true(首次 save 必 clone 建立基线)')
+    mgr.save('r1')  // consume 初始脏 → clone 建立基线
+    assert(vfsStore.isDirty!() === false, 'save 消费脏后 isDirty=false')
+    mgr.save('r2')  // 无 vfs 写 → consumeDirty=false → 复用 r1 clone
+    let stack = mgr.exportStack()
+    const cp1 = stack.find((c: any) => c.label === 'r1')!
+    const cp2 = stack.find((c: any) => c.label === 'r2')!
+    assert(cp1.vfs === cp2.vfs, 'vfs 未变轮:两 checkpoint 共享同一 clone 引用(省 8MB 深拷贝)')
+    assert(cp1.vfs['a.txt']?.content === 'AAA', '共享 clone 内容正确(a.txt=AAA)')
+    vfsStore.files['b.txt'] = { content: 'BBB', updatedAt: 1 }
+    assert(vfsStore.isDirty!() === true, 'vfs 写 files[k]= → Proxy 标脏')
+    mgr.save('r3')  // 标脏 → 新 clone
+    stack = mgr.exportStack()
+    const cp3 = stack.find((c: any) => c.label === 'r3')!
+    assert(cp3.vfs !== cp2.vfs, 'vfs 写后 save:新 clone(引用变)')
+    assert(cp3.vfs['b.txt']?.content === 'BBB', '新 clone 含写入的 b.txt')
+    vfsStore.files['c.txt'] = { content: 'CCC', updatedAt: 2 }
+    mgr.restore(cp2.id)  // restore 到未变轮 r2(vfs 只 a.txt)
+    assert('a.txt' in vfsStore.files && !('b.txt' in vfsStore.files) && !('c.txt' in vfsStore.files), 'restore 到未变轮 r2:vfs 正确还原(共享引用 restore 安全)')
+  }
+
+  // bind 脏标记增量(dataOps controller:写路径标脏,dryRun/只读不标;commitSetToBind onWrite 收敛 set 类)
+  {
+    console.log('\n[checkpoint bind 脏标记增量]')
+    const schema = z.object({ title: z.string(), count: z.number() })
+    const bind: any = { title: '原标题', count: 1 }
+    const tools = createDataOps({ schema, bind, description: '测试' })
+    const controller = (tools as any).controller
+    assert(controller.consumeDataDirty() === true, 'bind 初始脏=true(首次 save 必 clone 基线)')
+    const names = byName(tools)
+    await invoke(names['set_data'], { value: { title: 'set改', count: 2 } })
+    assert(controller.consumeDataDirty() === true, 'set_data 写 bind → 标脏(commitSetToBind onWrite)')
+    await invoke(names['edit_data'], { op: 'set', jsonPath: 'title', value: 'edit改' })
+    assert(controller.consumeDataDirty() === true, 'edit_data 写 bind → 标脏')
+    await invoke(names['get_data'], { jsonPath: 'title' })
+    assert(controller.consumeDataDirty() === false, 'get_data 只读 → 不标脏')
+    await invoke(names['write'], { value: { title: 'write改', count: 3 } })
+    assert(controller.consumeDataDirty() === true, 'write(set) 写 bind → 标脏')
+    await invoke(names['write'], { value: { title: 'dryrun', count: 3 }, dryRun: true })
+    assert(controller.consumeDataDirty() === false, 'write(dryRun) 预检不落盘 → 不标脏')
+    await invoke(names['delete_data'], { jsonPath: 'count' })
+    assert(controller.consumeDataDirty() === true, 'delete_data 写 bind → 标脏')
+    controller.set({ schema, bind: { title: '新bind', count: 9 }, description: '换' })
+    assert(controller.consumeDataDirty() === true, 'controller.set 替换 bind → 标脏(下次 save 必 clone 新基线)')
+  }
+
+  // 跨轮 restore 一致性(增量正确性核心:写→save→写→save→restore(id1/id2/id3)→数据一致;漏标脏/缓存基线错会在此暴露)
+  {
+    console.log('\n[checkpoint 跨轮 restore 一致性(增量正确性核心)]')
+    const schema = z.object({ title: z.string(), items: z.array(z.string()) })
+    const bind: any = { title: 'v0', items: ['a'] }
+    const tools = createDataOps({ schema, bind, description: '测试' })
+    const controller = (tools as any).controller
+    const vfsStore = createVfs()
+    const todosMw = { reset: (_t: any[]) => {} }
+    const mgr = createCheckpointManager({
+      getData: () => bind,
+      consumeDataDirty: () => controller.consumeDataDirty() ?? true,
+      vfsStore, todosMw: todosMw as any, getTodos: () => [], messages: [] as any,
+    })
+    const names = byName(tools)
+    // 轮1:write v1 + vfs f1 + save(id1)
+    await invoke(names['write'], { value: { title: 'v1', items: ['a'] } })
+    vfsStore.files['f1'] = { content: 'F1', updatedAt: 1 }
+    const id1 = mgr.save('round1')
+    // 轮2:write v2 + save(id2)(vfs 未变 → 复用 id1 vfs clone)
+    await invoke(names['write'], { value: { title: 'v2', items: ['a', 'b'] } })
+    const id2 = mgr.save('round2')
+    // 轮3:write v3 + save(id3)
+    await invoke(names['write'], { value: { title: 'v3', items: ['a', 'b', 'c'] } })
+    const id3 = mgr.save('round3')
+    // restore(id1) → v1 + items[a] + vfs f1
+    mgr.restore(id1)
+    assert(bind.title === 'v1', 'restore(id1) bind.title=v1')
+    assert(bind.items.length === 1 && bind.items[0] === 'a', 'restore(id1) items=[a]')
+    assert(vfsStore.files['f1']?.content === 'F1', 'restore(id1) vfs f1 还原')
+    // restore(id2) → v2 + items[a,b] + vfs f1(未变轮共享 clone 正确)
+    mgr.restore(id2)
+    assert(bind.title === 'v2', 'restore(id2) bind.title=v2')
+    assert(bind.items.length === 2, 'restore(id2) items 长度=2')
+    assert(vfsStore.files['f1']?.content === 'F1', 'restore(id2) vfs f1 仍在(未变轮共享 clone 正确)')
+    // restore(id3) → v3 + items[a,b,c]
+    mgr.restore(id3)
+    assert(bind.title === 'v3', 'restore(id3) bind.title=v3')
+    assert(bind.items.length === 3, 'restore(id3) items 长度=3')
+    // restore 后再 save:基线重建(restore 改 bind 不经 dataOps 脏标记,靠 lastBindClone 重置兜底;无此则静默错乱)
+    await invoke(names['write'], { value: { title: 'v4', items: ['x'] } })
+    const id4 = mgr.save('round4')
+    mgr.restore(id4)
+    assert(bind.title === 'v4' && bind.items.length === 1, 'restore 后 save(id4) 再 restore:title=v4/items=[x](基线重建正确,无错乱)')
+  }
 }

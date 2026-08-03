@@ -87,6 +87,10 @@ export interface DataOpsController {
   get(): DataConfig
   set(config: DataConfig): void
   update(bind: any): void
+  /** 标记主数据已脏(供 checkpoint 增量 save)。dataOps 内部写路径自动调;importData 等外部直写 bind 需手动调 */
+  markDataDirty?(): void
+  /** 读后清脏标记,返回是否脏(checkpoint save 消费;无实现时 checkpoint 默认整体 clone 向后兼容) */
+  consumeDataDirty?(): boolean
 }
 
 export type ToolMode = 'simple' | 'advanced' | 'minimal'
@@ -115,6 +119,8 @@ export function commitSetToBind(args: {
   audit: (e: DataAuditEntry) => void
   dryRun?: boolean
   op?: 'set' | 'draft_commit'  // 默认 'set';draft_commit 用 'draft_commit'(快照/审计标记区分)
+  /** 成功写入 bind 后回调(供 checkpoint 脏标记:dryRun 不触发,因 dryRun 在写入前早 return)。set_data/write(set)/draft_commit 共用此收敛点 */
+  onWrite?: () => void
 }): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
   const { bindRef, value, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set' } = args
   const res = schema.safeParse(value)
@@ -137,6 +143,7 @@ export function commitSetToBind(args: {
     }
   }
   audit({ op, value: res.data, timestamp: Date.now() })
+  args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
   return { ok: true, hash: hashValue(bindRef), data: res.data }
 }
 
@@ -154,11 +161,19 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   // 并发场景下若需精确乐观锁,LLM 应显式传 expectedHash(取自它自己那次 read 的返回值)。harden-optimistic-lock
   let lastReadHash: string | undefined
   const autoLock = opts.autoLock !== false
+  // 脏标记:checkpoint 增量用(主数据写后置 true,save consumeDataDirty 检查;未脏则复用上次 clone 省深拷贝)。
+  //   ⚠ 所有改 bindRef 的写路径必须调 markDataDirty(漏标 → checkpoint restore 静默还原旧值,比性能问题严重)。
+  //   写点清单(新增写路径务必同步 + 补 consumeDataDirty 测试):commitSetToBind(onWrite)/edit/delete/restore/
+  //     handleConflict.restore/eval(transform 3 模式)/write(del/edit·patches)/importData/controller.set|update
+  let _dataDirty = true  // 初始 true=首次 save 必 clone 建立基线
+  function markDataDirty() { _dataDirty = true }
 
   const controller: DataOpsController = {
     get: () => ({ schema, bind: bindRef, description }),
-    set: (c) => { schema = c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; lastReadHash = undefined },
-    update: (b) => { bindRef = b; snapshots.length = 0; lastReadHash = undefined },
+    set: (c) => { schema = c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; lastReadHash = undefined; markDataDirty() },
+    update: (b) => { bindRef = b; snapshots.length = 0; lastReadHash = undefined; markDataDirty() },
+    markDataDirty,
+    consumeDataDirty: () => { const d = _dataDirty; _dataDirty = false; return d },
   }
 
   const audit = (entry: DataAuditEntry) => { opts.onAudit?.(entry) }
@@ -196,6 +211,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!snapshots.length) return `无历史快照可回退(本次为首次操作)。当前值:${safeStringify(bindRef, 400)} (hash=${curHash})。请重新 read 再改或选「强制覆盖」。`
       const entry = snapshots[snapshots.length - 1]
       restoreLive(bindRef, deepClone(entry.value))
+      markDataDirty()
       return `已回退主数据到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(bindRef, 400)} (hash=${hashValue(bindRef)})。请基于回退后的值重写或停止。`
     }
     return null
@@ -239,7 +255,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (conflict !== null) return conflict
       const pr = maybeParseValue(value)
       if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty })
       if (!r.ok) return r.error
       lastReadHash = r.hash
       return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
@@ -293,6 +309,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!res.success) return zodError('', res.error.issues)
       pushSnapshot('edit')
       applyPatchToLive(bindRef, op, jp, parsed)
+      markDataDirty()
       audit({ op: 'edit', detail: `${op}${jp ? '@' + jp : ''}`, value: parsed, timestamp: Date.now() })
       lastReadHash = hashValue(bindRef)
       return `已 edit 主数据(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
@@ -330,6 +347,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (conflict !== null) return conflict
       pushSnapshot('delete')
       const ok = deleteByPath(bindRef, jsonPath)
+      markDataDirty()
       audit({ op: 'delete', detail: jsonPath, timestamp: Date.now() })
       lastReadHash = hashValue(bindRef)
       return ok ? `已删除主数据 @ ${jsonPath}` : `主数据 @ ${jsonPath} 不存在(无需删除)`
@@ -377,6 +395,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const chk = schema.safeParse(entry.value)
       if (!chk.success) return toolError({ code: 'SNAPSHOT_SCHEMA_INVALID', message: `快照 #${entry.id} 的值不符合当前 schema,无法回退`, hint: 'schema 可能已变更;该快照已过期,选其他快照或重新设置', details: formatZodIssues(chk.error.issues) })
       restoreLive(bindRef, deepClone(entry.value))
+      markDataDirty()
       audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
       lastReadHash = hashValue(bindRef)
       return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
@@ -499,6 +518,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值作为子树 @ "${jp}" 后整体校验失败,未写入`, hint: `确认返回值符合 ${jp} 处的子 schema`, details: formatZodIssues(chk.error.issues) })
           pushSnapshot('edit', 'eval_transform_subtree')
           applyPatchToLive(bindRef, 'set', jp, result)
+          markDataDirty()
           audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
           return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
@@ -534,6 +554,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本 patches 应用后整体校验失败,未写入`, hint: '确认 patches 合并后整体仍符合 schema', details: formatZodIssues(chk.error.issues) })
           pushSnapshot('edit', 'eval_transform')
           for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
+          markDataDirty()
           audit({ op: 'edit', detail: `eval_transform(${applied.length} patches)`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
           return `已通过脚本 transform(patches) 更新主数据(${applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
@@ -553,6 +574,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
             restoreInPlace(bindRef as Record<string, unknown> | unknown[], chk.data)
           }
         }
+        markDataDirty()
         audit({ op: 'edit', detail: 'eval_transform', timestamp: Date.now() })
         lastReadHash = hashValue(bindRef)
         return `已通过脚本 transform 更新主数据(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
@@ -710,6 +732,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
         pushSnapshot('delete')
         const ok = deleteByPath(bindRef, patch.jsonPath)
+        markDataDirty()
         audit({ op: 'delete', detail: patch.jsonPath, timestamp: Date.now() })
         lastReadHash = hashValue(bindRef)
         return ok ? `已删除主数据 @ ${patch.jsonPath}` : `主数据 @ ${patch.jsonPath} 不存在(无需删除)`
@@ -750,6 +773,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
         pushSnapshot('edit')
         for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
+        markDataDirty()
         audit({ op: 'edit', detail: `${applied.length} 个 patch${applied.length > 1 ? '(批量)' : ''}`, value: applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
         lastReadHash = hashValue(bindRef)
         return `已 write(edit) 主数据(${applied.length} 个 patch)。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
@@ -760,7 +784,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty })
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
       lastReadHash = r.hash
@@ -867,7 +891,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           return toolError({ code: 'JSON_INVALID', message: `草稿 "${draftId}" 拼接后非合法 JSON: ${(e as Error).message}`, hint: '检查 chunk 拼接(逗号/括号/引号是否匹配,首尾是否闭合);草稿保留未删,可继续 draft_write 修正后重 commit', details: { bytes: entry.content.length, preview: entry.content.slice(0, 200) + (entry.content.length > 200 ? '…' : '') } })
         }
         // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
-        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit' })
+        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
         lastReadHash = r.hash
         delete store.files[key]  // 成功:清草稿

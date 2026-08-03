@@ -53,6 +53,10 @@ export interface VfsStore {
   flush?: () => void
   /** 清空工作区 + 触发落盘空(新会话用,仅 persist 模式) */
   clear?: () => void
+  /** 是否有未捕获到 checkpoint 的写(供 checkpoint 增量 save 检查;非持久化模式也暴露) */
+  isDirty?: () => boolean
+  /** 读后清脏标记,返回是否脏;checkpoint save 消费(脏→clone 新基线,不脏→复用上次 clone 省 8MB 深拷贝) */
+  consumeDirty?: () => boolean
 }
 
 /**
@@ -123,6 +127,9 @@ export function createVfs(
     }
   }
 
+  // 脏标记:任何写(files[k]=/delete)置 true;checkpoint save 经 consumeDirty 检查,
+  //   未脏则复用上次 vfs clone(省 8MB 深拷贝,长任务每轮省),脏则 clone 新基线。初始 true=首次 save 必 clone 建立基线。
+  let _dirty = true
   let saveTimer: ReturnType<typeof setTimeout> | null = null
 
   function doSave(): void {
@@ -142,12 +149,13 @@ export function createVfs(
   }
 
   // Proxy 统一捕获 set/deleteProperty(无论是否持久化都包裹):
-  //   - set 后 enforceLimit(纯内存上限保护,storage:false 也生效)+ scheduleSave(persist 模式 debounce 落盘,非 persist 内部短路)
-  //   - 6 个 vfs 工具 + offload 写入点零改动
+  //   - set 后 _dirty=true(checkpoint 增量)+ enforceLimit(纯内存上限保护,storage:false 也生效)+ scheduleSave(persist 模式 debounce 落盘,非 persist 内部短路)
+  //   - 6 个 vfs 工具 + offload 写入点零改动;脏标记挂此一处覆盖所有工具写(零遗漏)
   const proxy = new Proxy(files, {
     set(target, key, value) {
       const ok = Reflect.set(target, key, value)
       if (ok) {
+        _dirty = true
         enforceLimit()
         scheduleSave()
       }
@@ -155,17 +163,25 @@ export function createVfs(
     },
     deleteProperty(target, key) {
       const ok = Reflect.deleteProperty(target, key)
-      if (ok) scheduleSave()
+      if (ok) {
+        _dirty = true
+        scheduleSave()
+      }
       return ok
     },
   })
 
-  const store: VfsStore = { files: proxy }
+  const store: VfsStore = {
+    files: proxy,
+    isDirty: () => _dirty,
+    consumeDirty: () => { const d = _dirty; _dirty = false; return d },
+  }
   if (persist) {
     store.hydrate = (incoming) => {
       // 恢复:直接写 raw target,不触发 save;恢复后限上限(防快照过大撑爆内存)
       for (const [k, v] of Object.entries(incoming)) files[normalize(k)] = v
       enforceLimit()
+      _dirty = true  // 恢复后内容确定,下次 save 应 clone 作新基线(防复用上个会话/旧栈的 lastVfsClone)
     }
     store.flush = () => {
       if (saveTimer) {
@@ -178,6 +194,7 @@ export function createVfs(
       // 清空 raw target(新会话),触发落盘空
       for (const k of Object.keys(files)) delete files[k]
       scheduleSave()
+      _dirty = true  // 清空后内容变,下次 save 必 clone 新基线(空)
     }
   }
   return store

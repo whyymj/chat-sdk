@@ -53,7 +53,9 @@ export interface CheckpointDeps {
   getData?: () => unknown
   /** 主数据写回回调(单对象 data 模型):restore 时把快照写回当前 bind(就地还原保留 reactive 引用) */
   restoreData?: (snap: unknown) => void
-  /** 注册的 数据槽 path 列表(旧 windowProps 模式:从 window 按 path 整体快照);data 模式用 getData 即可,此项可省略或传 [] */
+  /** 读后清 bind 脏标记,返回是否脏(供 save 增量:脏或首次才 clone,不脏复用上次 clone 省深拷贝)。省略则 save 永远整体 clone(向后兼容) */
+  consumeDataDirty?: () => boolean
+  /** 注册的 数据槽 path 列表(旧 windowProps 模式:从 window 按 path 整体快照);data 模型用 getData 即可,此项可省略或传 [] */
   slotPaths?: string[]
   /** vfs 工作区(回滚时清空重填) */
   vfsStore: VfsStore
@@ -135,17 +137,32 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
   const stack: Checkpoint[] = []
   const max = deps.maxCheckpoints ?? 5
   let nextId = 1
+  // 增量快照缓存:未脏时复用上次 clone(vfs 默认 8MB + bind 几百 K,长任务每轮省深拷贝)。
+  //   consumeDirty/consumeDataDirty 读后清;脏或缓存为空(首次/importStack 后)才 clone 新基线。
+  //   ⚠ 复用安全前提:clone 经 structuredClone 解 Proxy 成纯对象(不复制 Proxy 性质),且仅 restore 时 clone(cp.x) 再用,
+  //     缓存引用从不被直接 mutate → 多 checkpoint 共享同一 clone 引用不会互相污染。
+  let lastVfsClone: Record<string, VfsFile> | undefined
+  let lastBindClone: unknown
 
   return {
     save(label) {
       const messages = trimTrailingEmptyAssistant(deps.messages)
       const windowVals: Record<string, unknown> = {}
       if (deps.getData) {
-        // 单对象 data 模式:快照主数据 bind(键 '' 表示整体)
-        windowVals[''] = clone(deps.getData())
+        // 单对象 data 模式:脏标记增量(脏或缓存空才 clone 新基线,否则复用上次 clone 省深拷贝)
+        const bindChanged = deps.consumeDataDirty?.() ?? true  // 无 consumeDataDirty → 永远 clone(向后兼容)
+        if (bindChanged || lastBindClone === undefined) {
+          lastBindClone = clone(deps.getData())
+        }
+        windowVals[''] = lastBindClone
       } else {
-        // 旧 windowProps 模式:从 window 按 path 读(零桥接)
+        // 旧 windowProps 模式:从 window 按 path 读(零桥接;不增量,保持简单+正确)
         for (const p of deps.slotPaths ?? []) windowVals[p] = clone(getByPath(window, p))
+      }
+      // vfs 增量(最大头 8MB):vfsStore 写经 Proxy 统一标脏,未脏复用上次 clone
+      const vfsChanged = deps.vfsStore.consumeDirty?.() ?? true
+      if (vfsChanged || lastVfsClone === undefined) {
+        lastVfsClone = clone(deps.vfsStore.files)
       }
       const cp: Checkpoint = {
         id: nextId++,
@@ -153,7 +170,7 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
         timestamp: Date.now(),
         messages: clone(messages),
         windowVals,
-        vfs: clone(deps.vfsStore.files),
+        vfs: lastVfsClone as Record<string, VfsFile>,
         todos: clone(deps.getTodos()),
         messageCount: messages.length,
       }
@@ -192,6 +209,10 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
       Object.assign(files, clone(cp.vfs))
       // 4. todos:reset
       deps.todosMw.reset(clone(cp.todos))
+      // 5. 失效增量缓存基线:restore 改了 bind(restoreInPlace 不经 dataOps 脏标记)与 vfs(虽经 Proxy 标脏),
+      //   重置 lastXxxClone 强制下次 save 重建基线(防 restore 后 save 复用旧基线 → 静默错乱;跨轮 restore 测试驱动发现)
+      lastBindClone = undefined
+      lastVfsClone = undefined
       return true
     },
 
@@ -201,6 +222,9 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
 
     importStack(cps: unknown[]) {
       stack.length = 0
+      // 恢复栈的 checkpoint 与当前 lastXxxClone 缓存基线可能不一致 → 重置,下次 save 必 clone 重建基线(防复用错基线致 restore 错乱)
+      lastVfsClone = undefined
+      lastBindClone = undefined
       const arr = Array.isArray(cps) ? cps : []
       for (const cp of arr) {
         // 仅灌入结构完整的 checkpoint(防脏数据 + id 必须是有限数,否则 Math.max 成 NaN → nextId=NaN → 后续 save 产出 NaN id)

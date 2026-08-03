@@ -13,11 +13,13 @@
 ### Performance
 - **formatForLog short-circuit**:生产(debug=false 且无 onLog)`formatForLog` 直接 return `[]` 不 stringify,省长任务每轮 O(context)→O(1)(debugLogs 仍 push entry 供 round/model 诊断,仅 messages 字段空)。
 - **extractSchemaHint WeakMap 缓存**:按 schema 对象引用 + optsKey 缓存 hint(每轮 augmentPrompt 经 replaceSystem→buildSystemPrompt 重算 → 命中省 renderOverview/Shallow);setData 传新 schema → 新引用自动 miss,无需手动失效。原逻辑抽 `computeSchemaHintImpl`。
+- **checkpoint save 脏标记增量(P1 perf,checkpoint-incremental-snapshot)**:checkpoint 每轮 beforeModel 整体深 clone vfs(默认 8MB)+ bind(几百 K)→ 长任务几十轮累积纯浪费(大多数轮 vfs/bind 根本没变,agent 只 read 或局部 patch)。改造:① vfs 加 `_dirty`(Proxy set/delete 统一置脏,**零遗漏覆盖所有工具写**;hydrate/clear 手动)+ `consumeDirty()`/`isDirty()`;② dataOps controller 加 `markDataDirty`/`consumeDataDirty`,全写路径标脏(`commitSetToBind` 新增 `onWrite` 回调收敛 set_data/write(set)/draft_commit,dryRun 不触发;edit/delete/restore/handleConflict·restore/eval transform 3 模式/write del·edit·patches / controller.set·update / importData);③ checkpoint save 脏或缓存空才 clone,否则复用上次 clone(闭包 `lastVfsClone`/`lastBindClone`);④ **restore/importStack 重置增量基线**(测试驱动发现:restore 改 bind 走 restoreInPlace 不经 dataOps 脏标记 → 重置 lastBindClone 强制下次 save 重建,防 restore 后 save 复用旧基线静默错乱);⑤ importStack 重置缓存。MVP 只 vfs+bind(messages 保持整体 clone,Phase B 单独评估)。对外 API 零变(纯内部优化)。
 
 ### Tests
 - **stub BaseChatModel 基建(`tests/e2e/_stub-model.mjs`)**:本地 BaseChatModel 子类(可控响应队列:文本/工具调用/抛错/usage),驱动真实 agent ReAct 循环不发 HTTP —— 补 selftest 触不到的 createChatSdk 顶层运行时测盲区。stub throw 默认 status:400(4xx 非 retryable,防 withRetry 把普通 Error 当网络错误重试)。
 - automation 运行时测(budget 端到端 + send 致命错误恢复[maxAutoRetries+restore] + batch 任务隔离 + 断点续跑跨实例恢复)、subagent-writable(spawn_agent 透传 writablePaths + 越界 PATH_OUT_OF_SCOPE + 整体 set 禁)、todos-tier(write_todos 层级 parentId/deps → inspect 反映)。e2e 263→283。
 - maliang-real-llm 审计脚本:send(invoke)不外发 tool_call 事件 → 工具链改从 `inspect().trace.spans` 收(tool span name = 工具名)。
+- checkpoint 增量(sec-17):vfs 脏标记(consumeDirty 读后清/未变轮共享 clone 引用/写后新 clone/restore 共享安全)+ bind 脏标记(set/edit/delete/restore/handleConflict/write·dryRun·del/controller.set 各写路径标脏,只读·dryRun 不标)+ **跨轮 restore 一致性**(写→save→写→save→restore(id1/id2/id3)→bind/vfs 数据一致 + restore 后 save 基线重建)。selftest 1030→1055。
 
 ### Docs
 - usage-guide(中英):§6.13 结构化追踪 TraceSpan + §6.14 无人值守自动化(资源预算/错误恢复/batch/断点续跑)。

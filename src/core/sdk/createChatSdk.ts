@@ -646,6 +646,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const checkpointMgr: CheckpointManager | null = useCheckpoint
     ? createCheckpointManager({
         getData: () => liveData()?.bind,  // 单对象 data 模式:快照/回滚主数据 bind(getter 适配 sdk.setData 运行时替换)
+        consumeDataDirty: () => dataOpsController?.consumeDataDirty?.() ?? true,  // bind 脏标记增量(dataOpsController 在下方声明,闭包延迟引用同 getData→liveData;无 controller 返 true=整体 clone 向后兼容)
         slotPaths: finalDataConfig ? [''] : [],
         vfsStore,
         todosMw,
@@ -1768,6 +1769,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         if (!r.success) return { ok: false, error: 'schema 校验失败:' + (r.error?.message ?? '未知错误') }
       }
       restoreInPlace(bind as Record<string, unknown> | unknown[], json)
+      core.dataOpsController?.markDataDirty?.()  // 整体替换 bind → 标脏(下次 checkpoint save 必 clone 新基线,防复用旧 bind clone)
       if (opts?.emit !== false) core.emit({ type: 'data_change', operation: 'set', value: bind })
       return { ok: true }
     },
