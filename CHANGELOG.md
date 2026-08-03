@@ -2,6 +2,27 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+### Fixed
+- **automation 断点续跑持久化从未生效(quality-hardening 运行时测驱动发现)**:`storage.ts` 的 `SnapshotKind`/`SNAPSHOT_KINDS` 只含 messages/vfs/todos/memory,**不含 checkpoints/usage** → `persistRuntime` 调 `store.save({checkpoints})`/`{usage}` 被 save 遍历 SNAPSHOT_KINDS 时 skip → **从未持久化**;`applySnapshot` 读 `snap.checkpoints`/`usage` 但 load 不读这俩 kind → 跨实例恢复失效。影响:`capabilities.automation + checkpoint + storage` 的断点续跑(刷新/崩溃后恢复 checkpoint 栈 + 累计 usage)自 2.20 发布以来从未真正工作。修复:SnapshotKind/SNAPSHOT_KINDS 加 checkpoints/usage(save/load 遍历自动处理;老 snapshot 无这俩 kind 向后兼容)。
+
+### Added
+- **proxyLlm direct 生产安全闸**:`createProxyLlm({ ... throwOnDirectInProduction })` 新增 opt-in 配置。生产环境(https + 非本地域)检测到 direct 模式时,默认仍 `console.warn`(向后兼容);设 `throwOnDirectInProduction:true` → 直接 throw 阻断 direct 误用于生产(防 apiKey 进 bundle 泄露;direct 本就标注「仅开发」)。
+
+### Performance
+- **formatForLog short-circuit**:生产(debug=false 且无 onLog)`formatForLog` 直接 return `[]` 不 stringify,省长任务每轮 O(context)→O(1)(debugLogs 仍 push entry 供 round/model 诊断,仅 messages 字段空)。
+- **extractSchemaHint WeakMap 缓存**:按 schema 对象引用 + optsKey 缓存 hint(每轮 augmentPrompt 经 replaceSystem→buildSystemPrompt 重算 → 命中省 renderOverview/Shallow);setData 传新 schema → 新引用自动 miss,无需手动失效。原逻辑抽 `computeSchemaHintImpl`。
+
+### Tests
+- **stub BaseChatModel 基建(`tests/e2e/_stub-model.mjs`)**:本地 BaseChatModel 子类(可控响应队列:文本/工具调用/抛错/usage),驱动真实 agent ReAct 循环不发 HTTP —— 补 selftest 触不到的 createChatSdk 顶层运行时测盲区。stub throw 默认 status:400(4xx 非 retryable,防 withRetry 把普通 Error 当网络错误重试)。
+- automation 运行时测(budget 端到端 + send 致命错误恢复[maxAutoRetries+restore] + batch 任务隔离 + 断点续跑跨实例恢复)、subagent-writable(spawn_agent 透传 writablePaths + 越界 PATH_OUT_OF_SCOPE + 整体 set 禁)、todos-tier(write_todos 层级 parentId/deps → inspect 反映)。e2e 263→283。
+- maliang-real-llm 审计脚本:send(invoke)不外发 tool_call 事件 → 工具链改从 `inspect().trace.spans` 收(tool span name = 工具名)。
+
+### Docs
+- usage-guide(中英):§6.13 结构化追踪 TraceSpan + §6.14 无人值守自动化(资源预算/错误恢复/batch/断点续跑)。
+- capability-boundaries:B7 移「能做」(TraceSpan 2.19 已实现)+ automation 说明(2.20)+ 升级矩阵(标注 B1-B5/B7 多数已实现,文档整体过时待更新)。
+
 ## [2.20.1] - 2026-08-02
 
 ### Fixed(4 agent 交叉审查 P0)

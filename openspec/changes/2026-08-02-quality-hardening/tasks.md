@@ -37,5 +37,5 @@
 - [x] 审计脚本输出对齐 trace.metrics:maliang 已输出 `info.trace.metrics`(轮次/工具成功率/压缩频次/model 调用数/token)+ findings 用 metrics.rounds
 
 ## 收尾
-- [ ] observability-tracing change 文档项完成 → 归档
-- [ ] 全测绿 + CHANGELOG
+- [x] observability-tracing change 文档项完成 → 归档(2026-08-02 已归档,文档债转 quality-hardening §3 已补)
+- [x] 全测绿 + CHANGELOG(selftest 1030 / e2e 283;CHANGELOG [Unreleased] 段已加 storage fix / throwOnDirectInProduction / perf / tests / docs)
