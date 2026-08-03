@@ -28,8 +28,8 @@ const EVICT_DELAY_MS = 300
 const META_KIND = '__meta__'
 const KEY_PREFIX = 'v:1'
 
-type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory'
-const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory']
+type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage'
+const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage']
 
 // ===== 数据结构 =====
 export interface SessionMeta {

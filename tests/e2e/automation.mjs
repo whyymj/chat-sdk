@@ -1,6 +1,6 @@
 // automation(Phase 4 无人值守自动化):capabilities.automation 反映 + budget 中间件装载 + batch API + 配置项 + opt-in 边界
 // + stub model 运行时测(quality-hardening §1):验证 stub 基建可驱动真实 agent ReAct 循环(后续 budget/错误恢复测的前置)
-import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool, makeStore } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
@@ -55,6 +55,81 @@ export async function run() {
     assert(budgetErr, 'budget 超限 → emit BUDGET_EXCEEDED error 事件(资源预算闸端到端触发)')
     assert(model.calls === 1, `budget 在第二轮 model 调用前拦截(第一轮累计 usage=1000 > 上限 500,第二轮不调 model),实际 model.calls=${model.calls}`)
     off(); sdk.unmount()
+  }
+
+  console.log('[e2e:automation] send 致命错误自动恢复(stub 第一次抛错 → restore checkpoint + 重试 → 第二次成功)')
+  {
+    // automation 错误恢复(createChatSdk.ts:1059):invoke 抛错 → attempt<maxAutoRetries && canRestore → restore 回本轮前 + 重试
+    // stub 队列:[throw] → 第一次 invoke 抛错 → restore → [text] → 第二次 invoke 成功
+    const model = stubModel(
+      { throw: '模拟模型致命错误' },  // string → stub 自动构造 status:400 非 retryable Error(防 withRetry 重试)
+      { text: '重试后成功' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-auto-recover', storage: 'memory', llm: model,
+      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true, maxAutoRetries: 1,
+    })
+    await sdk.mount()
+    const events = []
+    const off = sdk.hook((e) => events.push(e))
+    const reply = await sdk.send('跑任务')
+    assert(reply === '重试后成功', `致命错误恢复:stub 第一次抛错第二次成功 → 重试成功,实际 reply=${reply}`)
+    assert(model.calls === 2, `第一次抛错 → restore + 重试第二次成功(2 次 model 调用),实际 model.calls=${model.calls}`)
+    const retryEvt = events.find((e) => e.type === 'error' && e.code === 'AUTO_RECOVER_RETRY')
+    assert(retryEvt, '致命错误自动恢复 → emit AUTO_RECOVER_RETRY(observable,告知回退重试)')
+    off(); sdk.unmount()
+  }
+
+  console.log('[e2e:automation] batch 任务隔离(stub [成功,抛错,成功] → ok 混合,失败不中断整批)')
+  {
+    // batch(createChatSdk.ts:1102):逐任务 invoke,每任务前 checkpoint;失败任务 truncate messages(splice)+ ok:false,不中断整批
+    const model = stubModel(
+      { text: '任务1完成' },
+      { throw: '任务2失败' },  // string → stub 自动构造 status:400 非 retryable
+      { text: '任务3完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-batch', storage: 'memory', llm: model,
+      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+    })
+    await sdk.mount()
+    const events = []
+    const off = sdk.hook((e) => events.push(e))
+    const results = await sdk.batch(['任务1', '任务2', '任务3'])
+    assert(results.length === 3, `batch 跑 3 任务,实际 ${results.length}`)
+    assert(results[0].ok === true && results[2].ok === true, '任务1/3 成功(ok:true)')
+    assert(results[1].ok === false, '任务2 失败隔离(ok:false,不中断整批继续任务3)')
+    const failEvt = events.find((e) => e.type === 'error' && e.code === 'BATCH_TASK_FAILED')
+    assert(failEvt, '任务失败 → emit BATCH_TASK_FAILED(observable)')
+    off(); sdk.unmount()
+  }
+
+  console.log('[e2e:automation] 断点续跑(store 写 checkpoints/usage → 新实例同 id 恢复 → listCheckpoints/usage/restoreLastCheckpoint)')
+  {
+    // automation 断点续跑(createChatSdk.ts:1002 applySnapshot):snapshot 含 checkpoints 栈 + usage,
+    // 刷新后新 sdk 同 id + 同 storage → mount load → applySnapshot 恢复(importStack + Object.assign usage)。
+    // session/local backend 走 globalThis(跨实例共享 = 模拟刷新);memory 每实例独立 Map 不能跨实例。
+    globalThis.sessionStorage = makeStore()
+    const sess = { id: 'e2e-resume-sess' }  // 固定 sessionId,直接 load 该 id snapshot(避免依赖 listSessions autoResume 时序)
+    const sdk1 = createChatSdk({
+      ui: false, id: 'e2e-resume', storage: 'session', session: sess, llm: stubModel({ text: '任务完成', usage: { total_tokens: 500 } }),
+      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+    })
+    await sdk1.mount()
+    await sdk1.send('跑任务')  // beforeModel save(checkpoint 栈)+ afterModel usage 累加 500
+    await sdk1.unmount()       // flush 写 store(snapshot 含 checkpoints + usage)
+    // sdk2:同 id + 同 storage + 同 session.id(session 共享 globalThis)→ mount load → applySnapshot 恢复 checkpoint 栈 + usage
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-resume', storage: 'session', session: sess, llm: stubModel({ text: 'x' }),
+      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+    })
+    await sdk2.mount()
+    assert(sdk2.listCheckpoints().length > 0, `断点续跑:listCheckpoints 恢复有值(checkpoint 栈从 store 恢复),实际 ${sdk2.listCheckpoints().length}`)
+    assert(sdk2.usage.total_tokens === 500, `断点续跑:usage 连续恢复(total_tokens=500),实际 ${sdk2.usage.total_tokens}`)
+    let restoreOk = true
+    try { sdk2.restoreLastCheckpoint() } catch { restoreOk = false }
+    assert(restoreOk, '断点续跑:restoreLastCheckpoint 可用(恢复后栈可回退,不抛错)')
+    sdk2.unmount()
   }
 
   console.log('[e2e:automation] capabilities.automation:true → budget 中间件装载 + batch API 暴露')
