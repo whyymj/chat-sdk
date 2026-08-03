@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.22.1] - 2026-08-03
+
 ### Added
 - **complex-demo 新增 3 组件(component-library-expansion,范围调整)**:badge(徽标)/ progress(进度条)/ skeleton(骨架屏)—— `defs/*.ts` + `components/*Comp.vue` + `pageSchema.ts`(discriminatedUnion 33→36 + PageComponent)+ `CompRenderer.vue` + initialPage 实例。用户决策「不需要 80,加几个意思意思就可以」。tsc 类型检查通过 + complex-demo browser spec 9 passed 回归。意外发现:`extractSchemaHint` 对 `components[union]` 数组字段不全量展开(深入靠 `schema_data`)→ 原「80 type 撑爆 systemPrompt」担忧不成立。
 
