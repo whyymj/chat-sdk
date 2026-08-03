@@ -749,6 +749,56 @@ off2()
 
 `onEvent` and `hook` are complementary: the former is a single constructor-time callback, the latter runtime multi-listener; both can coexist. Event types and filtering rules as above (`approval_request` not forwarded; stream events only in stream mode).
 
+### Structured tracing — TraceSpan (performance attribution / debugging, 2.19+)
+
+For long/complex runs where flat logs can't tell which round was slow, failed, or burned tokens. Enable structured tracing to get a **TraceSpan tree** (per-round `model`/`tool`/`compression` timing/status/usage) for performance attribution and error tracing. Opt-in (collection has overhead, default off).
+
+```ts
+createChatSdk({
+  capabilities: { tracing: true },  // opt-in, default off
+  onEvent: (e) => {
+    if (e.type === 'trace') console.log('trace done', e.metrics)  // emits spans + metrics when agent call ends
+  },
+})
+// After a run:
+// sdk.inspect().trace → { spans, metrics } (rounds / latency / tool success rate / retries / compressions / tokens)
+// DebugDrawer 4th tab 🌳 Trace → metrics card + span list (visual)
+```
+
+- **Span types**: `round` / `model` (LLM call) / `tool` / `compression`, with `startTs`/`endTs`/`durationMs`/`status`/`attributes` (round no, tool name, usage, etc).
+- **`getTraceMetrics(spans)`** (exported pure fn): aggregates round count, avg/total latency, tool success rate, retries, compression freq, cumulative tokens.
+- **`onEvent('trace')`**: emits `{ spans, metrics }` when the agent call ends (feed APM / custom monitoring).
+- **`inspect().trace`**: runtime reflection of current spans + metrics.
+
+> Use cases: debug long-task bottlenecks (which round is slow), error tracing (which round failed), token-budget monitoring. APM backend reporting / distributed tracing still not built (backend-framework concern; feed via `onEvent('trace')` to Datadog/Sentry yourself).
+
+### Unattended automation (resource budget / error recovery / batch / resume, 2.20+)
+
+For unattended batch / long-task scenarios (generate pages in the background, cron jobs, long flows): budget control, automatic error recovery, batch processing, and resume after refresh/crash. Opt-in (most advanced, default off).
+
+```ts
+const sdk = createChatSdk({
+  capabilities: { automation: true },  // opt-in, default off
+  tokenBudget: 100000,      // cumulative token cap (exceed → stop + emit BUDGET_EXCEEDED)
+  timeBudgetMs: 600000,     // time cap ms (10 min; exceed → stop)
+  maxAutoRetries: 2,        // fatal-error auto-recovery count (restore_last_checkpoint + retry; default 1)
+  checkpoint: true,         // pairs with resume (per-round snapshot + persist checkpoint stack/usage)
+  storage: 'indexed',       // resume needs persistence
+  id: 'my-automation',      // stable id (same id recovers same session after refresh)
+})
+
+// Batch: run tasks one by one, checkpoint before each, failure isolated
+const results = await sdk.batch(['gen page A', 'gen page B', 'gen page C'])
+// → [{ task, reply, ok:true }, { task, error, ok:false }, { task, reply, ok:true }]
+```
+
+- **Resource budget** (`tokenBudget`/`timeBudgetMs`): checked before each model call; exceed → agent stops + emits `BUDGET_EXCEEDED` (observable); unfinished part can `restoreLastCheckpoint`.
+- **Error recovery** (`maxAutoRetries`): fatal invoke error → `restore_last_checkpoint` + retry (limited) + emit `AUTO_RECOVER_RETRY`; exhausted → fatal.
+- **Batch** (`sdk.batch(tasks)`): per-task invoke, checkpoint before each; failed task `messages` splice truncate + `ok:false` doesn't halt the batch + emit `BATCH_TASK_FAILED`.
+- **Resume**: after refresh/crash, new sdk with same `id` + `storage` → mount recovers (checkpoint stack + cumulative usage from store) → `listCheckpoints` has values + `restoreLastCheckpoint` works + budget stats stay continuous. Needs `capabilities.automation` + `checkpoint` + `storage` together.
+
+> Use cases: batch generation, cron jobs, long flows. Combine headless (`ui:false`) + `storage` + `automation` for in-browser background automation (no Node cross-env).
+
 ### 6.10 Convenience API (export / import / usage / audit)
 
 Beyond event subscription, the SDK instance exposes a few convenience APIs covering backup/migration, usage stats, and audit tracing:

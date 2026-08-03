@@ -81,14 +81,15 @@
 - **升级路径**:如真需,集成方可挂多个 agent 实例(shareContext 或独立 id),各自管一对象;框架不内置多对象关联
 - **工作量**:框架零改(集成方组合)
 
-### B7. 结构化追踪 / APM / 分布式追踪
+### B7. 结构化追踪 ✅ 已实现(2.19,Phase 3)
 
-- **现状**:`debugLogs` 扁平数组 + DebugDrawer 调试;无 span 树 / timing / metrics / APM 上报。
-- **为什么**:TraceSpan 树 + APM 是后端 agent 框架需求;SDK 用户是前端集成者,扁平 debugLogs 已够调试。
-- **对应提案**:⏸ `observability-structured-tracing`(缩水:TraceSpan 树不做,只留 getTraceMetrics 想法)
-- **重启触发**:集成方明确提「生产监控 / SLA / 分布式追踪」需求
-- **升级路径**:先做 `getTraceMetrics(debugLogs)` 纯函数(聚合扁平日志出每轮延迟/工具成功率/重试/压缩频次);不引入 span 树
-- **工作量**:纯函数 ~50 行
+- **已能做**:结构化追踪 **TraceSpan 树**(`round`/`model`/`tool`/`compression` 4 埋点 + `timing`/`status`/`usage`)+ `getTraceMetrics(spans)` 纯函数(轮次/延迟/工具成功率/重试/压缩频次/token)+ `inspect().trace` + `onEvent('trace')` + DebugDrawer 🌳 Trace tab。`capabilities.tracing` opt-in(默认关,采集有性能开销)。详见 `usage-guide.md` §6.13。
+- **仍不做**:APM 后端上报 / 分布式追踪(后端框架需求;集成方经 `onEvent('trace')` 自接 Datadog/Sentry 等)。
+- **历史**:原 `observability-structured-tracing` 缩水版,`complex-agent-roadmap` 定位升级后重启为完整 TraceSpan 树(`revive-observability-tracing`,已归档)。
+
+> **automation(2.20,Phase 4)也已实现**:无人值守自动化 —— 资源预算(`tokenBudget`/`timeBudgetMs`)+ 错误恢复(`maxAutoRetries`)+ 批处理(`sdk.batch`)+ 断点续跑(checkpoint 栈/usage 持久化恢复)。`capabilities.automation` opt-in(最远)。详见 `usage-guide.md` §6.14。
+>
+> ⚠ **本文档整体过时**:Phase 1-4 全部完成后,B1-B5/B7 多数已实现(todos 依赖 B1 / 跨轮记忆 B2 / 子 agent 写 B3 / draft B4 / Mission B5 / 追踪 B7)。下表「升级路径」为历史记录,多数已完成;待后续整体更新「能做/做不到」口径。
 
 ---
 
@@ -102,7 +103,7 @@
 | B4 MB 级 JSON | draft_write/commit | — | ~200 行 | 单次写不完场景 |
 | B5 目标锚定 | Mission 一等公民 | — | ~180 行(Phase1) | 跑偏/丢主线反馈 |
 | B6 多对象 | 多 agent 组合 | — | 0(集成方) | — |
-| B7 追踪 | getTraceMetrics | — | ~50 行 | 监控/SLA 需求 |
+| B7 追踪 | ✅ 已实现(TraceSpan 树 + getTraceMetrics,2.19) | — | 已完成 | — |
 
 ---
 

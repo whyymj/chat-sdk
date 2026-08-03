@@ -1049,6 +1049,56 @@ sdk.listCheckpoints()  // 查看可用回退点
 
 > **与 dataOps 快照区别**:dataOps 快照(`restore_data`)随 set/edit/delete 自动入栈,单次回退最近一次写;checkpoint 整体,回滚到某轮起点(跨多次写 + 对话 + vfs + todos)。二者叠加:小错用 dataOps 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
 
+### 6.13 结构化追踪 TraceSpan(性能归因 / 调试,2.19+)
+
+长任务/复杂场景下,扁平日志不知哪轮慢、哪轮失败、哪轮烧 token。开启结构化追踪得到 **TraceSpan 树**(每轮 `model`/`tool`/`compression` 的 timing/status/usage),供性能归因与错误追溯。opt-in(采集有性能开销,默认关)。
+
+```ts
+createChatSdk({
+  capabilities: { tracing: true },  // opt-in,默认关
+  onEvent: (e) => {
+    if (e.type === 'trace') console.log('trace 完成', e.metrics)  // agent 调用结束 emit spans + metrics
+  },
+})
+// 运行后:
+// sdk.inspect().trace  → { spans, metrics }(轮次/延迟/工具成功率/重试/压缩/token)
+// DebugDrawer 第 4 tab 🌳 Trace → metrics 卡片 + span 列表(可视化)
+```
+
+- **Span 类型**:`round`(每轮)/ `model`(LLM 调用)/ `tool`(工具执行)/ `compression`(上下文压缩),含 `startTs`/`endTs`/`durationMs`/`status`/`attributes`(round 编号、工具名、usage 等)。
+- **`getTraceMetrics(spans)`**(导出纯函数):聚合出轮次数、平均/总延迟、工具成功率、重试次数、压缩频次、累计 token。
+- **`onEvent('trace')`**:agent 调用结束 emit `{ spans, metrics }`(供集成方接 APM / 自建监控)。
+- **`inspect().trace`**:运行时反射当前 spans + metrics(DebugDrawer / headless 读)。
+
+> 适用:调试长任务瓶颈(哪轮慢)、错误追溯(哪轮失败)、token 预算监控(每轮 usage)。仍不做 APM 后端上报 / 分布式追踪(后端框架需求;经 `onEvent('trace')` 自行接 Datadog/Sentry 等)。
+
+### 6.14 无人值守自动化(资源预算 / 错误恢复 / 批处理 / 断点续跑,2.20+)
+
+无人值守批量 / 长任务场景(后台生成一批页面、定时任务、长流程),需:预算控制(防烧 token/时间)、错误自动恢复(单点错误不永久中断)、批处理、断点续跑(刷新/崩溃后恢复)。opt-in(最远能力,默认关)。
+
+```ts
+const sdk = createChatSdk({
+  capabilities: { automation: true },  // opt-in,默认关
+  tokenBudget: 100000,      // 累计 token 上限(超 → 停止 + emit BUDGET_EXCEEDED)
+  timeBudgetMs: 600000,     // 时间上限 ms(10 分钟;超 → 停止)
+  maxAutoRetries: 2,        // 致命错误自动恢复次数(restore_last_checkpoint + 重试;默认 1)
+  checkpoint: true,         // 配合断点续跑(每轮存档 + 持久化 checkpoint 栈/usage)
+  storage: 'indexed',       // 断点续跑需持久化(刷新后恢复)
+  id: 'my-automation',      // 稳定 id(刷新后同 id 恢复同一会话)
+})
+
+// 批处理:逐任务跑,每任务前 checkpoint,失败隔离(不中断整批)
+const results = await sdk.batch(['生成专题A', '生成专题B', '生成专题C'])
+// → [{ task, reply, ok:true }, { task, error, ok:false }, { task, reply, ok:true }]
+```
+
+- **资源预算**(`tokenBudget`/`timeBudgetMs`):每轮 model 调用前检查累计;超限 → agent 停止 + emit `BUDGET_EXCEEDED`(observable,不中断 emit 链),未完成部分可 `restoreLastCheckpoint` 回退。
+- **错误恢复**(`maxAutoRetries`):invoke 致命错误 → `restore_last_checkpoint` 回本轮前 + 重试(限次防循环)+ emit `AUTO_RECOVER_RETRY`(observable);重试耗尽 → fatal(emit + throw)。适合单点模型/工具错误不永久中断批量。
+- **批处理**(`sdk.batch(tasks)`):逐任务 invoke,每任务前 `checkpoint.save`;失败任务 `messages` splice truncate(撤销本轮 user + 中间 push,防失败 user 残留致下一任务上下文错乱)+ `ok:false` 不中断整批 + emit `BATCH_TASK_FAILED`。
+- **断点续跑**:刷新/崩溃后,新 sdk 同 `id` + `storage` → mount 恢复(checkpoint 栈 + 累计 usage 从 store 恢复)→ `listCheckpoints` 有值 + `restoreLastCheckpoint` 可用 + 预算统计连续。需 `capabilities.automation` + `checkpoint` + `storage` 三者配合。
+
+> 适用:批量生成(一次生成 N 个专题页)、定时任务(夜间跑)、长流程(几百 K JSON 分步构建)。headless(`ui:false`)+ `storage` + `automation` 组合实现浏览器内后台自动化(不跨环境到 Node)。
+
 ### 6.10 MCP(外部工具接入)
 
 连远程 MCP server,动态把其 tools 注入 agent(标准化扩展工具生态):

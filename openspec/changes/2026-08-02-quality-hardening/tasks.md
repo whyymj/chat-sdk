@@ -27,10 +27,10 @@
 - [ ] 性能对比(可选 bench):长任务 formatForLog/augmentPrompt 前后 —— 留 TODO;perf 改动对外行为不变,正确性靠现有 selftest(sec-19/31/37)覆盖
 
 ## 3. 文档债(中英同步)
-- [ ] `doc/usage-guide.md`:tracing 用法 + automation §1-4 用法
-- [ ] `doc/usage-guide.en.md`:同(英文)
-- [ ] `doc/capability-boundaries.md`:B7 移「能做」+ automation 说明
-- [ ] CLAUDE.md 计数同步(selftest/e2e 新增)
+- [x] `doc/usage-guide.md`:§6.13 结构化追踪 TraceSpan + §6.14 无人值守自动化(资源预算/错误恢复/batch/断点续跑)
+- [x] `doc/usage-guide.en.md`:同(英文,Structured tracing + Unattended automation)
+- [x] `doc/capability-boundaries.md`:B7 移「能做」(TraceSpan 2.19 已实现)+ automation 说明(2.20)+ 升级矩阵 B7 标完成;标注文档整体过时(B1-B5/B7 多数已实现)
+- [x] CLAUDE.md 计数同步(selftest 1030 / e2e 283,前序 commit 已改)
 
 ## 3b. 审计脚本修正(maliang-real-findings ⚠ 发现)
 - [ ] `tests/runtime/` 真 LLM 审计脚本:onEvent tool_call 在 send(invoke)模式不外发(仅 stream 模式发),任务级工具链收集为空 → 改用 `inspect().trace.metrics.toolCalls` 增量收(或 stream 模式收 tool_call),不依赖 onEvent
