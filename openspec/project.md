@@ -24,11 +24,9 @@
 
 ## 进行中的 change
 
-> 2026-08-03 状态:`complex-agent-roadmap` umbrella(Phase 1-4 全完成发布 2.18-2.20)已归档;`p2-architecture-refactor` 部分归档(③④⑤ 完成,①② 拆 deferred,见 [`deferred.md`](./deferred.md));`checkpoint-incremental-snapshot` + `quality-hardening` 均已归档(见下「最近完成」)。当前活跃 change 为 **1 项**:
+> 2026-08-03 状态:P1(checkpoint + quality-hardening)+ P2(component-library)全部归档。**当前无活跃 change**(openspec `changes/` 清空,全部在 `archive/`)。
 
-- **`component-library-expansion`(P2)**:complex-demo 组件类型 34→~80,标尺真实度 + 大 schema 分层披露量级压测。纯 demo/schema 扩充,不动核心,可穿插。
-
-**推进顺序建议**(2026-08-03 更新):P1 收尾归档全部完成(checkpoint + quality-hardening);剩 component-library(P2,纯 demo/schema 扩充,可穿插)。~~p2-refactor(最后,功能稳定后动结构)~~ → 已部分归档(③④⑤ 完成;① createChatSdk 拆分 / ② createAgent 契约拆 deferred,等痛点驱动)。umbrella 定位升级决策记录见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md)(已归档)。
+**推进顺序建议**(2026-08-03 更新):全部活跃 change 归档完成。后续按需新提 change(P1 清空;component-library 范围缩减到 3 个完成)。~~p2-refactor(最后,功能稳定后动结构)~~ → 已部分归档(③④⑤ 完成;① createChatSdk 拆分 / ② createAgent 契约拆 deferred,等痛点驱动)。umbrella 定位升级决策记录见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md)(已归档)。
 
 ## 已评估暂缓 → 已重启并全部落地(2026-08-01 定位升级 → 2026-08-02 完成)
 
@@ -45,6 +43,8 @@
 > 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。`complex-agent-roadmap` umbrella 本身也于 2026-08-02 归档(Phase 1-4 全完成)。
 
 ## 最近完成的 change(已归档)
+
+> **2026-08-03 component-library-expansion 归档(范围调整)**:用户决策「不需要 80,加几个意思意思就可以」。实际完成批 A **3 个简单展示类**(badge / progress / skeleton):`defs/*.ts` + `components/*Comp.vue` + `pageSchema.ts`(schema + union 33→36 + PageComponent 类型)+ `defs/index.ts`(import + push 基础内容)+ `CompRenderer.vue`(import + COMP_MAP)+ initialPage 实例(footer 前 3 个)。`tsc` 类型检查通过 + complex-demo browser spec **9 passed** 回归(新组件不破渲染/交互/huge 800 计数)。批 B-E(到 ~80)取消。**意外发现(澄清核心担忧)**:`extractSchemaHint(pageSchema)` 对 `components[discriminatedUnion]` 数组字段不展开每个 type(只简短描述 +「用 read 查看实际形状」)→ 原担忧「80 type 撑爆 systemPrompt」**不成立**(union 在数组字段内不全量注入,深入靠 `schema_data` 工具)。活跃 1→0。
 
 > **2026-08-03 quality-hardening 归档(本次)**:核对收尾发现 §1§2§3§3b 全部完成并随 2.21.0/2.22.0 发布 —— §1(stub BaseChatModel 基建 `_stub-model.mjs` + automation/subagent-writable/todos-tier 运行时测 automation.mjs,d1b297e)+ §2(formatForLog short-circuit / proxyLlm `throwOnDirectInProduction` 生产安全闸 / extractSchemaHint WeakMap 缓存,21fefd0)+ §3(中英 usage-guide §6.13 结构化追踪 / §6.14 无人值守自动化 + capability-boundaries B7 移「能做」)+ §3b(`tests/runtime/` 3 真 LLM 脚本 tool_call 收集修正:stream 模式收 / `inspect().trace.spans` filter tool 收)。⚠ **运行时测驱动发现并修复 storage bug**:`SnapshotKind`/`SNAPSHOT_KINDS` 不含 checkpoints/usage → automation 断点续跑持久化自 2.20 发布从未生效(见 CHANGELOG)。e2e 实跑 283 passed 0 failed。活跃 2→1。
 

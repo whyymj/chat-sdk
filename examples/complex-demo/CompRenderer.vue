@@ -36,6 +36,9 @@ import NoticeBarComp from './components/NoticeBarComp.vue'
 import IconComp from './components/IconComp.vue'
 import TagComp from './components/TagComp.vue'
 import PriceComp from './components/PriceComp.vue'
+import BadgeComp from './components/BadgeComp.vue'
+import ProgressComp from './components/ProgressComp.vue'
+import SkeletonComp from './components/SkeletonComp.vue'
 
 const ContainerComp = defineAsyncComponent(() => import('./components/ContainerComp.vue'))
 const SectionComp = defineAsyncComponent(() => import('./components/SectionComp.vue'))
@@ -76,6 +79,9 @@ const COMP_MAP: Record<string, Component> = {
   icon: IconComp,
   tag: TagComp,
   price: PriceComp,
+  badge: BadgeComp,
+  progress: ProgressComp,
+  skeleton: SkeletonComp,
 }
 
 const props = defineProps<{ comp: any }>()

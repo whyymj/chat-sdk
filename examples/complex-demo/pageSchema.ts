@@ -366,6 +366,36 @@ const priceSchema = z.object({
   }).describe('价格配置'),
 })
 
+/** 徽标(数字/文字小红点角标) */
+const badgeSchema = z.object({
+  type: z.literal('badge'), ...baseProps,
+  props: z.object({
+    text: z.string().describe('徽标文字/数字'),
+    variant: z.enum(['dot', 'number', 'text']).optional().describe('样式:圆点/数字/文字,默认 text'),
+    color: z.string().optional().describe('背景色,默认 #e11d48(红)'),
+  }).describe('徽标配置'),
+})
+/** 进度条(百分比横向 bar) */
+const progressSchema = z.object({
+  type: z.literal('progress'), ...baseProps,
+  props: z.object({
+    percent: z.number().min(0).max(100).describe('进度百分比 0-100'),
+    color: z.string().optional().describe('进度条填充色,默认 #667eea'),
+    trackColor: z.string().optional().describe('轨道背景色,默认 #eee'),
+    height: z.number().int().min(1).max(60).optional().describe('高度 px,默认 8'),
+    label: z.string().optional().describe('进度文字(可选,如"60% 已完成")'),
+  }).describe('进度条配置'),
+})
+/** 骨架屏(加载占位灰块) */
+const skeletonSchema = z.object({
+  type: z.literal('skeleton'), ...baseProps,
+  props: z.object({
+    variant: z.enum(['text', 'card', 'avatar', 'list']).describe('骨架样式:文本/卡片/头像/列表'),
+    rows: z.number().int().min(1).max(20).optional().describe('行数(text/list 用),默认 3'),
+    shimmer: z.boolean().optional().describe('是否闪烁动画,默认 true'),
+  }).describe('骨架屏配置'),
+})
+
 /** 组件联合(by type 区分,含容器,递归)。z.lazy 递归需显式标注类型避免 TS 循环推断 */
 export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discriminatedUnion('type', [
   headingSchema, richTextSchema, productGridSchema, imageSchema,
@@ -375,6 +405,7 @@ export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discrimi
   statSchema, timelineSchema, footerSchema, ratingSchema, formSchema, inputSchema,
   selectSchema, stepperSchema, breadcrumbSchema, videoSchema, noticeBarSchema,
   iconSchema, tagSchema, priceSchema,
+  badgeSchema, progressSchema, skeletonSchema,
 ]))
 
 /** 递归类型需手动声明(z.infer 无法推导 z.lazy 自引用) */
@@ -394,6 +425,7 @@ export type PageComponent =
   | z.infer<typeof selectSchema> | z.infer<typeof stepperSchema> | z.infer<typeof breadcrumbSchema>
   | z.infer<typeof videoSchema> | z.infer<typeof noticeBarSchema>
   | z.infer<typeof iconSchema> | z.infer<typeof tagSchema> | z.infer<typeof priceSchema>
+  | z.infer<typeof badgeSchema> | z.infer<typeof progressSchema> | z.infer<typeof skeletonSchema>
 
 /** 整页 schema */
 export const pageSchema = z.object({
@@ -510,6 +542,9 @@ export const initialPage: PageData = {
         { name: 'remark', label: '备注', type: 'textarea', placeholder: '想对我们说的' },
       ] } },
     ] } },
+    { type: 'progress', props: { percent: 68, color: '#764ba2', label: '年中和购进度 68%' } },
+    { type: 'badge', props: { text: 'HOT', variant: 'text', color: '#e11d48' } },
+    { type: 'skeleton', props: { variant: 'card', shimmer: true } },
     { type: 'footer', props: { links: [{ label: '关于我们', link: '#' }, { label: '联系客服', link: '#' }, { label: '退换货', link: '#' }, { label: '隐私政策', link: '#' }], contact: '客服热线:400-xxx-xxxx', copyright: '© 2026 数码专区' } },
   ],
 }

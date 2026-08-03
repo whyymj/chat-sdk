@@ -51,13 +51,16 @@ import { selectDef } from './select'
 import { iconDef } from './icon'
 import { tagDef } from './tag'
 import { priceDef } from './price'
+import { badgeDef } from './badge'
+import { progressDef } from './progress'
+import { skeletonDef } from './skeleton'
 
 export { type ComponentCategory, type ComponentDef } from './_types'
 
 /** 全量组件定义(按 category 分组有序) */
 export const COMPONENT_DEFS: ComponentDef[] = [
   // 基础内容
-  headingDef, richTextDef, imageDef, buttonDef, listDef, cardDef, carouselDef, accordionDef, timelineDef, videoDef, noticeBarDef, iconDef, tagDef,
+  headingDef, richTextDef, imageDef, buttonDef, listDef, cardDef, carouselDef, accordionDef, timelineDef, videoDef, noticeBarDef, iconDef, tagDef, badgeDef, progressDef, skeletonDef,
   // 布局
   spacerDef, dividerDef,
   // 容器
