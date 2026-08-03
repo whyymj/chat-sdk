@@ -275,7 +275,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(1055 全过) → `npm run test:e2e`(283 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsc --noEmit 类型正确) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(1055 全过) → `npm run test:e2e`(283 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsconfig.test.json 只查对外 types/index.d.ts 类型对齐 + tests/types.test-d.ts;src 全量类型卫生用 `npx tsc -p tsconfig.json` 单独诊断,**非发布门禁** —— 勿把全量 tsc 报错当门禁阻塞) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 

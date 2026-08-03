@@ -743,7 +743,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const conflict = await handleConflict('edit', effHash)
         if (conflict !== null) return conflict
         // 统一为 patch 列表:批量用 patches(或拦截器转换后的 patchList);单个用 [patch + 顶层 value]
-        const list: { op: EditOp; jsonPath: string; value?: unknown }[] = patchList
+        const list: { op?: EditOp; jsonPath?: string; value?: unknown }[] = patchList
           ? patchList
           : (patches && patches.length) ? patches
           : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
@@ -754,7 +754,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const jp = p.jsonPath || ''
           if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径,如 components.0.text' })
           if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
-          const op = p.op
+          const op = p.op ?? 'set'
           let pVal: unknown
           if (op !== 'remove') {
             if (p.value === undefined || p.value === '') return toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` })
@@ -829,7 +829,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let label: string
       if (useAgainst) {
         // against 可能是 JSON 字符串(LLM 直传),走 maybeParseValue 与 set_data/write 的 value 处理对齐(parse 失败保留原串)
-        let v = against
+        let v: unknown = against
         if (typeof v === 'string') {
           const pr = maybeParseValue(v)
           if (!pr.parseError) v = pr.parsed

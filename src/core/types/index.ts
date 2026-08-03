@@ -135,6 +135,16 @@ export interface AgentInfo {
   tools: ToolInfo[]
   skills: SkillInfo[]
   data?: DataInfo
+  /** 当前上下文压缩预设(默认 auto;complex 为多步复杂任务/大 JSON 场景) */
+  contextPreset?: 'auto' | 'conservative' | 'aggressive' | 'complex'
+  /** 规划阶段防死循环状态(maxPlanRevisions 预算;planning 关闭时 inPlanning 恒 false) */
+  planPhase?: { inPlanning: boolean; rounds: number; limit: number }
+  /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
+  mission?: import('../harness/state').Mission
+  /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
+  workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
+  /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
+  actions?: Record<string, { description: string; hasParams: boolean }>
   memory: string
   middleware: string[]
   todos: { content: string; status: string }[]

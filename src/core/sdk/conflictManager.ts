@@ -31,7 +31,8 @@ export function createConflictManager(getEmit?: () => SdkEventHandler | undefine
       const pending = { ...info, id: ++conflictSeq, resolve }
       pendingConflict.value = pending
       // 外发 conflict 事件(headless 集成方可经 onEvent/hook 收,无需 watch ref)
-      getEmit?.()({ type: 'conflict', conflict: pending })
+      const emit = getEmit?.()
+      emit?.({ type: 'conflict', conflict: pending })
     })
   }
   function resolve(action: ConflictResolution['action']) {

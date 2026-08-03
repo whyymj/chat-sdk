@@ -57,13 +57,14 @@ export function zodError(path: string, issues: unknown[]): string {
 }
 
 /** JSON 解析失败 → toolError,带原解析错误 */
-export function jsonParseError(path: string | undefined, raw: string, err: unknown): string {
+export function jsonParseError(path: string | undefined, raw: unknown, err: unknown): string {
   const msg = (err as Error)?.message || String(err)
+  const rawStr = typeof raw === 'string' ? raw : JSON.stringify(raw)
   return toolError({
     code: 'JSON_PARSE',
     ...(path !== undefined ? { path } : {}),
     message: `value 不是合法 JSON:${msg}`,
-    hint: `检查引号/逗号/括号是否闭合;字符串值需双引号包裹(如 '"dark"' 表示字符串 dark,数字直接写如 5);预览前 80 字符:${raw.slice(0, 80)}`,
+    hint: `检查引号/逗号/括号是否闭合;字符串值需双引号包裹(如 '"dark"' 表示字符串 dark,数字直接写如 5);预览前 80 字符:${rawStr.slice(0, 80)}`,
   })
 }
 

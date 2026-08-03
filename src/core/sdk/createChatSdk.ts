@@ -52,8 +52,7 @@ import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './co
 import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState, Mission } from '../harness/state'
-import { createInitialState } from '../harness/state'
-import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictInfo, type ConflictResolution } from '../tools/dataOps'
+import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
@@ -176,13 +175,13 @@ export interface ChatSdkOptions {
   /** 自定义中间件(在内置中间件之后注入;可拦截/观察模型调用、工具执行、prompt 增强等) */
   middleware?: Middleware[]
   /** 虚拟工作区:初始文件 + 内存字节上限(默认 4MB,超限 LRU 淘汰最旧) */
-  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number }
+  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number; poolBytes?: { largeResults?: number; drafts?: number; userFiles?: number } }
   /** 每个 数据槽最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
-  onAudit?: (entry: { op: string; jsonPath?: string; opDetail?: string; timestamp: number; success: boolean; error?: string }) => void
+  onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
   /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
   toolMode?: 'simple' | 'advanced' | 'minimal'
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
@@ -332,8 +331,12 @@ export interface ChatSdk {
   messages: AgentMessage[]
   /** 卸载(shareContext 时仅减引用计数,归零才真销毁) */
   unmount(): void
-  /** 命令式发送一条消息(共享内部 messages,自动持久化) */
-  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>
+  /** 抽屉模式隐藏:加 cs-hidden class,不卸载 vueApp/不 release agent —— 保留聊天历史与正在进行的生成进程;再 show() 恢复可见 */
+  hide(): void
+  /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
+  show(): void
+  /** 命令式发送一条消息(共享内部 messages,自动持久化);options.interceptors per-call 覆盖顶层 input/output 拦截器,options.maxAutoRetries per-call 覆盖 automation 重试次数 */
+  send(message: string, options?: SendOptions): Promise<string>
   /** 暴露底层流式接口(高级用法,自行管理历史时使用) */
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
@@ -443,6 +446,13 @@ export interface ChatSdk {
   removeSubagent(id: string): boolean
 }
 
+/** send/stream options:mission 显式覆盖(优先于自动 capture)+ interceptors per-call 覆盖(顶层 input/output)+ automation 重试次数覆盖 */
+interface SendOptions {
+  mission?: Partial<Mission>
+  interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }
+  maxAutoRetries?: number
+}
+
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 50
 
@@ -522,6 +532,26 @@ interface AgentCore {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
+  /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
+  setTools(tools: StructuredToolInterface[]): void
+  /** 运行时追加用户工具(去重 by name) */
+  addTool(tool: StructuredToolInterface): void
+  /** 运行时移除用户工具(by name;内置不动);返回是否移除成功 */
+  removeTool(name: string): boolean
+  /** 运行时切换 LLM(BaseChatModel 或 LLMConfig);rebind + 重解析能力 + infoTick */
+  setLlm(llm: BaseChatModel | LLMConfig): void
+  /** 运行时更新 memory;支持 string 与同步/异步函数 */
+  setMemory(source: string | (() => string | Promise<string>)): void
+  /** 重新求值当前 memory 函数 source;返回最新文本 */
+  refreshMemory(): Promise<string>
+  /** 运行时替换预声明子 agent 列表(重新生成委派工具 + rebind) */
+  setSubagents(configs: SubagentConfig[]): void
+  /** 运行时追加预声明子 agent */
+  addSubagent(config: SubagentConfig): void
+  /** 运行时移除预声明子 agent(by id);返回是否移除成功 */
+  removeSubagent(id: string): boolean
+  /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离 */
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
 }
 
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
@@ -1046,10 +1076,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       persistRuntime()
     },
 
-    async send(message: string, options?: { mission?: Partial<Mission> }): Promise<string> {
+    async send(message: string, options?: SendOptions): Promise<string> {
       await core.initDone
       // 容错:partial 调用(headless 实测 sdk.send(msg) 不传 options)→ 默认空对象,避免 options.interceptors 误访问 undefined
-      options = (options ?? {}) as any
+      options = options ?? {}
       // mission 显式覆盖(send({mission}) 优先于自动 capture)
       if (options?.mission && useMission) missionMw.setMission(options.mission)
       // input 拦截器:send 入口预处理 user message(可改写/审计)
@@ -1060,7 +1090,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // automation 无人值守错误恢复:致命错误(invoke 抛错)→ restore_last_checkpoint 回到本轮前 + 重试(限 maxAutoRetries 次防循环)。
       // 适合无人值守批量/长任务:单点模型/工具致命错误不永久中断,自动回退重试;确定性错误重试仍耗尽 → fatal(emit + throw)。
       // checkpoint 在 beforeModel save(时点在 push user 后)→ restore 后 messages 已含本轮 user,故用 pushed 标记避免重复 push。
-      const maxAuto = useAutomation ? ((options as { maxAutoRetries?: number }).maxAutoRetries ?? 1) : 0
+      const maxAuto = useAutomation ? (options.maxAutoRetries ?? 1) : 0
       let attempt = 0
       let pushed = false
       while (true) {

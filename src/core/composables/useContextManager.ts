@@ -13,7 +13,6 @@
  * 单次 chat() 的 ReAct 循环内累积，因此跨轮压缩聚焦于窗口+摘要+召回。
  */
 import type { AgentMessage } from '../types'
-import type { BaseMessage } from '@langchain/core/messages'
 import { groupRounds, plainSummary, parseSummarySegment, type Round } from '../utils/rounds'
 import { estimateRoundTokens, indexSummarize, recallRounds } from './contextIndex'
 

@@ -489,7 +489,7 @@ export interface ChatSdkOptions {
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
-  onAudit?: (entry: { op: string; jsonPath?: string; opDetail?: string; timestamp: number; success: boolean; error?: string }) => void;
+  onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
   /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
   toolMode?: 'simple' | 'advanced' | 'minimal';
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */

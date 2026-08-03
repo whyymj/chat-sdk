@@ -593,7 +593,7 @@ export function createAgent(options: CreateAgentOptions) {
             if (garbled) {
               const msg = `模型连续 ${maxFormatRetries} 次输出无法解析的工具调用格式(DSML/伪标签),任务可能未完成。请重试或换模型。`
               log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
-              onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } })
+              onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } } as any)
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
             // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉

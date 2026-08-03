@@ -442,7 +442,7 @@ export function createSubagentsMiddleware(
     get: () => [...valid],
   }
 
-  const mw: Middleware & { controller: SubagentsController } = {
+  const mw: Middleware = {
     name: 'subagents',
     get tools() {
       return tools

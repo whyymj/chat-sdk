@@ -2,10 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [2.21.0] - 2026-08-03
 
 ### Fixed
 - **automation 断点续跑持久化从未生效(quality-hardening 运行时测驱动发现)**:`storage.ts` 的 `SnapshotKind`/`SNAPSHOT_KINDS` 只含 messages/vfs/todos/memory,**不含 checkpoints/usage** → `persistRuntime` 调 `store.save({checkpoints})`/`{usage}` 被 save 遍历 SNAPSHOT_KINDS 时 skip → **从未持久化**;`applySnapshot` 读 `snap.checkpoints`/`usage` 但 load 不读这俩 kind → 跨实例恢复失效。影响:`capabilities.automation + checkpoint + storage` 的断点续跑(刷新/崩溃后恢复 checkpoint 栈 + 累计 usage)自 2.20 发布以来从未真正工作。修复:SnapshotKind/SNAPSHOT_KINDS 加 checkpoints/usage(save/load 遍历自动处理;老 snapshot 无这俩 kind 向后兼容)。
+- **types 漂移根治(p2-architecture-refactor ⑤ 提前做掉)**:src 内部类型(AgentCore/ChatSdk/AgentInfo)与实现、对外 `types/index.d.ts` 三方不同步 —— `tsc -p tsconfig.json` 全量报 35 个源码真错 + 768 测试 unused/签名漂移(注:`test:types` 门禁用 `tsconfig.test.json` 只查对外 `types/index.d.ts`,本就绿;768 是 dev/IDE 全量债非门禁)。源码 35 真错清零:① `AgentCore` interface 补 10 个 2.17+ 新增运行时方法(`setTools`/`addTool`/`removeTool`/`setLlm`/`setMemory`/`refreshMemory`/`setSubagents`/`addSubagent`/`removeSubagent`/`batch` —— 实现早有,内部类型声明漏,致 `core.setXxx()` IDE 红);② `ChatSdk` interface 补 `hide()`/`show()`;③ `AgentInfo`(src 内部)补 `contextPreset`/`planPhase`/`mission`/`workingMemory`/`actions`;④ `ChatSdkOptions.vfs` 补 `poolBytes`(三池分池配置);⑤ **`ChatSdkOptions.onAudit` 签名修正**:`{op,jsonPath,opDetail,timestamp,success,error}` → `{op,value,detail,timestamp}` 对齐 `DataAuditEntry` 实际字段(原 jsonPath/opDetail/success/error 是漂移 bug,从未有真值 —— 集成方拿到的恒 undefined);⑥ `send`/`stream` options 补 `interceptors`(per-call input/output 覆盖顶层)+ `maxAutoRetries`(per-call 覆盖 automation 重试);⑦ `jsonParseError` raw: `string`→`unknown`(非字符串 value 不再 `.slice` 崩);⑧ conflictManager `getEmit?.()` 空安全(拆 `emit?.()`);⑨ subagent `mw` 类型修正(controller 经 defineProperty 挂,字面量标注不含);⑩ dataOps patches list 类型放宽(op/jsonPath 可选)+ op `?? 'set'` fallback + diffData `against` 类型;⑪ 删 3 个 unused import(createInitialState/ConflictInfo/BaseMessage)。
 
 ### Added
 - **proxyLlm direct 生产安全闸**:`createProxyLlm({ ... throwOnDirectInProduction })` 新增 opt-in 配置。生产环境(https + 非本地域)检测到 direct 模式时,默认仍 `console.warn`(向后兼容);设 `throwOnDirectInProduction:true` → 直接 throw 阻断 direct 误用于生产(防 apiKey 进 bundle 泄露;direct 本就标注「仅开发」)。
