@@ -4,11 +4,12 @@
 #   - 日常新功能在 develop 分支维护(细粒度 commit,git push origin develop)
 #   - 发布时:在 master 上 merge --squash develop 总结成一个发布 commit → push origin master + push github master
 #     (master 只含发布 commit,两边历史一致 → fast-forward 零冲突)
+#   - 发布后:重建 develop = master(丢弃已被 squash 的 develop commit,防下次重复 squash)
 # 约定:
 #   - 个人笔记 doc/待确认问题.md 在 .gitignore 未跟踪,不提交、不进 GitHub
 # 用法:
-#   ./scripts/publish-github.sh "release x.x.x: 一句话总结"   # 直接用参数作发布 commit message
-#   ./scripts/publish-github.sh                                # 打开编辑器编辑
+#   ./scripts/publish-github.sh "release x.x.x: 一句话总结"   # 推荐:参数作发布 commit message
+#   ./scripts/publish-github.sh                                # 默认 message "release: publish from develop"
 set -euo pipefail
 
 REMOTE_GITHUB=github
@@ -42,27 +43,32 @@ if [ "${AHEAD_DEV:-0}" -gt 0 ]; then
   echo "📦 develop 领先 master $AHEAD_DEV 个提交,合并总结:"
   git log --oneline "$BRANCH_MASTER..$BRANCH_DEVELOP"
   git merge --squash "$BRANCH_DEVELOP"
-  # 剔除个人笔记(.gitignore 已忽略,剔除后不会再进索引)
-  git rm --cached "$NOTE_FILE" >/dev/null 2>&1 || true
-  if [ $# -gt 0 ]; then
-    git commit -m "$*"
+  if git diff --cached --quiet; then
+    # develop 内容已在 master(上次发布后未重建 develop)→ 跳过空 commit,仅对齐
+    echo "ℹ️  develop 内容已全部在 master,跳过空 commit(仅做对齐)"
   else
-    echo "✏️  请编辑发布 commit message(保存退出即提交,清空则中止)"
-    git commit
+    git rm --cached "$NOTE_FILE" >/dev/null 2>&1 || true
+    if [ $# -gt 0 ]; then
+      git commit -m "$*"
+    else
+      git commit -m "release: publish from develop"
+    fi
   fi
 else
-  echo "ℹ️  develop 无领先 master 的提交,仅推送(或无发布内容)"
+  echo "ℹ️  develop 无领先 master 的提交"
 fi
 
-# 6. 推双远程(均为 fast-forward,零冲突)
+# 6. 推双远程 master(均为 fast-forward,零冲突)
 AHEAD=$(git rev-list --count "$REMOTE_GITHUB/$BRANCH_MASTER..$BRANCH_MASTER" || true)
 if [ "${AHEAD:-0}" -gt 0 ]; then
   git push "$REMOTE_GITEE" "$BRANCH_MASTER"
   git push "$REMOTE_GITHUB" "$BRANCH_MASTER"
-  echo "✅ 已发布到 Gitee($REMOTE_GITEE)+ GitHub($REMOTE_GITHUB)"
 else
   echo "ℹ️  master 无领先远程的提交,无需推送"
 fi
 
-# 7. 提示回 develop
-echo "→ 发布完成。日常开发请切回 develop: git checkout $BRANCH_DEVELOP"
+# 7. 重建 develop = master(squash 不建立父子关系,不重建则 develop 原始 commit 永远「领先」master,下次重复 squash)
+git branch -f "$BRANCH_DEVELOP" "$BRANCH_MASTER"
+git push --force "$REMOTE_GITEE" "$BRANCH_DEVELOP"
+git checkout "$BRANCH_DEVELOP"
+echo "✅ 已发布到 Gitee($REMOTE_GITEE)+ GitHub($REMOTE_GITHUB)。develop 已重建对齐 master,当前在 develop,继续开发"
