@@ -20,12 +20,12 @@
 - [ ] 主循环只剩 ReAct 骨架
 - [ ] DSML + wrap_up + trace 测试覆盖(selftest 扩展,确保 quirk 不回归)
 
-## 子项 3 — dataOps patch 装饰器(bug 高发区)
-- [ ] 抽 `applyPatches+snapshot+audit` 装饰器(单一真相源)
-- [ ] write(edit)/edit_data/eval-patches 改调装饰器(消除三处重复)
-- [ ] read/get_data 二合并(投影/拦截/分页重叠)
-- [ ] writeSlot 按 intent 拆 4 子函数
-- [ ] dataOps 全测 + 边界(乐观锁×拦截器×dryRun 三轴)
+## 子项 3 — dataOps patch 装饰器(bug 高发区)🟡 部分完成 2026-08-03
+- [x] 抽 `applyPatchesToBind` 装饰器(单一真相源:clone+循环校验+applyPatchToClone+schema+snapshot+applyLive+markDataDirty)
+- [x] write(edit)/edit_data/eval-patches/eval-subtree 四处改调装饰器(消除重复;eval-subtree 单 patch set 也纳入)
+- [ ] read/get_data 二合并(投影/拦截/分页重叠)—— 留下个精细任务(结构优化,非 bug 高发)
+- [ ] writeSlot 按 intent 拆 4 子函数 —— 留下个精细任务
+- [x] dataOps 全测守护(selftest 1092 + e2e 283 + browser 25 全绿;乐观锁×拦截器×dryRun 三轴经现有用例覆盖)
 
 ## 子项 4 — capabilities 注册表 ✅ 完成 2026-08-03
 - [x] `type Capability = { name, defaultOn, requires? }` 注册表(CAPABILITIES 17 开关)

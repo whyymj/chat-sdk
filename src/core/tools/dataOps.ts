@@ -147,6 +147,65 @@ export function commitSetToBind(args: {
   return { ok: true, hash: hashValue(bindRef), data: res.data }
 }
 
+/**
+ * 增量 patch 写入纯函数(p2-refactor 子项 3 装饰器):clone + 逐 patch 校验(isUnsafePath/isPathAllowed/maybeParseValue)
+ * + applyPatchToClone + 整体 schema 校验 + (dryRun 预检) + snapshot + applyPatchToLive 循环 + markDataDirty。
+ * edit_data / write(edit) / eval-patches / eval-subtree 共用 —— 消除四处 clone+循环+校验+snapshot+applyLive 重复
+ * (乐观锁×拦截器×dryRun 三轴组合的 bug 高发区,单一真相源防不一致)。
+ * 调用方负责:bindRef 类型守卫(NOT_OBJECT/LEAF_BIND,错误码各异)+ audit(detail/value 差异)+ lastReadHash + 成功 message。
+ * 返回 {ok,applied,clone}(dryRun 返回 clone 供预览,不落盘/不入快照) 或 {ok:false,error}。
+ */
+export function applyPatchesToBind(args: {
+  bindRef: unknown
+  patches: { op?: EditOp; jsonPath?: string; value?: unknown }[]
+  schema: ZodType
+  allowKeys: string[] | null
+  snapshots: DataSnapshotEntry[]
+  maxSnapshots: number
+  markDataDirty?: () => void
+  /** schema 校验失败错误模式:'zod'(zodError,edit_data/write 用) / 'schema_invalid'(toolError + details,eval 用);默认 'zod' */
+  schemaErrorMode?: 'zod' | 'schema_invalid'
+  /** snapshot label(eval_transform_subtree / eval_transform;默认无) */
+  snapshotLabel?: string
+  /** dryRun:预检走完整校验链但不落盘/不入快照/不 applyLive,返回 clone 供预览 */
+  dryRun?: boolean
+}): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown } | { ok: false; error: string } {
+  const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun } = args
+  const clone = deepClone(bindRef)
+  const applied: { op: EditOp; jp: string; value: unknown }[] = []
+  for (let i = 0; i < patches.length; i++) {
+    const p = patches[i]
+    const jp = p.jsonPath || ''
+    if (isUnsafePath(jp)) return { ok: false, error: toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径,如 components.0.text' }) }
+    if (!isPathAllowed(jp, schema, allowKeys)) return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' }) }
+    const op: EditOp = p.op ?? 'set'
+    let pVal: unknown
+    if (op !== 'remove') {
+      if (p.value === undefined || p.value === '') return { ok: false, error: toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` }) }
+      const pr = maybeParseValue(p.value)
+      if (pr.parseError) return { ok: false, error: jsonParseError(`patches[${i}]`, p.value, pr.parseError) }
+      pVal = pr.parsed
+    }
+    const patchErr = applyPatchToClone(clone, op, jp, pVal)
+    if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' }) }
+    applied.push({ op, jp, value: pVal })
+  }
+  const res = schema.safeParse(clone)
+  if (!res.success) {
+    return { ok: false, error: schemaErrorMode === 'schema_invalid'
+      ? toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后整体校验失败,未写入`, hint: '确认 patches 合并后整体仍符合 schema', details: formatZodIssues(res.error.issues) })
+      : zodError('', res.error.issues) }
+  }
+  if (dryRun) return { ok: true, applied, clone }
+  // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ applyPatchToLive 循环 + markDataDirty
+  const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
+  snapshots.push({ id, ts: Date.now(), op: 'edit', value: deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
+  while (snapshots.length > maxSnapshots) snapshots.shift()
+  for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
+  markDataDirty?.()
+  return { ok: true, applied, clone }
+}
+
 /** 基于单主对象配置构建数据操作工具集 */
 export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): StructuredToolInterface[] {
   let schema: ZodType = config.schema
@@ -293,26 +352,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子(原始类型)请用 set_data 整体设置' })
       }
-      let parsed: unknown
-      if (op !== 'remove') {
-        if (value === undefined || value === '') {
-          return toolError({ code: 'MISSING_VALUE', message: `${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` })
-        }
-        const pr = maybeParseValue(value)
-        if (pr.parseError) return jsonParseError('', value, pr.parseError)
-        parsed = pr.parsed
-      }
-      const clone = deepClone(bindRef)
-      const patchErr = applyPatchToClone(clone, op, jp, parsed)
-      if (patchErr) return toolError({ code: 'PATCH_FAILED', message: patchErr, hint: '检查 op 与目标类型:merge 需对象,append 需数组;jsonPath 指向需存在' })
-      const res = schema.safeParse(clone)
-      if (!res.success) return zodError('', res.error.issues)
-      pushSnapshot('edit')
-      applyPatchToLive(bindRef, op, jp, parsed)
-      markDataDirty()
-      audit({ op: 'edit', detail: `${op}${jp ? '@' + jp : ''}`, value: parsed, timestamp: Date.now() })
+      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod' })
+      if (!r.ok) return r.error
+      const a = r.applied[0]
+      audit({ op: 'edit', detail: `${a.op}${jp ? '@' + jp : ''}`, value: a.value, timestamp: Date.now() })
       lastReadHash = hashValue(bindRef)
-      return `已 edit 主数据(${op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
+      return `已 edit 主数据(${a.op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
     },
     {
       name: 'edit_data',
@@ -511,14 +556,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const result = res.result
         // 子树 transform:返回值作为 jsonPath 子树的新值(set 到子路径 + 整体 schema 校验)
         if (jp) {
-          const clone = deepClone(bindRef)
-          const patchErr = applyPatchToClone(clone, 'set', jp, result)
-          if (patchErr) return toolError({ code: 'PATCH_FAILED', message: `eval 子树 transform @ "${jp}" 失败: ${patchErr}`, hint: '检查子路径:set 需父为对象/数组' })
-          const chk = schema.safeParse(clone)
-          if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值作为子树 @ "${jp}" 后整体校验失败,未写入`, hint: `确认返回值符合 ${jp} 处的子 schema`, details: formatZodIssues(chk.error.issues) })
-          pushSnapshot('edit', 'eval_transform_subtree')
-          applyPatchToLive(bindRef, 'set', jp, result)
-          markDataDirty()
+          const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree' })
+          if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
           return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
@@ -530,34 +569,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (bindRef === null || typeof bindRef !== 'object') {
             return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform(patches) 无法就地替换`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
           }
-          const ps: any[] = (result as any).patches
-          const clone = deepClone(bindRef)
-          const applied: { op: EditOp; jp: string; value: unknown }[] = []
-          for (let i = 0; i < ps.length; i++) {
-            const p = ps[i]
-            const jp = p.jsonPath || ''
-            if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径' })
-            if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
-            const op = p.op as EditOp
-            let pVal: unknown
-            if (op !== 'remove') {
-              if (p.value === undefined || p.value === '') return toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填` })
-              const pr = maybeParseValue(p.value)
-              if (pr.parseError) return jsonParseError(`patches[${i}]`, p.value, pr.parseError)
-              pVal = pr.parsed
-            }
-            const patchErr = applyPatchToClone(clone, op, jp, pVal)
-            if (patchErr) return toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' })
-            applied.push({ op, jp, value: pVal })
-          }
-          const chk = schema.safeParse(clone)
-          if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本 patches 应用后整体校验失败,未写入`, hint: '确认 patches 合并后整体仍符合 schema', details: formatZodIssues(chk.error.issues) })
-          pushSnapshot('edit', 'eval_transform')
-          for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
-          markDataDirty()
-          audit({ op: 'edit', detail: `eval_transform(${applied.length} patches)`, timestamp: Date.now() })
+          const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform' })
+          if (!r.ok) return r.error
+          audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
-          return `已通过脚本 transform(patches) 更新主数据(${applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
+          return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
         }
         // 整体替换模式:脚本返回完整新值
         const chk = schema.safeParse(result)
@@ -747,36 +763,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           ? patchList
           : (patches && patches.length) ? patches
           : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
-        const clone = deepClone(bindRef)
-        const applied: { op: EditOp; jp: string; value: unknown }[] = []
-        for (let i = 0; i < list.length; i++) {
-          const p = list[i]
-          const jp = p.jsonPath || ''
-          if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径,如 components.0.text' })
-          if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' })
-          const op = p.op ?? 'set'
-          let pVal: unknown
-          if (op !== 'remove') {
-            if (p.value === undefined || p.value === '') return toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` })
-            const pr = maybeParseValue(p.value)
-            if (pr.parseError) return jsonParseError(`patches[${i}]`, p.value, pr.parseError)
-            pVal = pr.parsed
-          }
-          const patchErr = applyPatchToClone(clone, op, jp, pVal)
-          if (patchErr) return toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' })
-          applied.push({ op, jp, value: pVal })
-        }
-        const res = schema.safeParse(clone)
-        if (!res.success) return zodError('', res.error.issues)
-        if (dryRun) {
-          return `dryRun(edit): ${applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(clone, 600)}。未实际写入、未入快照。`
-        }
-        pushSnapshot('edit')
-        for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
-        markDataDirty()
-        audit({ op: 'edit', detail: `${applied.length} 个 patch${applied.length > 1 ? '(批量)' : ''}`, value: applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
+        const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun })
+        if (!r.ok) return r.error
+        if (dryRun) return `dryRun(edit): ${r.applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(r.clone, 600)}。未实际写入、未入快照。`
+        audit({ op: 'edit', detail: `${r.applied.length} 个 patch${r.applied.length > 1 ? '(批量)' : ''}`, value: r.applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
         lastReadHash = hashValue(bindRef)
-        return `已 write(edit) 主数据(${applied.length} 个 patch)。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
+        return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
       }
 
       // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 set_data/draft_commit 共用)
