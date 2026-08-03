@@ -1,7 +1,9 @@
 # Change: quality-hardening (P1 测试+小 perf+文档债)
 
+> 📦 **已归档(2026-08-03,全部完成)**。§1(stub 基建 + automation/subagent-writable/todos-tier 运行时测,commit d1b297e)+ §2(formatForLog/proxyLlm/extractSchemaHint 小 perf,commit 21fefd0)+ §3(中英 usage-guide §6.13/§6.14 + capability-boundaries B7 文档债)+ §3b(tests/runtime/ 3 脚本 tool_call 收集修正)全部完成并随 2.21.0/2.22.0 发布。e2e 实跑 283 全过。详细勾选见 tasks.md。
+
 > 补 4 agent 审查(maintain/perf)的 P1 项:运行时集成测盲区(违反 CLAUDE.md 测试同步约定)+ 小 perf(formatForLog/proxyLlm/augmentPrompt)+ 文档债(observability/automation 详细段)。
-> **状态:proposal(未实施)**。P1 第一批(budget 运行时测 + batch splice + usage 注释)已在 commit 499dad9 完成。
+> ~~状态:proposal(未实施)~~ → **2026-08-03:§1§2§3§3b 全部实施完成,见 tasks.md。**
 
 ## Why
 - **maintain HIGH(违反硬约定)**:budget / automation §2-4(send 恢复+batch+断点续跑)/ subagent-writable 集成 / todos-tier 行为 —— **当前只测 inspect 反射,没测运行时**。budget 已补(commit 499dad9),剩 automation/subagent-writable/todos-tier 运行时。

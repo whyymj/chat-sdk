@@ -1,6 +1,6 @@
 # Tasks: quality-hardening (P1)
 
-> 关联 `proposal.md`。P1 第一批(budget 运行时测 + batch splice + usage 注释)已在 commit 499dad9 完成。剩集成测 + 小 perf + 文档。
+> 关联 `proposal.md`。📦 **已归档(2026-08-03,§1§2§3§3b 全部完成)** —— stub 基建 + automation/subagent-writable/todos-tier 运行时测(§1,commit d1b297e)+ 小 perf(§2,commit 21fefd0)+ 中英文档(§3,usage-guide §6.13/§6.14 + capability-boundaries B7)+ 审计脚本修正(§3b)全完成并随 2.21.0/2.22.0 发布。⚠ 运行时测驱动发现并修复 storage bug(`SnapshotKind` 不含 checkpoints/usage 致断点续跑持久化从未生效,见 CHANGELOG)。e2e 实跑 283 passed 0 failed。
 
 ## 1. stub BaseChatModel(先验证)
 - [x] `tests/e2e/_stub-model.mjs`:stub BaseChatModel(_streamResponseChunks yield ChatGenerationChunk{message:AIMessageChunk} + _generate 聚合 + bindTools 返回 this);可控响应队列(文本/工具调用/抛错/usage)
