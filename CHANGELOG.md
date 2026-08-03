@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+### Changed
+- **capabilities 注册表 + 单一解析(p2-architecture-refactor 子项 4)**:17 个能力开关此前在 createChatSdk/toolsets/usageHints 三处 `===true`(opt-in)/`!==false`(opt-out)混用解析(新增开关改 5 处易错)。新增 `src/core/capabilities.ts`:`CAPABILITIES` 注册表(`Capability { name, defaultOn, requires? }` 显式标 opt-in/opt-out + 依赖)+ `resolveCapabilities(caps)` 单一解析函数。createChatSdk / toolsets / usageHints 统一经 resolveCapabilities(签名向后兼容,内部各自 resolve)。**requires 强制依赖**:draftWrite 需 dataOps+vfs,任一关则 draftWrite 强制关(防"开 draft 但关 dataOps"无意义组合)。新增导出 `resolveCapabilities`/`CAPABILITIES`/`Capability`/`CapabilityFlags`/`ResolvedCapabilities`。纯重构零行为变化。
+
 ## [2.21.0] - 2026-08-03
 
 ### Fixed

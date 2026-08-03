@@ -5,6 +5,7 @@ import { extractSchemaHint } from '../../presets'
 import { diffObjects } from '../../tools/jsonUtils'
 import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
+import { resolveCapabilities, CAPABILITIES } from '../../capabilities'
 import { inspectTools } from '../../tools/envTool'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
@@ -347,5 +348,46 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(asAgentError('string err', 'observable').message === 'string err', 'asAgentError → 非 Error 字符串归一化')
     assert(asAgentError(undefined, 'observable').severity === 'observable', 'asAgentError → undefined 用 defaultSeverity')
     assert(asAgentError(new Error('x')).severity === 'fatal', 'asAgentError → 不传 defaultSeverity 默认 fatal')
+  }
+
+  // ============ capabilities 注册表 + resolveCapabilities(p2-refactor 子项 4)============
+  console.log('\n[capabilities: resolveCapabilities 单一解析]')
+  {
+    // 未传 caps:全用默认(opt-out 开 / opt-in 关)
+    const dft = resolveCapabilities(undefined)
+    assert(dft.dataOps === true, 'resolveCapabilities → 未传 dataOps(opt-out)默认开')
+    assert(dft.planning === true, 'resolveCapabilities → 未传 planning(opt-out)默认开')
+    assert(dft.inspectEnv === true, 'resolveCapabilities → 未传 inspectEnv(opt-out)默认开')
+    assert(dft.verify === false, 'resolveCapabilities → 未传 verify(opt-in)默认关')
+    assert(dft.domInspect === false, 'resolveCapabilities → 未传 domInspect(opt-in)默认关')
+    assert(dft.tracing === false, 'resolveCapabilities → 未传 tracing(opt-in)默认关')
+    assert(dft.automation === false, 'resolveCapabilities → 未传 automation(opt-in)默认关')
+    // opt-out 显式 false → 关
+    const off = resolveCapabilities({ dataOps: false, planning: false })
+    assert(off.dataOps === false, 'resolveCapabilities → dataOps:false 显式关(opt-out)')
+    assert(off.planning === false, 'resolveCapabilities → planning:false 显式关(opt-out)')
+    assert(off.fetch === true, 'resolveCapabilities → 未传 fetch(opt-out)仍开')
+    // opt-in 显式 true → 开
+    const on = resolveCapabilities({ verify: true, tracing: true, automation: true })
+    assert(on.verify === true, 'resolveCapabilities → verify:true 显式开(opt-in)')
+    assert(on.tracing === true, 'resolveCapabilities → tracing:true 显式开(opt-in)')
+    assert(on.automation === true, 'resolveCapabilities → automation:true 显式开(opt-in)')
+    assert(on.dataOps === true, 'resolveCapabilities → opt-in 开时 opt-out 未传仍开')
+    // requires:draftWrite 需 dataOps+vfs,任一关 → draftWrite 强制关(防"开 draft 但关 dataOps"无意义组合)
+    const dr1 = resolveCapabilities({ draftWrite: true })
+    assert(dr1.draftWrite === true, 'resolveCapabilities → draftWrite:true + dataOps/vfs 默认开 → 开(requires 满足)')
+    const dr2 = resolveCapabilities({ draftWrite: true, dataOps: false })
+    assert(dr2.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 dataOps:false → 强制关(requires 未满足)')
+    const dr3 = resolveCapabilities({ draftWrite: true, vfs: false })
+    assert(dr3.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 vfs:false → 强制关(requires 未满足)')
+    // CAPABILITIES 注册表完整(17 开关;11 opt-out + 6 opt-in)
+    assert(CAPABILITIES.length === 17, 'CAPABILITIES 注册表 → 17 开关')
+    assert(CAPABILITIES.filter((c) => c.defaultOn).length === 11, 'CAPABILITIES → 11 opt-out(默认开)')
+    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 6, 'CAPABILITIES → 6 opt-in(默认关)')
+    // 全量解析后每个 capability 都有明确 boolean(无 undefined)
+    const all = resolveCapabilities({ dataOps: false, verify: true, domInspect: true, tracing: true, automation: true, todoDeps: true })
+    for (const c of CAPABILITIES) {
+      assert(typeof all[c.name] === 'boolean', `resolveCapabilities → ${c.name} 解析为 boolean(非 undefined)`)
+    }
   }
 }

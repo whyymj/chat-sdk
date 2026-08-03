@@ -46,6 +46,7 @@ import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { isChatModel, resolveLlm } from './llmResolver'
 import { createConflictManager } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
+import { resolveCapabilities } from '../capabilities'
 import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
@@ -689,11 +690,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const checkpointAuto = !checkpointOpts || typeof checkpointOpts !== 'object' || checkpointOpts.auto !== false
 
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
-  const caps = options.capabilities
-  const useDataOps = caps?.dataOps !== false
-  const useDraft = caps?.draftWrite === true  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
-  const useTracing = caps?.tracing === true  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
-  const useAutomation = caps?.automation === true  // 无人值守自动化(预算闸+错误恢复;opt-in,最远)
+  const caps = resolveCapabilities(options.capabilities)  // 单一解析(消除 !==false/===true 混;opt-in/out 经注册表 defaultOn,requires 表达依赖)
+  const useDataOps = caps.dataOps
+  const useDraft = caps.draftWrite  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
+  const useTracing = caps.tracing  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
+  const useAutomation = caps.automation  // 无人值守自动化(预算闸+错误恢复;opt-in,最远)
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
@@ -783,11 +784,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ]
   }
 
-  const usePlanning = caps?.planning !== false
-  const useMission = caps?.missionAnchor !== false // mission 默认开(分层默认核心;长任务防跑偏)
-  const useWorkingMemory = caps?.workingMemory !== false // workingMemory 默认开(pin 最近 path/hash,防压缩后丢定位)
-  const useSkills = caps?.skills !== false
-  const useVfs = caps?.vfs !== false
+  const usePlanning = caps.planning
+  const useMission = caps.missionAnchor // mission 默认开(分层默认核心;长任务防跑偏)
+  const useWorkingMemory = caps.workingMemory // workingMemory 默认开(pin 最近 path/hash,防压缩后丢定位)
+  const useSkills = caps.skills
+  const useVfs = caps.vfs
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
   if (useVfs) {
     for (const n of VFS_TOOL_NAMES) toolSources.set(n, 'builtin')
@@ -796,14 +797,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   if (usePlanning) {
     for (const t of todosMw.tools ?? []) toolSources.set(t.name, 'builtin')
   }
-  const useSummarization = caps?.summarization !== false
-  const useMemory = caps?.memory !== false
-  const useSubagent = caps?.subagent !== false
+  const useSummarization = caps.summarization
+  const useMemory = caps.memory
+  const useSubagent = caps.subagent
   // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
   const verifyMaxAttempts = options.verify?.maxAttempts ?? 2
-  const useVerify = caps?.verify === true && options.verify?.enabled !== false && verifyMaxAttempts > 0
+  const useVerify = caps.verify && options.verify?.enabled !== false && verifyMaxAttempts > 0
   // 诊断:常见误用 warn(与 options.id/mcp 的 warn 惯例一致),避免"以为开了实际没开"
-  if (options.verify?.check && caps?.verify !== true) {
+  if (options.verify?.check && !caps.verify) {
     console.warn('[page-agent-sdk][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
   }
 

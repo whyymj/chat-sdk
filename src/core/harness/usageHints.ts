@@ -8,6 +8,7 @@
  *  - 绝不覆盖集成方 systemPrompt(拼接在其后,由 buildSystemPrompt 组装)。
  */
 import type { Middleware } from './middleware'
+import { resolveCapabilities } from '../capabilities'
 
 /** capabilities 子集(仅用法提示相关开关) */
 type HintCapabilityFlags = {
@@ -31,12 +32,13 @@ const CREATIVE_TEMP = 0.7
  * @param toolMode 工具呈现模式:simple/minimal 主推 read/write;advanced 用底层 get/set/edit
  */
 export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple'): Middleware {
+  const rc = resolveCapabilities(caps)  // 单一解析 capability 开关(humanConfirm/subagents 非 capability,caps 直接访问)
   const simple = toolMode !== 'advanced'
   return {
     name: 'usageHints',
     augmentPrompt: () => {
       const hints: string[] = []
-      if (caps?.planning !== false) {
+      if (rc.planning) {
         hints.push('【自适应规划】按任务复杂度决定是否先规划,不要对简单任务过度编排:')
         hints.push('  · 简单/明确任务(改单字段、调样式、查值)→ 直接 read/write 执行,不必 write_todos。')
         hints.push('  · 复杂任务(多步、大改、有歧义、不可逆)→ 先 write_todos 拆解,首个任务标 in_progress,逐项推进。')
@@ -63,10 +65,10 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
           hints.push('对比当前与历史快照(或一段 JSON against)的差异用 diff_data({snapshotId?,against?})(返回结构化 path→from/to,verify 自纠/操作审计/"刚才改了啥");只读查历史快照值用 history_data({id?,jsonPath?})。')
         }
       }
-      if (caps?.subagent !== false) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
-      if (caps?.inspectEnv !== false) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
-      if (caps?.draftWrite) hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
-      if (caps?.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
+      if (rc.subagent) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
+      if (rc.inspectEnv) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
+      if (rc.draftWrite) hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
+      if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
       if (caps?.subagents?.length) {
         const planners = caps.subagents.filter((s) => (s.temperature ?? 0) >= CREATIVE_TEMP || /规划|创意|设计|方案|brainstorm|plan/i.test(s.description))
         const reflectors = caps.subagents.filter((s) => (s.temperature ?? 0) < CREATIVE_TEMP && /反思|审查|挑刺|校验|review|critique|reflect/i.test(s.description))

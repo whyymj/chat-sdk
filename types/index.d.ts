@@ -826,6 +826,13 @@ export interface ConflictManager {
 }
 export declare function createConflictManager(getEmit?: () => (((e: any) => void) | undefined)): ConflictManager;
 // ============ 配置解析 + 事件系统(optionsResolver/events,refactor-module-extraction 期三)============
+// capabilities 能力开关注册表 + 单一解析(p2-refactor 子项 4:消除 11/17 开关 ===true/!==false 混)
+export interface Capability { name: string; defaultOn: boolean; requires?: readonly string[] }
+export type CapabilityFlags = Partial<Record<string, boolean>>;
+export type ResolvedCapabilities = Record<string, boolean>;
+export declare const CAPABILITIES: readonly Capability[];
+/** 单一解析:集成方原始 caps(Partial)→ 全量 boolean(opt-out 默认开 !==false / opt-in 默认关 ===true;requires 依赖未满足强制关)。参数宽松 Record<string,unknown>(兼容含 subagents 等非 boolean 字段的 caps 对象;只读已知 capability 的 boolean) */
+export declare function resolveCapabilities(caps?: Record<string, unknown>): ResolvedCapabilities;
 export declare function resolveStorage(storage: any): any | null;
 export declare function resolveDialogConfig(opts: any): any;
 export interface SdkEvents {

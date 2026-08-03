@@ -15,6 +15,8 @@ export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig,
 // system prompt 构建(refactor-module-extraction 从 createChatSdk 抽离;buildSystemPrompt 为纯函数,供 fix-introspection-consistency 的 getEffectiveSystemPrompt 复用)
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
+// capabilities 能力开关注册表 + 单一解析(p2-refactor 子项 4:消除 ===true/!==false 混)
+export { resolveCapabilities, CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
 export { defineTool } from './sdk/defineTool'
 // 宿主动作(actions):集成方注册页面操作(保存/发布/预览等),SDK 自动包成命名 tool 供 agent 调用
 export { actionsToTools, actionsToInspectInfo } from './sdk/actions'

@@ -27,11 +27,11 @@
 - [ ] writeSlot 按 intent 拆 4 子函数
 - [ ] dataOps 全测 + 边界(乐观锁×拦截器×dryRun 三轴)
 
-## 子项 4 — capabilities 注册表
-- [ ] `type Capability = { name, defaultOn, requires?: Capability[] }` 注册表
-- [ ] `resolveCapabilities(caps)` 单一解析函数
-- [ ] 11 开关迁移(opt-in/opt-out 显式标)
-- [ ] createChatSdk / usageHints / inspect 统一经 resolveCapabilities
+## 子项 4 — capabilities 注册表 ✅ 完成 2026-08-03
+- [x] `type Capability = { name, defaultOn, requires? }` 注册表(CAPABILITIES 17 开关)
+- [x] `resolveCapabilities(caps)` 单一解析函数(参数 Record<string,unknown> 兼容含 subagents 等非 boolean 字段的 caps)
+- [x] 17 开关迁移(11 opt-out defaultOn:true + 6 opt-in defaultOn:false;requires: draftWrite 需 dataOps+vfs)
+- [x] createChatSdk / toolsets / usageHints 统一经 resolveCapabilities(inspect 间接经 useXxx;签名向后兼容,内部各自 resolve)
 
 ## 子项 5 — types 漂移根治
 - [ ] `test:exports` 升级字段级抽样(比对 SubagentConfig / SdkEvent 联合 / ChatSdkOptions 关键字段)

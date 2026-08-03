@@ -15,6 +15,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import { createDataOps, type DataConfig, type DataOpsOptions } from './tools/dataOps'
 import { fetchDocTools } from './tools/fetchDoc'
 import { domTools } from './tools/domTool'
+import { resolveCapabilities } from './capabilities'
 
 /** 文档抓取工具(静态数组,可直接展开进 tools) */
 export const fetchTools: StructuredToolInterface[] = fetchDocTools
@@ -47,14 +48,11 @@ export function selectBuiltinTools(
   dom?: StructuredToolInterface[],
   inspect?: StructuredToolInterface[],
 ): StructuredToolInterface[] {
-  const useDataOps = caps?.dataOps !== false
-  const useFetch = caps?.fetch !== false
-  const useDom = caps?.domInspect === true
-  const useInspect = caps?.inspectEnv !== false
+  const rc = resolveCapabilities(caps)  // 单一解析(消除 !==false/===true 混;opt-in/out 经注册表 defaultOn)
   return [
-    ...(useDataOps ? dataOps : []),
-    ...(useFetch ? fetchDocs : []),
-    ...(useDom && dom ? dom : []),
-    ...(useInspect && inspect ? inspect : []),
+    ...(rc.dataOps ? dataOps : []),
+    ...(rc.fetch ? fetchDocs : []),
+    ...(rc.domInspect && dom ? dom : []),
+    ...(rc.inspectEnv && inspect ? inspect : []),
   ]
 }
