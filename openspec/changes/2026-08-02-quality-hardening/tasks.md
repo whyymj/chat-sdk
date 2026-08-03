@@ -33,8 +33,8 @@
 - [x] CLAUDE.md 计数同步(selftest 1030 / e2e 283,前序 commit 已改)
 
 ## 3b. 审计脚本修正(maliang-real-findings ⚠ 发现)
-- [ ] `tests/runtime/` 真 LLM 审计脚本:onEvent tool_call 在 send(invoke)模式不外发(仅 stream 模式发),任务级工具链收集为空 → 改用 `inspect().trace.metrics.toolCalls` 增量收(或 stream 模式收 tool_call),不依赖 onEvent
-- [ ] 审计脚本输出对齐 trace.metrics(轮次/工具成功率/压缩频次/model 调用数)
+- [x] maliang-real-llm.ts:send(invoke)模式不外发 tool_call 事件 → onEvent 收集为空;改用 `inspect().trace.spans` 收 tool span(name=工具名,createAgent.ts:629)。注:spans 每次 send 重置(invoke→stream:492)→ toolNames 即本次任务工具链(无需 slice/before)。trace-real-llm/draft-real-llm 用 stream(onEvent tool_call 有效)不改
+- [x] 审计脚本输出对齐 trace.metrics:maliang 已输出 `info.trace.metrics`(轮次/工具成功率/压缩频次/model 调用数/token)+ findings 用 metrics.rounds
 
 ## 收尾
 - [ ] observability-tracing change 文档项完成 → 归档

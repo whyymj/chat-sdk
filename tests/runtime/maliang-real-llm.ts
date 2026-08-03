@@ -30,7 +30,8 @@ async function main() {
   }
 
   const bind = JSON.parse(JSON.stringify(initialPage)) as { title: string; components: any[] }
-  const toolCalls: { name: string; args: any }[] = []
+  // 工具链审计:send(invoke)不外发 tool_call 事件(仅 stream 发)→ 从 trace.spans 收 tool span name(=工具名,createAgent.ts:629)
+  const toolNames = (s: any) => ((s.inspect().trace?.spans ?? []) as { type: string; name: string }[]).filter((x) => x.type === 'tool').map((x) => x.name)
 
   const sdk = createChatSdk({
     ui: false,
@@ -50,9 +51,7 @@ async function main() {
       '页面结构 { title, components[] },34 种组件(heading/image/button/banner/carousel/coupon/productGrid/price/tag/icon/countdown/navbar/tabs/section/grid 等)。',
       '规则:改前先 read 定位;改大对象优先 write 的 patch 增量(只发改动部分);从零生成大段用 draft_write 分块 + draft_commit;字段约束以 describe/read 返回为准,写错按校验错误重试。',
     ].join('\n'),
-    onEvent: (e: any) => {
-      if (e.type === 'tool_call') toolCalls.push({ name: e.name, args: e.args })
-    },
+    // 工具链审计走 trace.spans(见 toolNames helper);send 不发 tool_call 事件,onEvent 收集为空故不在此收
   })
   await sdk.mount()
 
@@ -69,7 +68,6 @@ async function main() {
   const report: any[] = []
   console.log(`\n=== 码良级任务真 LLM 实测(初始 ${bind.components.length} 组件,模型 ${process.env.VITE_AI_MODEL || 'deepseek-chat'})===`)
   for (let i = 0; i < tasks.length; i++) {
-    const before = { tools: toolCalls.length }
     process.stdout.write(`\n--- ${tasks[i].slice(0, 48)} ---\n`)
     let reply = ''
     try {
@@ -78,7 +76,7 @@ async function main() {
       reply = `❌ 失败:${(e as Error).message}`
     }
     const info = sdk.inspect()
-    const newTools = toolCalls.slice(before.tools).map((t) => t.name)
+    const newTools = toolNames(sdk)  // spans 每次 send(invoke→stream:492)重置 → toolNames 即本次任务工具链,无需 slice
     report.push({
       task: tasks[i].slice(0, 40),
       ok: !reply.startsWith('❌'),
@@ -101,14 +99,14 @@ async function main() {
   console.log('workingMemory:', JSON.stringify(info.workingMemory))
   console.log('trace.metrics:', JSON.stringify(info.trace?.metrics))
   console.log('systemPrompt 体积(chars):', info.systemPrompt.length)
-  console.log('总工具调用:', toolCalls.map((t) => t.name).join(', '))
+  console.log('总工具调用:', toolNames(sdk).join(', '))
 
   // 固化发现到 doc(maliang-real-findings.md)
   const findings = [
     `# 码良级真 LLM 实测发现(${new Date().toISOString().slice(0, 10)})`,
     '',
     `模型: ${process.env.VITE_AI_MODEL || 'deepseek-chat'} | 初始组件: ${initialPage.components.length} | 组件类型: 34(含 icon/tag/price)`,
-    `systemPrompt 体积: ${info.systemPrompt.length} chars | 总轮次: ${info.trace?.metrics?.rounds ?? '-'} | 总工具调用: ${toolCalls.length}`,
+    `systemPrompt 体积: ${info.systemPrompt.length} chars | 总轮次: ${info.trace?.metrics?.rounds ?? '-'} | 总工具调用: ${toolNames(sdk).length}`,
     `mission capture: ${info.mission ? '✓ ' + info.mission.goal : '✗'} | planning 触发: ${info.planPhase?.inPlanning ? '✓' : '✗(或简单任务未触发)'}`,
     '',
     '## 任务级工具链',
