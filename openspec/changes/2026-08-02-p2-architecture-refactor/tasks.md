@@ -33,10 +33,12 @@
 - [x] 17 开关迁移(11 opt-out defaultOn:true + 6 opt-in defaultOn:false;requires: draftWrite 需 dataOps+vfs)
 - [x] createChatSdk / toolsets / usageHints 统一经 resolveCapabilities(inspect 间接经 useXxx;签名向后兼容,内部各自 resolve)
 
-## 子项 5 — types 漂移根治
-- [ ] `test:exports` 升级字段级抽样(比对 SubagentConfig / SdkEvent 联合 / ChatSdkOptions 关键字段)
-- [ ] (评估)生成 d.ts vs 字段级抽样,选渐进方案
-- [ ] 补齐 SubagentConfig / SdkEvent 字段(automation/tracing/draft 等已发事件字面量)
+## 子项 5 — types 漂移根治 ✅ 完成 2026-08-03
+- [x] 字段级抽样断言(防漂移机制):放 `tests/types.test-d.ts`(test:types,tsc 类型层可靠)而非 exports-consistency.mjs(.mjs 正则解析联合/内联类型脆弱)。5 类断言:① `ChatSdk` 全 34 方法/属性 `Pick`(防 AgentCore 缺方法坑源)② `SubagentConfig` 10 字段 `Pick` ③ `SdkEvent` 关键分支 `Extract`(data_change operation / error severity / usage round / trace spans)④ `ChatSdkOptions` 关键字段 `Pick`(tokenBudget/actions/capabilities/onAudit 等)⑤ capabilities 17 开关名 `Pick`(与 capabilities.ts CAPABILITIES 注册表呼应)
+- [x] (评估)生成 d.ts vs 字段级抽样 → 选字段级抽样(`Pick`/`Extract` 渐进,不引 d.ts 生成工具链)
+- [x] SubagentConfig/SdkEvent 字段已在 [2.21.0] 修复漂移(补齐层);此处补**防护层**锁定现状不再漂移
+- [x] exports-consistency.mjs 加职责分工注释(本文件管「符号存在」,types.test-d.ts 管「字段正确」)
+- [x] test:types + test:exports + selftest 1092 + e2e 283 全绿
 
 ## 文档
 - [ ] CLAUDE.md 架构要点更新(模块拆分 + 契约回归)

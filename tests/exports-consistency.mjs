@@ -1,5 +1,11 @@
 // 导出一致性检查:对比 src/core/index.ts 与 types/index.d.ts 的导出名集合,发现 types 漏导出
 // 运行:node tests/exports-consistency.mjs
+//
+// 职责分工(防 types 漂移双层防线):
+//  - 本文件查「导出名集合」(名字在不在):防 types 漏导出某符号(如新增导出忘加进 d.ts)
+//  - 字段级签名漂移(名字都在、字段错 —— 如 AgentCore 缺方法、onAudit 签名错)由
+//    tests/types.test-d.ts(test:types)的 Pick<ChatSdk, ...> / Extract<SdkEvent, ...> 字段级断言覆盖
+//  两者互补:本文件管「符号存在」,types.test-d.ts 管「字段正确」
 import * as fs from 'fs'
 
 function extractExports(content) {
