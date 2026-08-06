@@ -10,9 +10,9 @@
  * 用法:
  * ```ts
  * // 上线(代理模式)
- * createChatSdk({ llm: createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', userToken, model: 'deepseek-chat' }), ... })
+ * createChatSdk({ llm: createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', userToken, model: 'deepseek-v4-flash' }), ... })
  * // 开发(直连模式)
- * createChatSdk({ llm: createProxyLlm({ mode: 'direct', apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' }), ... })
+ * createChatSdk({ llm: createProxyLlm({ mode: 'direct', apiKey: 'sk-xxx', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' }), ... })
  * ```
  *
  * 两种模式返回的都是 BaseChatModel 实例,可直接传 createChatSdk({ llm })。

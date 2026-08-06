@@ -16,7 +16,7 @@ const page = {
 
 createChatSdk({
   container: '#chat',
-  llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', temperature: 0.3 },
+  llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash', temperature: 0.3 },
   systemPrompt: '你是页面搭建助手。用 write 的 patch 按 jsonPath 增量改 components,不要重传整树。',
   data: {
     schema: z.object({

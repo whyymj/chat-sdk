@@ -9,7 +9,7 @@
 ---
 
 > 🔄 **[2026-08-01 定位升级覆盖 —— 本节以下 5 项全部重启]**
-> SDK 定位从「轻量页面 JSON 操作 Agent」升级为「**胜任复杂多组件 + 浏览器内后台自动化的胜任级 Agent SDK**」(见 [`doc/complex-agent-roadmap.md`](../doc/complex-agent-roadmap.md))。**本文件的核心标尺②「不滑向重型编排框架」已被推翻** —— 以下 5 个暂缓提案**全部重启授权**(定位升级即真需求,不再等「重启触发条件」),按设计报告分期落地(Phase 1-4)。
+> SDK 定位从「轻量页面 JSON 操作 Agent」升级为「**胜任复杂多组件 + 浏览器内后台自动化的胜任级 Agent SDK**」(见 [`doc/archive/complex-agent-roadmap.md`](../doc/archive/complex-agent-roadmap.md))。**本文件的核心标尺②「不滑向重型编排框架」已被推翻** —— 以下 5 个暂缓提案**全部重启授权**(定位升级即真需求,不再等「重启触发条件」),按设计报告分期落地(Phase 1-4)。
 > 下方的「评估原则」与「各项详情」为**旧定位下的历史评估**,保留作决策溯源;每项的**重启状态 + Phase 归属**见下表。重启落地为 `revive-*` / 调整后新 change(基于旧 proposal,非直接 apply —— 旧 proposal 有默认策略 / 依赖绑定 / 已实现部分去重等需调整)。
 
 > 📦 **[2026-08-02 归档]**:以下 5 项的旧 proposal 已移入 `openspec/changes/archive/2026-07-31-*/`(顶部加「📦 已归档(被取代)」标注),作溯源底稿,不再实施。重启落地的新 change 状态(活跃/已归档)见 [`project.md`](./project.md)「进行中」与「最近完成」段。
@@ -137,7 +137,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。
-- 🔄 **定位升级后**(2026-08-01):5 项全部重启授权,分期落地(见 `doc/complex-agent-roadmap.md` + 上方覆盖块)。重启以 `revive-*` / 调整后新 change 推进(不直接 apply 旧 proposal —— 默认策略 / 依赖绑定 / 已实现部分需调整);旧详情段保留作"当初为何暂缓"的溯源,不删。
+- 🔄 **定位升级后**(2026-08-01):5 项全部重启授权,分期落地(见 `doc/archive/complex-agent-roadmap.md` + 上方覆盖块)。重启以 `revive-*` / 调整后新 change 推进(不直接 apply 旧 proposal —— 默认策略 / 依赖绑定 / 已实现部分需调整);旧详情段保留作"当初为何暂缓"的溯源,不删。
 - 原 change 目录保留(proposal / design / tasks 不删),作为详细底稿;各 proposal.md 顶部已加 `⏸ 已评估暂缓` 标注块指向本文件。
 - **重启某项时**:从本文件移除 → 立项进 `project.md`「进行中」→ 按正常 OpenSpec 流程推进(先修行号 + apply)。
 - 本文件随评估持续维护;新增暂缓项追加到表尾。

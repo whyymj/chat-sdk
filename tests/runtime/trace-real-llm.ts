@@ -36,7 +36,7 @@ async function main() {
     llm: {
       apiKey,
       baseUrl: process.env.VITE_AI_BASE_URL,
-      model: process.env.VITE_AI_MODEL || 'deepseek-chat',
+      model: process.env.VITE_AI_MODEL || 'deepseek-v4-flash',
       temperature: Number(process.env.VITE_AI_TEMPERATURE) || 0.3,
     },
     data: { schema: pageSchema, bind, description: '专题页 {title, components[]}' },

@@ -37,7 +37,7 @@ const app = { title: 'Demo', theme: 'light', items: [] }  // plain object (or re
 
 createChatSdk({
   container: '#root',
-  llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  llm: { apiKey, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   systemPrompt: 'You are a JSON operation assistant; read/write the main data via tools.',
   data: {
     schema: z.object({

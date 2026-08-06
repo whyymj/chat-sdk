@@ -1,7 +1,7 @@
 # page-agent-sdk 复杂场景 + 自动化能力设计报告
 
 > **用途**:SDK 从「轻量页面 agent」升级为「胜任复杂多组件场景 + 浏览器内后台自动化」的能力规划蓝图。整合定位升级、架构决策、6 层能力全景、分期路线图,作为未来实施与拓展的参考。
-> **维护日期**:2026-08-01。与 [`capability-boundaries.md`](./capability-boundaries.md)(当前能力边界)、[`openspec/deferred.md`](../openspec/deferred.md)(暂缓清单)、各 change 的 `decision-record.md` 互补。
+> **维护日期**:2026-08-01。与 [`capability-boundaries.md`](./capability-boundaries.md)(当前能力边界)、[`openspec/deferred.md`](../../openspec/deferred.md)(暂缓清单)、各 change 的 `decision-record.md` 互补。
 
 ---
 

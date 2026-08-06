@@ -24,12 +24,12 @@ export async function run(ctx: TestCtx): Promise<void> {
   }
   {
     // proxy 模式:返回 BaseChatModel 实例(userToken 占位)
-    const llm = createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', userToken: 'tok-xxx', model: 'deepseek-chat' })
+    const llm = createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', userToken: 'tok-xxx', model: 'deepseek-v4-flash' })
     assert(!!llm && typeof (llm as any).invoke === 'function', 'proxy 模式 → 返回 BaseChatModel(invoke 可用)')
   }
   {
     // proxy 模式不传 userToken → 用占位 'proxy' 不抛错
-    const llm = createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', model: 'deepseek-chat' })
+    const llm = createProxyLlm({ mode: 'proxy', baseUrl: '/api/llm', model: 'deepseek-v4-flash' })
     assert(!!llm, 'proxy 模式不传 userToken → 用占位不抛错')
   }
   {
@@ -39,7 +39,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       mode: 'proxy',
       baseUrl: '/api/llm',
       userToken: 'tok-old',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
       refreshToken: async () => { refreshed = true; return 'tok-new' },
       headers: { 'X-Tenant': 'acme' },
     })
@@ -48,7 +48,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   }
   {
     // proxy 模式不传 baseUrl → warn 不抛错(打到页面 origin)
-    const llm = createProxyLlm({ mode: 'proxy', userToken: 'tok', model: 'deepseek-chat' })
+    const llm = createProxyLlm({ mode: 'proxy', userToken: 'tok', model: 'deepseek-v4-flash' })
     assert(!!llm, 'proxy 模式不传 baseUrl → warn 不抛错(默认 /)')
   }
   {
@@ -58,7 +58,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const llm = createProxyLlm({
       mode: 'proxy', baseUrl: '/api/llm', userToken: 'tok',
       refreshToken: async () => 'new',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     })
     assert(!!llm, 'proxy 模式 refreshToken + 可重试 body(string)→ 构造正常')
   }

@@ -1273,7 +1273,7 @@ sdk.addSubagent({ id: 'translator', description: '中英互译子 agent', system
 sdk.removeSubagent('translator')
 ```
 
-> **说明**:`setSystemPrompt` / `setMiddleware`(中间件数组运行时替换)仍未实现,改动深入 harness 核心,留待后续;当前可用 `setData`/`setSkills`/`augmentSystem` 钩子覆盖大部分动态 system prompt 场景。详见 `doc/roadmap.md` #5。
+> **说明**:`setSystemPrompt` / `setMiddleware`(中间件数组运行时替换)仍未实现,改动深入 harness 核心,留待后续;当前可用 `setData`/`setSkills`/`augmentSystem` 钩子覆盖大部分动态 system prompt 场景。详见 `doc/archive/roadmap.md` #5。
 
 ### 6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点
 

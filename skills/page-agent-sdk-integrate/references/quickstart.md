@@ -18,7 +18,7 @@ Drop into any HTML page. The built-in dialog mounts itself. (`systemPrompt` is o
   const app = { title: 'Hello', theme: 'light' }   // plain object (no window needed)
   ChatSdk.createChatSdk({
     container: '#root',
-    llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
     systemPrompt: 'You are a JSON operation assistant. Read/write the main data via tools.',
     data: {
       schema: ChatSdk.z.object({
@@ -47,7 +47,7 @@ const app = { title: 'Hello', theme: 'light', items: [] }
 
 const sdk = createChatSdk({
   container: '#root',
-  llm: { apiKey: import.meta.env.VITE_AI_API_KEY, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  llm: { apiKey: import.meta.env.VITE_AI_API_KEY, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   systemPrompt: 'You are a JSON operation assistant. Read/write the main data via tools.',
   data: {
     schema: z.object({
@@ -161,7 +161,7 @@ const sdk = createChatSdk({
     mode: 'proxy',
     baseUrl: '/api/llm',            // your proxy (same-origin avoids CORS)
     userToken: getUserToken(),       // session token (server validates, swaps in real key)
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     refreshToken: async () => (await (await fetch('/api/refresh')).json()).token, // auto-refresh on 401
     headers: { 'X-Tenant': 'acme' }, // optional custom headers
   }),
@@ -173,7 +173,7 @@ const sdkDev = createChatSdk({
   container: '#root',
   llm: createProxyLlm({
     mode: 'direct',
-    apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat',
+    apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash',
   }),
   // ...data, systemPrompt...
 }).mount()

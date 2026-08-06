@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+### Fixed
+- **P0 数据安全逃逸(`fix-write-safety-bypass`,2026-08-03 架构审查发现)**:
+  - **edit/patch 写回绕过 schema 白名单(P0-1)**:`applyPatchesToBind` 写 live 用原始 patch 值(`a.value`),未走 zod `safeParse` 的 strip → 已声明路径值内的**未声明嵌套键** / 值内嵌 **`__proto__` own 键**落 bind(set 路径 `commitSetToBind` 用 `res.data` 干净、edit 路径脏)。修复:写 live 改为从 `res.data`(schema 解析值,已 strip)**整体写回**(方案 B2,与 `commitSetToBind` 单一真相源);`remove` 先 `deleteByPath`(safeMerge 浅合并不删 key)。覆盖 set/merge/append/remove 全 op。
+  - **DSML/伪 XML 解析把示例当真执行(P0-2)**:`parseGarbledToolCalls` 不跳代码围栏 + 不要求 DeepSeek 强守卫标记 → 纯文本/围栏内 `<invoke name=>` 示例(用户让示范写法 / 模型贴文档片段)被当真执行写入数据。修复:① 剥离代码围栏(```...```);② **仅强守卫标记**(`<｜tool_calls｜>` / `<｜｜?DSML` / `<｜tool[_a-z]*｜>`)才自动解析执行,无守卫 → 返回 null 降级 garbled-retry 回灌(防示例误执行;代价:非 DeepSeek 模型用伪 XML 调工具多一次重试)。`detectGarbledToolCall` 保持宽松(仍认 `<invoke>` 进 garbled 流程配合回灌),`parseGarbledToolCalls` 导出签名不变。
+- selftest 1097→1112(sec-30 加 P0-1 白盒 + 新建 sec-46 P0-2 白盒 + sec-25 用例适配收紧);e2e 286 不变(FAKE_LLM 走标准 tool_calls 不触发 garbled,P0-1 黑盒用例由 selftest 白盒覆盖)。
+
+### Fixed
+- **draft_commit 乐观锁补齐(harden-large-json-write A1)**:`draft_commit` 是全 SDK 唯一跳过乐观锁的普通写路径(直接 `commitSetToBind`),draft 累积跨多轮 LLM 调用期间 bind 被外部改过会**静默整份覆盖**(恰恰是核心卖点「乐观锁 + 冲突介入」最该保护的场景)。修复:与 set/edit 一致走 `handleConflict`(顺序:parse 先 → 草稿非法 JSON_INVALID 早返回不浪费介入 → handleConflict → commitSetToBind),`draft_commit` 加 `expectedHash` 参数,冲突触发人工介入 / VERSION_CONFLICT,草稿保留。
+- usageHints draftWrite 段补 `maxToolRounds` 大 JSON 多轮截断提示 + `draft_commit` 走乐观锁提示(A5,LLM 可达性)。
+- selftest 1112→1119(sec-41 加 A1 乐观锁三场景:onConflict 介入 keep_external 不覆盖 + 草稿保留 / 无 onConflict → VERSION_CONFLICT / 无冲突正常写);e2e 286 不变。
+- ⏸ **推后**(评估有疑问/更好建议,后续批次统一处理):A4 子路径 hash(与 placeholder-protected-read-write 协同,改动面大)/ A2 快照字节上限(estimateJsonBytes 双倍序列化成本)/ A3 惰性 hash(缓存自引用风险)/ B1 draft 中间校验(scanBalance 细节)/ B2 DRAFT_EVICTED(vfs LRU 无淘汰记录,无法区分「不存在」vs「被淘汰」)/ C1/C2(P2 能力)。
+
+### Changed
+- **工具重名覆盖语义(tool-name-collision)**:自定义 tool 与内置 tool 重名从**未定义行为**(装配层重复定义 + 执行层 builtin 赢 + 标注层后注册来源,三者漂移)收敛为**显式覆盖**(后注册覆盖先注册,对齐 alibaba/page-agent)。
+  - 新增 `dedupeTools` 纯函数(`sdk/toolRegistry.ts`):按装配序 builtin → user → action → humanConfirm/checkpoint → mcp 收敛为唯一集 + collisions 告警(可单测)。
+  - createChatSdk 装配(`allTools` 初始 + `rebuildExtraTools`)改调 `dedupeTools`;重名 `console.warn`「谁覆盖谁」;执行(find)与标注(toolSources)天然一致(收敛后唯一)。
+  - `addTool` 升级为覆盖语义(跨最终工具集去重 + warn,不再静默 return);`removeTool` 清 `toolSources`(保持与 allTools 一致)。
+  - ⏸ 推后:`removeTool` 删内置(disabledNames 状态机,与 rebuild 交互边界复杂;集成方想禁用内置更直接用 capabilities,边缘场景)+ e2e 重名用例(selftest sec-47 白盒已覆盖纯函数)。
+- selftest 1119→1130(新建 sec-47 `dedupeTools` 白盒 11 断言);e2e 286 不变。
+
 ## [2.22.1] - 2026-08-03
 
 ### Added

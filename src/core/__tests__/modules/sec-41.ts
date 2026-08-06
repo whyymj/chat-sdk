@@ -92,6 +92,50 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(r404.includes('DRAFT_NOT_FOUND'), '✓ draft_commit 草稿不存在 → DRAFT_NOT_FOUND')
   }
 
+  // ===== A1 draft_commit 乐观锁(harden-large-json-write:draft 累积跨多轮,bind 被改过 → 冲突不静默覆盖)=====
+  console.log('\n[draft · A1 draft_commit 乐观锁]')
+  {
+    // 场景 1:autoLock + bind 被改 → 触发 onConflict 介入(keep_external),草稿保留,bind 未被覆盖
+    const bindA1 = { title: 'orig', count: 1 }
+    const vfsA1 = createVfs()
+    let conflictCalled = false
+    const opsA1 = createDataOps({ schema, bind: bindA1, description: 'A1' }, {
+      vfsStore: vfsA1 as any,
+      onConflict: async () => { conflictCalled = true; return { action: 'keep_external' } },
+    })
+    const byNameA1 = Object.fromEntries(opsA1.map((t) => [t.name, t])) as Record<string, any>
+    await invoke(byNameA1['draft_write'], { draftId: 'c1', chunk: '{"title":"drafted","count":9}', mode: 'start' })
+    await invoke(byNameA1['get_data'], {})  // read 拿 hash(autoLock 记 lastReadHash)
+    bindA1.count = 999  // 外部改 bind(模拟 draft 累积期间被改)
+    const rc1 = await invoke(byNameA1['draft_commit'], { draftId: 'c1' })
+    assert(conflictCalled === true, 'A1 → draft_commit 乐观锁:bind 被改过 → 触发 onConflict 介入(不静默覆盖整份大 JSON)')
+    assert(bindA1.title === 'orig' && bindA1.count === 999, 'A1 → 冲突 keep_external:bind 保留外部值(未被草稿覆盖)')
+    assert('drafts/c1.json' in (vfsA1 as any).files, 'A1 → 冲突时草稿保留(未清,LLM 重 read 后可再 commit)')
+
+    // 场景 2:无 onConflict → VERSION_CONFLICT 错误回灌(不挂起)
+    const bindA2 = { title: 'orig', count: 1 }
+    const vfsA2 = createVfs()
+    const opsA2 = createDataOps({ schema, bind: bindA2, description: 'A2' }, { vfsStore: vfsA2 as any })
+    const byNameA2 = Object.fromEntries(opsA2.map((t) => [t.name, t])) as Record<string, any>
+    await invoke(byNameA2['draft_write'], { draftId: 'c2', chunk: '{"title":"drafted","count":9}', mode: 'start' })
+    await invoke(byNameA2['get_data'], {})
+    bindA2.count = 888  // 外部改
+    const rc2 = await invoke(byNameA2['draft_commit'], { draftId: 'c2' })
+    assert(rc2.includes('VERSION_CONFLICT'), 'A1 → 无 onConflict:autoLock 检测 bind 被改 → VERSION_CONFLICT 回灌(不静默覆盖)')
+    assert(bindA2.title === 'orig', 'A1 → VERSION_CONFLICT:bind 未被草稿覆盖')
+
+    // 场景 3:bind 未被外部改 → autoLock hash 匹配,无冲突正常写
+    const bindA3 = { title: 'orig', count: 1 }
+    const vfsA3 = createVfs()
+    const opsA3 = createDataOps({ schema, bind: bindA3, description: 'A3' }, { vfsStore: vfsA3 as any })
+    const byNameA3 = Object.fromEntries(opsA3.map((t) => [t.name, t])) as Record<string, any>
+    await invoke(byNameA3['draft_write'], { draftId: 'c3', chunk: '{"title":"ok","count":3}', mode: 'start' })
+    await invoke(byNameA3['get_data'], {})  // 设 lastReadHash(bind 未变,后续匹配)
+    const rc3 = await invoke(byNameA3['draft_commit'], { draftId: 'c3' })
+    assert(rc3.includes('已 draft_commit'), 'A1 → bind 未变:autoLock hash 匹配,无冲突正常写')
+    assert(bindA3.title === 'ok' && bindA3.count === 3, 'A1 → 无冲突:bind 正常更新')
+  }
+
   // ===== filterByToolMode:simple 隐藏 draft,advanced 暴露 =====
   console.log('\n[draft · filterByToolMode 筛选]')
   {

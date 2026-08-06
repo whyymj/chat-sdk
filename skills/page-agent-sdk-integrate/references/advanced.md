@@ -317,4 +317,4 @@ sdk.removeSubagent('translator')        // → boolean
 sdk.setSubagents([{ id: 'a', description: 'A' }, { id: 'b', description: 'B' }])  // replace all
 ```
 
-> **Note**: `setSystemPrompt` / `setMiddleware` (runtime middleware-array swap) are not yet implemented — they touch the harness core and are deferred. Use `setData` / `setSkills` / `augmentSystem` hook to cover most dynamic system-prompt scenarios. See `doc/roadmap.md` #5.
+> **Note**: `setSystemPrompt` / `setMiddleware` (runtime middleware-array swap) are not yet implemented — they touch the harness core and are deferred. Use `setData` / `setSkills` / `augmentSystem` hook to cover most dynamic system-prompt scenarios. See `doc/archive/roadmap.md` #5.

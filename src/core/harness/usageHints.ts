@@ -68,6 +68,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       if (rc.subagent) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
       if (rc.inspectEnv) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
       if (rc.draftWrite) hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
+      if (rc.draftWrite) hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=10 可能触顶被 while 截断导致草稿写不完;目标组件数大时集成方应在 createChatSdk 配 maxToolRounds ≥ 20(或按 N+5 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
       if (caps?.subagents?.length) {
         const planners = caps.subagents.filter((s) => (s.temperature ?? 0) >= CREATIVE_TEMP || /规划|创意|设计|方案|brainstorm|plan/i.test(s.description))

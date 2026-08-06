@@ -38,7 +38,7 @@ async function main() {
     llm: {
       apiKey,
       baseUrl: process.env.VITE_AI_BASE_URL,
-      model: process.env.VITE_AI_MODEL || 'deepseek-chat',
+      model: process.env.VITE_AI_MODEL || 'deepseek-v4-flash',
       temperature: Number(process.env.VITE_AI_TEMPERATURE) || 0.3,
     },
     data: { schema: pageSchema, bind, description: '电商专题页 {title, components[]}(34 种组件 union,含 icon/tag/price/coupon/productGrid/countdown 等基础+营销组件)' },
@@ -66,7 +66,7 @@ async function main() {
   ]
 
   const report: any[] = []
-  console.log(`\n=== 码良级任务真 LLM 实测(初始 ${bind.components.length} 组件,模型 ${process.env.VITE_AI_MODEL || 'deepseek-chat'})===`)
+  console.log(`\n=== 码良级任务真 LLM 实测(初始 ${bind.components.length} 组件,模型 ${process.env.VITE_AI_MODEL || 'deepseek-v4-flash'})===`)
   for (let i = 0; i < tasks.length; i++) {
     process.stdout.write(`\n--- ${tasks[i].slice(0, 48)} ---\n`)
     let reply = ''
@@ -105,7 +105,7 @@ async function main() {
   const findings = [
     `# 码良级真 LLM 实测发现(${new Date().toISOString().slice(0, 10)})`,
     '',
-    `模型: ${process.env.VITE_AI_MODEL || 'deepseek-chat'} | 初始组件: ${initialPage.components.length} | 组件类型: 34(含 icon/tag/price)`,
+    `模型: ${process.env.VITE_AI_MODEL || 'deepseek-v4-flash'} | 初始组件: ${initialPage.components.length} | 组件类型: 34(含 icon/tag/price)`,
     `systemPrompt 体积: ${info.systemPrompt.length} chars | 总轮次: ${info.trace?.metrics?.rounds ?? '-'} | 总工具调用: ${toolNames(sdk).length}`,
     `mission capture: ${info.mission ? '✓ ' + info.mission.goal : '✗'} | planning 触发: ${info.planPhase?.inPlanning ? '✓' : '✗(或简单任务未触发)'}`,
     '',

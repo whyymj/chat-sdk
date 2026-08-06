@@ -78,7 +78,7 @@ const sdk = createChatSdk({
   llm: {
     apiKey: import.meta.env.VITE_AI_API_KEY || 'YOUR_API_KEY',
     baseUrl: 'https://api.deepseek.com/v1',    // OpenAI-compatible protocol; DeepSeek by default
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,                          // low temp recommended for large JSON ops
   },
   // [UI form: built-in dialog (default) / drawer mode (dialog.drawer:true) / headless (ui:false)]

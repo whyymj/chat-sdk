@@ -231,7 +231,7 @@ createChatSdk({
     mode: 'proxy',
     baseUrl: '/api/llm',        // your proxy (same-origin avoids CORS)
     userToken: getUserToken(),   // session token (server validates)
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     refreshToken?: async () => ...,  // optional: refresh on 401
     headers?: { 'X-Tenant': 'acme' }, // optional: extra headers
   }),
@@ -244,7 +244,7 @@ createChatSdk({
     mode: 'direct',
     apiKey: 'sk-xxx',
     baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
   }),
   ...
 })

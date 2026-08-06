@@ -1,0 +1,16 @@
+# Specification Delta: page-agent-core
+
+> 本文件为 change `agent-driven-compression` 对 `openspec/specs/page-agent-core.md` 的**增量 Requirement**。实现完成归档时合入主 specs。**依赖前置** `context-inspector`(复用其 `analyzeContext` 作数据源)。
+
+## Requirement: 压缩 agent 自主决策压缩策略(agent-driven-compression)
+
+系统让压缩环节的摘要 LLM(`summaryLlm`,未配则主 LLM)在触发压缩时**先查看上下文构成、再输出结构化压缩决策**并按其执行;决策不可用时逐级降级到现状静态策略,零破坏向后兼容。
+
+- **触发预检(评审修正 HIGH)**:`compressInput` 每次 `stream()` 都跑,触发判断在 `compress()` 内部 —— 抽纯函数 `shouldTriggerCompression(messages, config): boolean`(token 模式 `totalTokens > threshold` / 轮数模式 `rounds.length > summaryThresholdRounds`)作单一真源;`summarization.compressInput` **先 gate,通过才 `decide`**,否则每条消息都烧 1~2 次 LLM 调用。
+- **`inspect_context` 工具(摘要环节专用,不进主 agent 工具池)**:参数 zod `{ path?, role?, limit? }`(path 查单路径 / role 过滤 / limit 各轮条数);返回 `{ totalTokens, occupancy, contextWindow?, categories[], rounds[{ round, tokens, tools, head }] }`。数据源为 `analyzeContext`(分类)+ `groupRounds` + `estimateRoundTokens` + `roundToolNames`(rounds 级,显式组合)。仅决策时临时 bind 到 summaryLlm,不污染 `inspect().tools` / usageHints / toolMode。
+- **`CompressDecision` 结构化决策(zod 校验,触发模式感知)**:`{ keepRounds?: 0-50(轮数模式), windowRatio?: 0-1(token 模式), summarize: { mode: 'index'|'llm' }, recallTopK?: 0-10, preserveTools?: string[]≤10, reason?: ≤200 }`,`refine` 强制 keepRounds 或 windowRatio 至少一个。SDK 默认 token 驱动压缩,`keepRounds` 在 token 模式下无对应关系 → 双字段按当前模式填。schema 导出,校验失败 → 决策器重试一次 → 再失败返回 null 降级静态;极端值 clamp(keepRounds≤50 / recallTopK≤10)+ 强制 keepRounds≥1 下界防「贪省恒全压」。
+- **`buildSummaryLlmInvoke` 扩展**:返回结构增 `decide(input: { getContext, contextWindow?, thresholdRatio?, triggerReason }) => Promise<CompressDecision | null>`;`invoke`(摘要)保留不变。`decide` 复用 `summaryLlm ?? 主 llm` 实例:**两段式工具循环**——bind `inspect_context`(`bindTools` 返回独立实例,与主 agent 无冲突)→ system「压缩决策助手」prompt(含当前触发模式)→ tool_calls 轮 → 执行工具(ToolMessage snake_case `tool_call_id`、call.id 兜底)→ 回灌 → 最终 JSON → `CompressDecisionSchema.safeParse`。失败定义逐条(校验/JSON 解析/工具执行/超时)各重试一次 → null。`decide` 用独立更短超时(`decisionTimeoutMs` 5-8s,防两段叠加阻塞首响应)与更大 `maxTokens`(避免继承 summaryLlm 1024 截断)。`bindTools` 方法检测 + **调用失败兜底**(方法存在≠模型真支持,OpenAI 兼容端点可 400)。`decide` 与 `invoke` 失败互不影响。
+- **压缩执行改造**:`useContextManager.compress(messages, decision?)`——有决策 token 模式按 `decision.windowRatio` 换算窗口预算(替代静态比例,保留 token 封顶)、轮数模式按 `decision.keepRounds` 切分(补 `keepRounds >= rounds.length` 时 older 空 → 返回 notTriggered 早退);按 `decision.recallTopK` 召回(0=不召回)、按 `decision.summarize.mode` 选摘要方式(`index` 走索引、`llm` 走 `llmInvoke` 含 undefined 回退)、preserve 集 = 配置 ∪ `decision.preserveTools`;无决策完全走现状静态路径(零变化)。summaryMsg 附注 `(压缩决策:keepRounds/windowRatio · reason/mode)`;stats 增 `decision?` 字段,`CompressionStats` 加字段后自动流到 `inspect().lastCompression` 与前置 change 的 `contextSnapshot.compression`。
+- **`capabilities.agentCompression`** 默认关(opt-in,决策烧 token),`requires: ['summarization']`;开且 summaryLlm 可用 → `decide` 传给 summarization 中间件;开但无 LLM → warn + 不装决策(压缩现状)。
+- **决策流**:`summarization.compressInput` 内,**先 `shouldTriggerCompression` gate** → 通过才 `decide` → `compress(messages, decision)`;null → 静态。决策仅覆盖「本次触发时的执行参数」,不持久化、不改 contextPreset;触发阈值/触发模式仍来自 config,决策改不了「何时触发」。`maxMemoryRounds < summaryThresholdRounds` 时 trim 先触发、agentCompression 也永不生效。
+- **行为约束**:默认关时压缩行为与现状完全一致;开启后每次压缩新增约 1~2 次 LLM 调用(有成本;SDK 默认 `enableLLMSummary` 已 true,此调用叠加在已有摘要调用之上),换取自适应压缩质量。

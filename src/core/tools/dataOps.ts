@@ -21,7 +21,7 @@ import { toolError, zodError, jsonParseError, formatZodIssues } from './toolErro
 import {
   isUnsafePath, safeMerge, getByPath, deleteByPath, deepClone, maybeParseValue,
   projectFields, limitDepth, safeStringify, hashValue,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects,
+  applyPatchToClone, restoreLive, restoreInPlace, diffObjects,
   type EditOp,
 } from './jsonUtils'
 import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode } from './schemaUtils'
@@ -149,7 +149,7 @@ export function commitSetToBind(args: {
 
 /**
  * 增量 patch 写入纯函数(p2-refactor 子项 3 装饰器):clone + 逐 patch 校验(isUnsafePath/isPathAllowed/maybeParseValue)
- * + applyPatchToClone + 整体 schema 校验 + (dryRun 预检) + snapshot + applyPatchToLive 循环 + markDataDirty。
+ * + applyPatchToClone + 整体 schema 校验 + (dryRun 预检) + snapshot + 从 res.data 整体写回 + markDataDirty。
  * edit_data / write(edit) / eval-patches / eval-subtree 共用 —— 消除四处 clone+循环+校验+snapshot+applyLive 重复
  * (乐观锁×拦截器×dryRun 三轴组合的 bug 高发区,单一真相源防不一致)。
  * 调用方负责:bindRef 类型守卫(NOT_OBJECT/LEAF_BIND,错误码各异)+ audit(detail/value 差异)+ lastReadHash + 成功 message。
@@ -197,11 +197,20 @@ export function applyPatchesToBind(args: {
       : zodError('', res.error.issues) }
   }
   if (dryRun) return { ok: true, applied, clone }
-  // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ applyPatchToLive 循环 + markDataDirty
+  // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ 写回 bind + markDataDirty
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
   snapshots.push({ id, ts: Date.now(), op: 'edit', value: deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
-  for (const a of applied) applyPatchToLive(bindRef, a.op, a.jp, a.value)
+  // fix-write-safety-bypass(P0-1):写 live 从 res.data(schema 解析值,已 strip 未声明键 / 值内嵌 __proto__ own 键)整体写回,
+  // 与 commitSetToBind 单一真相源。旧实现 `for (a) applyPatchToLive(bindRef, a.op, a.jp, a.value)` 用原始 a.value,
+  // 未走 zod strip → 已声明路径值内的未声明嵌套键 / __proto__ own 键落 bind(set 干净、edit 脏)。
+  // res.data 是所有 patch 应用 + zod strip 后的最终态,直接写回覆盖 set/merge/append 全 op;
+  // remove 须显式 deleteByPath(safeMerge 浅合并不删 key,避免 remove 被整体 merge 丢失)。
+  for (const a of applied) if (a.op === 'remove') deleteByPath(bindRef, a.jp)
+  if (res.data !== null && typeof res.data === 'object') {
+    if (allowKeys) safeMerge(bindRef as Record<string, any>, res.data)
+    else restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
+  }
   markDataDirty?.()
   return { ok: true, applied, clone }
 }
@@ -872,7 +881,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       },
     )
     const draftCommit = tool(
-      async ({ draftId }) => {
+      async ({ draftId, expectedHash }) => {
         const key = draftKey(draftId)
         const entry = store.files[key]
         if (!entry) return toolError({ code: 'DRAFT_NOT_FOUND', message: `草稿 "${draftId}" 不存在`, hint: '先 draft_write({draftId, chunk, mode:"start"}) 新建,再 append 累积分块' })
@@ -882,6 +891,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         } catch (e) {
           return toolError({ code: 'JSON_INVALID', message: `草稿 "${draftId}" 拼接后非合法 JSON: ${(e as Error).message}`, hint: '检查 chunk 拼接(逗号/括号/引号是否匹配,首尾是否闭合);草稿保留未删,可继续 draft_write 修正后重 commit', details: { bytes: entry.content.length, preview: entry.content.slice(0, 200) + (entry.content.length > 200 ? '…' : '') } })
         }
+        // harden-large-json-write(A1):draft_commit 乐观锁 —— draft 累积跨多轮 LLM 调用,期间 bind 可能被外部改过;
+        // 与 set/edit 一致走 handleConflict(autoLock 用最后 read 的 hash;显式 expectedHash 优先),冲突触发人工介入,不静默覆盖整份大 JSON。
+        // 顺序:parse 先(草稿非法早返回 JSON_INVALID,不浪费冲突介入)→ handleConflict → commitSetToBind
+        const effHash = expectedHash || (autoLock ? lastReadHash : undefined)
+        const conflict = await handleConflict('set', effHash)
+        if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
         // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
         const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
@@ -892,9 +907,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       {
         name: 'draft_commit',
         description:
-          '把 draft_write 累积的草稿合并 + schema 校验 + 原子提交到主数据(失败不污染 bind,草稿保留供修后重试)。流程:读 drafts/{draftId}.json → JSON.parse(失败 JSON_INVALID,草稿保留)→ schema 校验(失败 SCHEMA_INVALID,草稿保留)→ 写 bind + 自动快照(与 write(set)/set_data 共用 commitSetToBind,restore_data 可回退)→ 清草稿。适合从零生成大 JSON(如 50+ 组件页面):分块 draft_write 累积 → draft_commit 一次提交。小改仍用 write/patch(无需 draft)。',
+          '把 draft_write 累积的草稿合并 + schema 校验 + 原子提交到主数据(失败不污染 bind,草稿保留供修后重试)。流程:读 drafts/{draftId}.json → JSON.parse(失败 JSON_INVALID,草稿保留)→ 乐观锁校验(expectedHash/autoLock,失败触发冲突人工介入,草稿保留)→ schema 校验(失败 SCHEMA_INVALID,草稿保留)→ 写 bind + 自动快照(与 write(set)/set_data 共用 commitSetToBind,restore_data 可回退)→ 清草稿。适合从零生成大 JSON(如 50+ 组件页面):分块 draft_write 累积 → draft_commit 一次提交。小改仍用 write/patch(无需 draft)。',
         schema: z.object({
           draftId: z.string().describe('要提交的草稿标识(对应 draft_write 的 draftId)'),
+          expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
         }),
       },
     )

@@ -24,7 +24,7 @@ try {
 
 const apiKey = process.env.VITE_AI_API_KEY
 const baseUrl = process.env.VITE_AI_BASE_URL
-const model = process.env.VITE_AI_MODEL || 'deepseek-chat'
+const model = process.env.VITE_AI_MODEL || 'deepseek-v4-flash'
 if (!apiKey) {
   console.error('[probe] ❌ 缺 VITE_AI_API_KEY(请在 .env 配置)')
   process.exit(1)

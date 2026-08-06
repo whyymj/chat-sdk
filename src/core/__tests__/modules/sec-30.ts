@@ -1,9 +1,11 @@
 import type { TestCtx } from './_ctx'
+import { z } from 'zod'
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
   deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, cyrb53,
   applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
 } from '../../tools/jsonUtils'
+import { applyPatchesToBind } from '../../tools/dataOps'
 
 /**
  * sec-30 —— jsonUtils 纯函数白盒单测(refactor-module-extraction 从 dataOps 抽离)。
@@ -136,4 +138,46 @@ export async function run(ctx: TestCtx): Promise<void> {
   const liveArr: any[] = [1, 2]
   restoreLive(liveArr, [7])
   assert(liveArr.length === 1 && liveArr[0] === 7, 'restoreLive → 数组 bind 就地还原')
+
+  // applyPatchesToBind(P0-1 写回 schema 解析值,fix-write-safety-bypass)
+  // 现状 bug:applyPatchToLive 用原始 a.value 写 live,未走 zod strip → 未声明嵌套键/__proto__ own 键落 bind
+  // 修复(方案 B2):写 live 改为从 res.data 整体写回(与 commitSetToBind 单一真相源),remove 先 deleteByPath
+  const schemaP01 = z.object({ page: z.object({ title: z.string() }) })
+  // ① set 声明路径值含未声明嵌套键 → zod strip 后不落 bind(现行 bug:secret 落 bind)
+  const bindP01: any = { page: { title: 'old' } }
+  const r1 = applyPatchesToBind({
+    bindRef: bindP01, schema: schemaP01, allowKeys: ['page'],
+    patches: [{ op: 'set', jsonPath: 'page', value: { title: 'new', secret: 'X' } }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(r1.ok === true, 'applyPatchesToBind(P0-1) → set 声明路径值含未声明嵌套键,整体校验通过')
+  assert(bindP01.page.title === 'new', 'applyPatchesToBind(P0-1) → 声明字段 title 正常写入')
+  assert((bindP01.page as any).secret === undefined, 'applyPatchesToBind(P0-1) → ✅ 未声明嵌套键 secret 不落 bind(写回 res.data,与 commitSetToBind 单一真相源)')
+  // ② __proto__ own 键注入(值内嵌,绕过 isUnsafePath 只查 path)→ 不注入 bind
+  const bindProto: any = { page: { title: 'a' } }
+  const r2 = applyPatchesToBind({
+    bindRef: bindProto, schema: schemaP01, allowKeys: ['page'],
+    patches: [{ op: 'set', jsonPath: 'page', value: JSON.parse('{"title":"b","__proto__":{"polluted":1}}') }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(r2.ok === true, 'applyPatchesToBind(P0-1) → __proto__ own 键场景整体校验通过')
+  assert(Object.keys(bindProto.page as any).includes('__proto__') === false, 'applyPatchesToBind(P0-1) → ✅ __proto__ own 键不注入 bind(zod strip + safeMerge 跳过 UNSAFE_KEYS,无原型污染风险移交)')
+  // ③ remove allowKeys 顶层字段 → 正常删除(方案 B2:remove 先 deleteByPath,safeMerge 浅合并不复活)
+  const bindRm: any = { page: { title: 'x' }, extra: 1 }
+  const schemaRm = z.object({ page: z.object({ title: z.string() }).optional(), extra: z.number().optional() })
+  applyPatchesToBind({
+    bindRef: bindRm, schema: schemaRm, allowKeys: ['page', 'extra'],
+    patches: [{ op: 'remove', jsonPath: 'extra' }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(bindRm.extra === undefined && bindRm.page.title === 'x', 'applyPatchesToBind(P0-1) → remove allowKeys 顶层字段正确删除(B2:remove 先删,safeMerge 不复活)')
+  // ④ append 多次(方案 B2:res.data 最终态整体写回,append 净效果体现,与逐 path 提取不同)
+  const bindAp: any = { list: [1] }
+  const schemaAp = z.object({ list: z.array(z.number()) })
+  applyPatchesToBind({
+    bindRef: bindAp, schema: schemaAp, allowKeys: ['list'],
+    patches: [{ op: 'append', jsonPath: 'list', value: 2 }, { op: 'append', jsonPath: 'list', value: 3 }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(bindAp.list.length === 3 && bindAp.list[0] === 1 && bindAp.list[2] === 3, 'applyPatchesToBind(P0-1) → append 多次 res.data 最终态写回正确([1,2,3])')
 }

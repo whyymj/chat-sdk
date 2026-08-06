@@ -62,6 +62,16 @@ export function detectGarbledToolCall(content: string): boolean {
   return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜tool[_a-z]*｜>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
 }
 
+/** 强守卫标记(DeepSeek 内部 token,模型正文不会随意产生)—— fix-write-safety-bypass P0-2:
+ *  parseGarbledToolCalls 仅当 content 匹配到强守卫标记才自动解析执行;纯伪 XML `<invoke>`(无守卫)→ 返回 null,
+ *  交 garbled-retry 回灌让模型用标准 function calling 重发,防「模型贴的示例 / 用户让示范写法」被当真执行写入数据。 */
+const DSML_GUARD_RE = /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜tool[_a-z]*｜>/i
+
+/** 剥离代码围栏(```...```)区块内容 —— fix-write-safety-bypass P0-2:模型在正文贴的工具调用示例多在围栏内,不应当真执行。 */
+function stripCodeFences(content: string): string {
+  return content.replace(/```[\w-]*\n?[\s\S]*?```/g, '')
+}
+
 /** 解析 garbled 工具调用文本(DSML/伪 XML)为标准 tool_calls 数组。
  *  DeepSeek-v4 等模型把工具调用写成正文标签(<｜｜DSML｜｜invoke name="X"><｜｜DSML｜｜parameter name="Y">值</…>)
  *  而非标准 tool_calls 通道;此处解析为 [{id,name,args}] 让 agent 直接执行(免重试)。
@@ -71,10 +81,14 @@ export function detectGarbledToolCall(content: string): boolean {
  *  返回 null:无 garbled / 无 invoke / 全截断。 */
 export function parseGarbledToolCalls(content: string): { id: string; name: string; args: Record<string, unknown> }[] | null {
   if (!content || !detectGarbledToolCall(content)) return null
+  // fix-write-safety-bypass(P0-2):① 剥离代码围栏(模型贴的示例不当真执行);② 仅强守卫标记(DeepSeek 内部 token)才解析执行,
+  // 无守卫的纯伪 XML `<invoke>` → null(交 garbled-retry 回灌让模型用标准 function calling 重发,防示例被当真写入数据)
+  const stripped = stripCodeFences(content)
+  if (!DSML_GUARD_RE.test(stripped)) return null
   const invokeRe = /<(?:｜｜?DSML｜｜?)?\s*invoke\s+name=["']([^"']+)["'][^>]*>/gi
   const starts: { name: string; tagStart: number; after: number }[] = []
   let m: RegExpExecArray | null
-  while ((m = invokeRe.exec(content)) !== null) {
+  while ((m = invokeRe.exec(stripped)) !== null) {
     starts.push({ name: m[1], tagStart: m.index, after: invokeRe.lastIndex })
   }
   if (!starts.length) return null
@@ -84,8 +98,8 @@ export function parseGarbledToolCalls(content: string): { id: string; name: stri
   const closeParamRe = /<\/(?:｜｜?DSML｜｜?)?\s*parameter\s*>/gi
   const calls: { id: string; name: string; args: Record<string, unknown> }[] = []
   for (let i = 0; i < starts.length; i++) {
-    const segEnd = i + 1 < starts.length ? starts[i + 1].tagStart : content.length
-    let seg = content.slice(starts[i].after, segEnd)
+    const segEnd = i + 1 < starts.length ? starts[i + 1].tagStart : stripped.length
+    let seg = stripped.slice(starts[i].after, segEnd)
     const closeM = seg.match(closeInvokeRe)
     if (closeM && closeM.index !== undefined) seg = seg.slice(0, closeM.index)
     // 截断检查:开参数 > 闭参数(有未闭合 = 值被 max_tokens 截断) → 跳过该 invoke(值不完整不可用)

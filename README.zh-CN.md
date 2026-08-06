@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1097%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1130%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -99,7 +99,7 @@ window.page = page  // 可选:挂到 window 供页面读取;SDK 工具直接读�
 
 createChatSdk({
   container: '#chat',
-  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
   systemPrompt: '你是页面搭建助手，通过工具读写主数据。',
   data: {
     schema: z.object({
@@ -344,7 +344,7 @@ flowchart TD
 # .env（前缀 VITE_）
 VITE_AI_API_KEY=sk-...
 VITE_AI_BASE_URL=https://api.deepseek.com
-VITE_AI_MODEL=deepseek-chat
+VITE_AI_MODEL=deepseek-v4-flash
 VITE_AI_TEMPERATURE=0.3        # 结构化操作建议低温
 # VITE_AI_MAX_TOKENS=           # 不配则按模型自动取值
 ```
@@ -459,7 +459,7 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1097 项断言（tsx 源码级，不依赖 LLM）
+npm test            # 1130 项断言（tsx 源码级，不依赖 LLM）
 npm run test:e2e    # 286 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
@@ -489,7 +489,7 @@ window.app = app  // 可选:挂到 window 供页面读取;工具直接读写 bin
 
 createChatSdk({
   container: '#root',
-  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  llm: { apiKey: 'sk-...', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
   systemPrompt: '你是页面助手，用工具读写主数据。',
   data: {
     schema: z.object({

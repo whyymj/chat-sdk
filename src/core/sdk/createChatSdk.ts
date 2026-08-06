@@ -61,6 +61,7 @@ import { getTraceMetrics } from '../utils/traceMetrics'
 import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
+import { dedupeTools } from './toolRegistry'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
@@ -765,23 +766,23 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : []
   checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // allTools 可变:setTools 后重建,inspect().tools 读最新值
-  let allTools: StructuredToolInterface[] = [
-    ...builtinTools,
-    ...userTools,
-    ...actionTools,
-    ...(humanConfirmTool ? [humanConfirmTool] : []),
-    ...checkpointTools,
-  ]
-  /** 重建 extraTools(传 createAgent 的 tools):builtin + userTools + actions + humanConfirm + checkpoint + mcp */
+  // tool-name-collision:装配期 dedupeTools 收敛「自定义与内置重名」为后注册覆盖先注册(对齐 page-agent),
+  // 消除「绑定层重复定义 + 执行层 builtin 赢(find 取第一个)+ 标注层后注册来源」三者漂移;覆盖时 warn 告警集成方
+  let allTools: StructuredToolInterface[] = rebuildExtraTools()
+  /** 重建 extraTools(传 createAgent 的 tools):dedupeTools 收敛 builtin + userTools + actions + humanConfirm + checkpoint + mcp(后覆盖先,返回唯一集) */
   function rebuildExtraTools(): StructuredToolInterface[] {
-    return [
-      ...builtinTools,
-      ...userTools,
-      ...actionTools,
-      ...(humanConfirmTool ? [humanConfirmTool] : []),
-      ...checkpointTools,
-      ...mcpTools,
-    ]
+    const { tools, collisions } = dedupeTools([
+      { label: 'builtin', tools: builtinTools },
+      { label: 'user', tools: userTools },
+      { label: 'action', tools: actionTools },
+      { label: 'humanConfirm', tools: humanConfirmTool ? [humanConfirmTool] : [] },
+      { label: 'checkpoint', tools: checkpointTools },
+      { label: 'mcp', tools: mcpTools },
+    ])
+    if (collisions.length) {
+      console.warn('[page-agent-sdk] 工具重名,后注册覆盖先注册:', collisions.map((c) => `${c.name}(${c.loser}→${c.winner})`).join(', '))
+    }
+    return tools
   }
 
   const usePlanning = caps.planning
@@ -1233,9 +1234,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (core.agent) core.agent.setTools(allTools)
       core.infoTick.value++
     },
-    /** 运行时追加用户工具(去重 by name) */
+    /** 运行时追加用户工具(tool-name-collision:重名按后注册覆盖先注册,跨最终工具集去重 + warn,不再静默 return) */
     addTool(tool: StructuredToolInterface): void {
-      if (userTools.some((t) => t.name === tool.name)) return
+      if (allTools.some((t) => t.name === tool.name)) {
+        console.warn(`[page-agent-sdk] 工具 "${tool.name}" 已存在,新工具覆盖(后注册覆盖先注册)`)
+      }
+      // userTools 内同名先移除(避免数组脏累积);rebuildExtraTools 的 dedupeTools 保证最终唯一(且 user 覆盖 builtin/action)
+      for (let i = userTools.length - 1; i >= 0; i--) if (userTools[i].name === tool.name) userTools.splice(i, 1)
       userTools.push(tool)
       toolSources.set(tool.name, 'user')
       allTools = rebuildExtraTools()
@@ -1247,6 +1252,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const idx = userTools.findIndex((t) => t.name === name)
       if (idx < 0) return false
       userTools.splice(idx, 1)
+      toolSources.delete(name)
       allTools = rebuildExtraTools()
       if (core.agent) core.agent.setTools(allTools)
       core.infoTick.value++

@@ -2,7 +2,7 @@
 
 > **用途**:系统梳理 SDK 当前「能做 / 做不到」的复杂任务边界,作为后期优化的参考。遇到新任务可对照判断「能不能做」「触哪条边界」「怎么解锁」。
 > **定位**:框架无关的**轻量页面 JSON 操作 Agent**(规范化 JSON 操作通道:范围控制 + schema 校验 + 增量 patch + 快照回退)。非通用任务编排框架。
-> **维护日期**:2026-08-01。与 [`openspec/deferred.md`](../openspec/deferred.md)(change 视角的暂缓清单)、[`openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md`](../openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md)(自适应规划选型)互补。
+> **维护日期**:2026-08-01。与 [`openspec/deferred.md`](../../openspec/deferred.md)(change 视角的暂缓清单)、[`openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md`](../../openspec/changes/2026-08-01-add-adaptive-planning/decision-record.md)(自适应规划选型)互补。
 
 ---
 
