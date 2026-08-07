@@ -4,6 +4,40 @@
 
 ## [Unreleased]
 
+### Added
+- **所有 demo 统一 Figma 深色紫主题**:新建 `examples/_shared/theme.css`(`--ark-*` 深色紫变量 + ChatDialog `--cs-*` 覆盖 + reset);16 demo main.ts import + App.vue 外层深色(模式 A 双栏 `.pane` / B 单栏 `.page` / C 全屏);EditableBanner `.editable-area` 改深。
+- **会话标题自动生成(session-history)**:历史列表显示**首条 user 消息内容**(截取 30 字),替代「会话 xxxxxx」。`store.updateTitle`(新)+ persistRuntime `deriveTitle`(纯函数,导出 + selftest sec-49)+ 变化才写 + switchSession/onClear 重置 lastTitle。
+- **ChatDialog 输入框 Figma**:`send-btn` 圆形(border-radius:50%)+ 「Enter 发送 · Shift+Enter 换行」提示 + footer/input 变量化(`var(--cs-bg)`/border var,深色主题不发白)。
+- selftest 1151→1159(sec-49 deriveTitle 8 断言);e2e 303 不变;browser 28 全绿(所有 demo 深色 + 输入框 + title 回归)。
+
+### Changed
+- **并发 send/switchSession/batch 串行化(arch-review P1-2)**:同一 sdk 实例的并发 `send`/`switchSession`/`batch` 此前无互斥 → A 生成中切 B 会共享闭包 state 竞态(state 串写 / data 并发改)。现在排队执行(一个完整跑完下一个才开始),即「一个会话操作 data 时,其他会话等它结束」—— 单实例同一时刻只服务一个会话。
+  - 提取纯函数 `createSerialRunner`(`utils/serialRunner.ts`,可单测防并发测试 flaky):Promise 链互斥,前一个无论成败都继续(不卡死后续),各 fn 结果/错误透传。
+  - `send`/`batch`/`switchSession` 经 `runSerial` 包装;`stream` 暂不串行(流式生命周期复杂,UI 走 useChat 已排队,后续评估)。
+  - 新增导出 `createSerialRunner`。
+- selftest 1145→1151(新建 sec-48 createSerialRunner 白盒:串行顺序/前一个 reject 不卡后续/并发按调用序/reject 透传);e2e 296 不变(串行化透明,无回归)。
+
+### Added
+- **会话历史管理(`session-history-management`,ChatGPT 式新建/切换/历史列表)**:让集成方能实现「一个聊天框 + 顶部新建 + 历史列表切换」。对外暴露此前只在 store 层的会话能力:
+  - `sdk.listSessions(): Promise<SessionMeta[]>` —— 列出当前 agent 的所有历史会话(含 sessionId/title/createdAt/lastAccessed/bytes);storage 未开启 → `[]` 优雅降级。
+  - `sdk.deleteSession(id): Promise<void>` —— 删除历史会话;**不可删除当前会话**(删当前需先 `switchSession` 切走);storage 未开启 → no-op + warn。
+  - `sdk.sessionId`(getter)—— 当前会话 id,`switchSession`/`onClear` 后实时反映(供历史列表高亮当前项);`inspect().sessionId` 同步暴露。
+  - `onClear`(新建会话)后发 `session_restored` 事件(携带新 sessionId + rounds:0),与 `switchSession` 对齐 → 集成方 hook 可感知「用户点了清空新建」,历史列表实时同步。
+- **sdk.sessions 响应式状态下沉(session-history Phase 6)**:会话历史列表自动同步,集成方零样板。新增 `sdk.sessions: Ref<SessionMeta[]>`(响应式)—— switchSession/deleteSession/onClear/mount 恢复后 SDK 内部自动 refresh(`refreshSessions`),集成方直接消费无需手动 listSessions/refresh/hook。`AgentCore.sessions/refreshSessions`;触发点:switchSession/resolveAndLoad(载入)/deleteSession/onClear 末尾。
+- **session-history-demo 重构(组件化 + Figma 设计)**:单文件 App.vue → 直接消费 sdk.sessions(去掉手动 useSessionHistory composable,状态下沉 SDK)+ 组件拆分(`ChatTopBar` 顶部栏 + `SessionHistoryPanel` 右侧弹出历史层)+ 深色紫主题(覆盖 ChatDialog `--cs-*` CSS 变量,无 theme prop)。架构优先:状态在 SDK,UI 组件化,App.vue 只组装。
+- selftest 1151 不变;e2e 296→303(storage Phase 6 sdk.sessions 响应式 + 边界:切回旧会话不重复/无重复 sid/deleteSession 自动 refresh);browser 28 不变(session-history-demo 3 项端到端组件化重构后仍绿)。
+
+### Fixed
+- **checkpoint 栈切会话/清空残留(S1)**:开了 `checkpoint:true` 的集成方,`switchSession` 切新建会话(目标 snap 无 checkpoint)时 `applySnapshot` 的 importStack 受 `snap.checkpoints?.length` 门禁不触发,`onClear` 也无任何 checkpoint 重置 → 旧会话 checkpoint 栈残留 → 新会话 `restoreLastCheckpoint` / LLM `restore_last_checkpoint` 回退到**旧会话**的 messages+bind+vfs+todos(跨会话污染,比 P1-5 pin 段污染更严重)。修复:`switchSession` + `onClear` 加 `checkpointMgr.importStack([])`(替换语义清栈 + 重置增量基线,与 mission/workingMemory reset 同模式;接续 arch-review P1-5)。审计确认 skills(contentCache 跨会话有效)/permissions/summarization/subagent 无需重置,checkpoint 是唯一残留。
+- selftest 1142→1145(sec-17 加 `importStack([])` 清栈白盒);e2e 288→296(storage 加 listSessions/deleteSession/sessionId/优雅降级 8 断言)。
+
+### Fixed
+- **arch-review P1-5/P1-6(切会话状态污染 + mission 清空后被历史重捕)**:
+  - **P1-5 switchSession/onClear 不重置 mission/workingMemory**:`switchSession`/`onClear` 只重置 messages/vfs/todos/memory/debugLogs,缺 missionMw/workingMemoryMw → 切新会话后旧 mission goal + workingMemory 的 pin(path/hash)原样注入新会话 → 过期 hash 诱发乐观锁误冲突 / 按错误 path 写。修复:`missionMw`/`workingMemoryMw` 补 `reset()`(清 mission / 清 locatedPaths+lastHashes),`switchSession` 与 `onClear` 内调用(与现有 todos/vfs/memory 重置对齐);两中间件实例挂 `core` 对象(原仅闭包局部变量,`onClear` 经 `core.` 访问)。
+  - **P1-6 `setMission({})` 清空后被历史重捕**:`beforeAgent` 仅判 `!mission` → 无法区分「从未 capture」与「被显式清空」,集成方收尾 `setMission({})` 解除锚定后,下次 send 从完整历史重新捕获含任务动词的旧 user → agent 被锚到过期目标,无告警。修复:加 `explicitlyCleared` 标记,`setMission({})` 置 true(同会话不再自动重捕),`setMission(新目标)` 与 `reset()` 撤销(显式设新目标或切会话归零后可正常 capture)。
+  - ⏸ 推后(同 change 其余项,评估后统一处理):P1-1 wrap-up 走中间件 model-call 栈(usage/budget 收口漏计)/ P1-2 并发 send 串行化(顺序安全,真并发场景少)/ P1-3 beforeReturn 门禁解耦(verify 预算语义)/ P1-4 subagent/verify 工具池 getter 化(与 setTools/MCP 动态工具协同)。
+- selftest 1130→1142(sec-35 加 P1-5 reset + P1-6 防重捕白盒 8 断言;sec-38 加 reset 白盒 4 断言);e2e 286→288(storage 加 P1-5 switchSession 后 mission 重置断言)。
+
 ### Fixed
 - **P0 数据安全逃逸(`fix-write-safety-bypass`,2026-08-03 架构审查发现)**:
   - **edit/patch 写回绕过 schema 白名单(P0-1)**:`applyPatchesToBind` 写 live 用原始 patch 值(`a.value`),未走 zod `safeParse` 的 strip → 已声明路径值内的**未声明嵌套键** / 值内嵌 **`__proto__` own 键**落 bind(set 路径 `commitSetToBind` 用 `res.data` 干净、edit 路径脏)。修复:写 live 改为从 `res.data`(schema 解析值,已 strip)**整体写回**(方案 B2,与 `commitSetToBind` 单一真相源);`remove` 先 `deleteByPath`(safeMerge 浅合并不删 key)。覆盖 set/merge/append/remove 全 op。

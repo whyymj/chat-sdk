@@ -148,5 +148,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bigMsgs = [new SystemMessage('s'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: 'x'.repeat(300000) })]
     const bigKeep = trimContextIfNeededImpl(bigMsgs, 200000)
     assert(/保留首 400/.test(bigKeep[2].content as string), 'trim: keep 自适应(大阈值→400)')
+
+    // ④ tool_result 事件带耗时(durationMs):工具执行后回填,UI 步骤行展示;独立计时,不依赖 tracing 开关
+    const collected: any[] = []
+    const agentD = createAgent({ llm: new MockLLM([{ toolCalls: [{ name: 'noop', args: {} }] }, { content: '完成' }]) as any, maxToolRounds: 2, maxRetries: 0 })
+    await agentD.stream([{ role: 'user', content: 'go', timestamp: Date.now() }], (e) => collected.push(e), undefined)
+    const toolResults = collected.filter((e) => e.type === 'tool_result')
+    assert(toolResults.length > 0, 'tool_result 事件发出(工具被调用)')
+    assert(toolResults.every((e) => typeof e.durationMs === 'number' && e.durationMs >= 0), 'tool_result 带 durationMs(非负 number,供步骤行展示耗时)')
   }
 }

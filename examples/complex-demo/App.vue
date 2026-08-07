@@ -153,7 +153,7 @@ html, body, #app { margin: 0; padding: 0; height: 100%; overflow: hidden; }
 .hover-highlight:hover { background: rgba(37, 99, 235, 0.08); }
 @media (max-width: 767px) { .hide-on-mobile { display: none !important; } }
 @media (min-width: 768px) { .hide-on-desktop { display: none !important; } }
-.theme-dark { color: #e5e7eb; background: #1f2937; }
+.theme-dark { color: var(--ark-fg); background: var(--ark-panel); }
 </style>
 
 <style scoped>
@@ -166,14 +166,15 @@ html, body, #app { margin: 0; padding: 0; height: 100%; overflow: hidden; }
 .pane-left {
   flex: 1;
   overflow: auto;
-  background: #ffffff;
+  background: var(--ark-bg);
   padding: 20px;
+  color: var(--ark-fg);
 }
 .pane-right {
   width: 50%;
   flex: 1;
-  border-left: 1px solid #e5e7eb;
-  background: #fff;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--ark-panel);
   /* 防止 pane-right 自身溢出导致滚动条遮挡 chat-footer */
   overflow: hidden;
 }

@@ -144,8 +144,9 @@ onUnmounted(() => agent?.unmount())
 .pane-left {
   width: 380px;
   padding: 64px 20px 20px;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
+  background: var(--ark-bg);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--ark-fg);
 }
 .pane-right {
   flex: 1;
@@ -154,10 +155,11 @@ onUnmounted(() => agent?.unmount())
 h2 {
   margin: 0 0 12px;
   font-size: 18px;
+  color: var(--ark-fg);
 }
 .hint {
   font-size: 13px;
-  color: #475569;
+  color: var(--ark-muted);
   line-height: 1.6;
   margin: 0 0 16px;
 }
@@ -169,28 +171,28 @@ h2 {
 }
 .step {
   padding: 10px 12px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--ark-panel);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   font-size: 13px;
 }
 .step b {
   display: block;
   margin-bottom: 4px;
-  color: #1e293b;
+  color: var(--ark-fg);
 }
 .step code {
   display: inline-block;
   padding: 2px 6px;
-  background: #1e293b;
-  color: #e2e8f0;
+  background: var(--ark-bg);
+  color: var(--ark-fg);
   border-radius: 4px;
   font-size: 12px;
 }
 .token-panel {
   padding: 14px;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 8px;
   margin-bottom: 20px;
 }
@@ -202,24 +204,24 @@ h2 {
   margin-bottom: 8px;
 }
 .token-row .label {
-  color: #64748b;
+  color: var(--ark-muted);
   min-width: 72px;
 }
 .token {
   padding: 2px 8px;
-  background: #ecfdf5;
-  color: #047857;
+  background: rgba(var(--ark-accent-rgb), 0.15);
+  color: var(--ark-fg);
   border-radius: 4px;
   font-size: 12px;
 }
 .token.expired {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
 }
 .btn {
   width: 100%;
   padding: 8px 12px;
-  background: #4f46e5;
+  background: var(--ark-accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -228,10 +230,10 @@ h2 {
   margin: 8px 0;
 }
 .btn:hover {
-  background: #4338ca;
+  opacity: 0.9;
 }
 .muted {
-  color: #94a3b8;
+  color: var(--ark-muted);
   font-size: 12px;
 }
 .small {
@@ -241,8 +243,8 @@ h2 {
 }
 .arch {
   padding: 14px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: var(--ark-panel);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
 }
 .arch-line {

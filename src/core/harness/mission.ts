@@ -44,8 +44,12 @@ function captureFromMessages(messages: { role: string; content: string }[]): Mis
 export function createMissionMiddleware(): Middleware & {
   setMission: (m: Partial<Mission>) => void
   getMission: () => Mission | undefined
+  /** 重置为初始态(切会话/清空聊天):清 mission + 撤销清空标记,新会话可正常自动 capture */
+  reset: () => void
 } {
   let mission: Mission | undefined
+  // setMission({}) 显式清空 → beforeAgent 不再自动重捕(P1-6);reset() 切会话归零(新会话可正常 capture)
+  let explicitlyCleared = false
 
   const mw: Middleware & {
     setMission: (m: Partial<Mission>) => void
@@ -53,8 +57,9 @@ export function createMissionMiddleware(): Middleware & {
   } = {
     name: 'mission',
     beforeAgent: (state) => {
-      // 首次(未显式 setMission 且未 capture 过):capture 首条任务型 user
-      if (!mission) {
+      // 仅在「未捕获且未被显式清空」时自动 capture 首条任务型 user
+      // (setMission({}) 收尾解除锚定后,不再从历史重捕过期目标;reset 切会话归零,新会话可正常 capture)
+      if (!mission && !explicitlyCleared) {
         mission = captureFromMessages(state.messages)
       }
       return mission ? { mission } : {}
@@ -69,12 +74,14 @@ export function createMissionMiddleware(): Middleware & {
       lines.push('(每步操作应服务此目标;偏离时回到主线)')
       return lines.join('\n')
     },
-    /** 显式设置/覆盖 mission;传 {} 清空(回到无锚点) */
+    /** 显式设置/覆盖 mission;传 {} 清空(回到无锚点,且同会话内不再自动重捕历史任务消息 P1-6) */
     setMission: (m: Partial<Mission>) => {
       if (Object.keys(m).length === 0) {
         mission = undefined
+        explicitlyCleared = true // 显式清空:同会话内 beforeAgent 不再从历史重捕(防过期目标重锚)
         return
       }
+      explicitlyCleared = false // 显式设新目标:撤销清空标记
       mission = {
         goal: m.goal ?? mission?.goal ?? '',
         acceptanceCriteria: m.acceptanceCriteria ?? mission?.acceptanceCriteria,
@@ -84,6 +91,11 @@ export function createMissionMiddleware(): Middleware & {
       }
     },
     getMission: () => mission,
+    /** 重置为初始态(切会话/清空聊天调用):清 mission + 撤销清空标记,新会话首条任务型 user 可正常自动 capture */
+    reset: () => {
+      mission = undefined
+      explicitlyCleared = false
+    },
   }
   return mw
 }

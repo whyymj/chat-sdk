@@ -29,6 +29,17 @@ export type MockResponse = ToolCallResponse | TextResponse
 export async function mockLlm(page: Page, script: MockResponse[], delays?: number[]): Promise<{ calls: () => number }> {
   let calls = 0
   await page.route('**/chat/completions**', async (route: Route) => {
+    // SDK 内部 LLM 调用(autoTitle 会话标题生成,首轮完成后异步触发)非 agent 主 ReAct 链:
+    // 识别其特征 system 提示后返回固定标题,不消费 script 项,保主链 mock 顺序确定(queue/nested 等精确依赖 script 顺序的 spec 不被错位)
+    const body = route.request().postData() || ''
+    if (body.includes('生成一个简短的中文标题')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'cache-control': 'no-cache', 'connection': 'keep-alive' },
+        body: toSse({ text: '测试会话标题' }, -1),
+      })
+    }
     const idx = calls++
     const delay = delays?.[idx] ?? 0
     if (delay > 0) await new Promise((r) => setTimeout(r, delay))
@@ -174,6 +185,9 @@ export async function waitForAgentIdle(page: Page, timeout = 60_000): Promise<vo
 
 /** 清空对话(避免上一轮残留) */
 export async function clearChat(page: Page): Promise<void> {
+  // 「更多」下拉合并了清空(调试/skill/清空);先开下拉再点清空(老版无下拉时 clickByTitle('更多') no-op)
+  await clickByTitle(page, '更多').catch(() => {})
+  await page.waitForTimeout(120)
   await clickByTitle(page, '清空对话').catch(() => {})
   // 点确认弹窗(如果有)
   await page.evaluate(() => {

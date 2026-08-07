@@ -62,4 +62,25 @@ export async function run(ctx: TestCtx): Promise<void> {
   const emptyMw = createWorkingMemoryMiddleware()
   assert(emptyMw.augmentPrompt?.({} as any) === undefined, '✓ augmentPrompt 空 workingMemory → undefined')
   assert(emptyMw.getWorkingMemory() === undefined, '✓ getWorkingMemory 空 → undefined')
+
+  // ✓ P1-5:reset() 清空 locatedPaths + lastHashes(切会话/清空聊天防旧 path/hash 污染新会话)
+  {
+    const mwr = createWorkingMemoryMiddleware()
+    const callR = async (name: string, args: Record<string, unknown>, content: string): Promise<ToolExecResult> => {
+      const ctxT = { id: '1', name, args, state: { messages: [] } } as unknown as ToolCallContext
+      return (mwr.wrapToolCall as (c: ToolCallContext, n: (c: ToolCallContext) => Promise<ToolExecResult>) => Promise<ToolExecResult>)(
+        ctxT,
+        async () => ({ content, status: 'done' as const }),
+      )
+    }
+    await callR('read', { jsonPath: 'a.b' }, '值 (hash=deadbeef)')
+    assert(mwr.getWorkingMemory()!.locatedPaths.includes('a.b'), '✓ reset 前置:read 捕获 path a.b + hash')
+    mwr.reset()
+    assert(mwr.getWorkingMemory() === undefined, '✓ reset() → 清空 locatedPaths + lastHashes(getWorkingMemory undefined)')
+    // reset 后重新捕获无残留(只含新 path,旧 path 不在)
+    await callR('read', { jsonPath: 'c.d' }, '值 (hash=cafef00d)')
+    const wm2 = mwr.getWorkingMemory()!
+    assert(wm2.locatedPaths.includes('c.d') && !wm2.locatedPaths.includes('a.b'), '✓ reset() 后重新捕获无残留(只含新 path c.d)')
+    assert(wm2.lastHashes['c.d'] === 'cafef00d' && !('a.b' in wm2.lastHashes), '✓ reset() 后 lastHashes 无残留(只含新 hash)')
+  }
 }

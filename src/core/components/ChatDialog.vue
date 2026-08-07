@@ -9,6 +9,7 @@ import type { DebugLog } from '../harness/createAgent'
 import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
+import type { SessionMeta } from '../backends/storage'
 
 const props = withDefaults(defineProps<{
   fetchResponse?: (messages: AgentMessage[]) => Promise<string>
@@ -57,6 +58,16 @@ const props = withDefaults(defineProps<{
   drawerHidden?: boolean
   /** 输入框行数(可见高度,textarea rows 属性);默认 2(2 行初始高度,自动扩展至 max-height:50vh)。设 1 则单行;设 >2 则更高 */
   inputRows?: number
+  /** 历史会话列表(storage 开启时由 SDK 注入;不传则隐藏「新建/历史」按钮) */
+  sessions?: SessionMeta[]
+  /** 当前会话 id(供历史列表高亮当前项) */
+  currentSessionId?: string
+  /** 新建会话回调(→ sdk.switchSession()) */
+  onNewSession?: () => void
+  /** 切到指定历史会话(→ sdk.switchSession(id)) */
+  onOpenSession?: (sessionId: string) => void
+  /** 删除历史会话(→ sdk.deleteSession(id)) */
+  onRemoveSession?: (sessionId: string) => void
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -139,6 +150,14 @@ const inputText = ref('')
 const isExpanded = ref(true)
 const debugVisible = ref(false)
 const skillPanelVisible = ref(false)
+const moreOpen = ref(false)   // 「更多」下拉(调试 / skill / 清空 合并,减少头部按钮平铺)
+const historyOpen = ref(false)   // 历史会话面板(sessions 注入时,点「历史」展开)
+function fmtSessionTime(ts: number): string {
+  const d = Date.now() - ts
+  if (d < 60000) return '刚刚'
+  if (d < 3600000) return Math.floor(d / 60000) + '分钟前'
+  return new Date(ts).toLocaleString()
+}
 /** 记录每条消息思考过程的展开状态(按消息索引);默认展开(undefined = 展开),用户手动折叠后存 false */
 const reasoningExpanded = ref<Record<number, boolean>>({})
 
@@ -155,19 +174,21 @@ function toggleReasoning(idx: number) {
   reasoningExpanded.value[idx] = !isReasoningExpanded(idx)
 }
 
-function stepStatusIcon(step: ToolStep) {
-  return step.status === 'running' ? '⏳' : step.status === 'error' ? '❌' : '✅'
+/** 步骤状态中文标签(running/done/error → 执行中/成功/失败),配合色块 status-dot 使用(Figma 风格) */
+function statusLabel(status: 'running' | 'done' | 'error'): string {
+  return status === 'running' ? '执行中' : status === 'error' ? '失败' : '成功'
 }
 
-/** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组(顺次展示)。状态聚合(有 error→error,有 running→running,否则 done),children 合并 */
+/** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组(顺次展示)。状态聚合(有 error→error,有 running→running,否则 done),children 合并,耗时求和 */
 function groupedSteps(steps: ToolStep[]) {
-  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[] }[] = []
+  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[]; totalMs: number }[] = []
   for (const s of steps) {
     const last = groups.length ? groups[groups.length - 1] : null
     if (last && last.name === s.name) {
       last.count++
       if (s.status === 'running') last.hasRunning = true
       if (s.status === 'error') last.hasError = true
+      if (s.durationMs) last.totalMs += s.durationMs
       if (s.children?.length) last.children.push(...s.children)
     } else {
       groups.push({
@@ -176,6 +197,7 @@ function groupedSteps(steps: ToolStep[]) {
         hasRunning: s.status === 'running',
         hasError: s.status === 'error',
         children: s.children?.length ? [...s.children] : [],
+        totalMs: s.durationMs ?? 0,
       })
     }
   }
@@ -184,11 +206,8 @@ function groupedSteps(steps: ToolStep[]) {
     count: e.count,
     status: e.hasError ? 'error' : e.hasRunning ? 'running' : 'done',
     children: e.children,
+    durationMs: e.totalMs || undefined,
   }))
-}
-
-function groupStatusIcon(status: string) {
-  return status === 'running' ? '⏳' : status === 'error' ? '❌' : '✅'
 }
 
 /** 占位 assistant 消息:流式等待首个输出时(content/reasoning 均空)→ 在该消息内显示三点,避免再叠加一个底部 loading 头像 */
@@ -258,48 +277,74 @@ const drawerWidthStyle = computed(() => {
         <span v-if="state.loading" class="status-dot pulse"></span>
       </div>
       <div class="header-actions">
+        <!-- 内置会话管理(sessions 注入 = storage 开启;不传则隐藏按钮)-->
+        <button v-if="sessions" class="action-btn" data-test="new-chat" title="新建会话" @click="onNewSession?.()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
+        </button>
+        <button v-if="sessions" class="action-btn" :class="{ active: historyOpen }" data-test="toggle-history" title="历史记录" @click.stop="moreOpen = false; historyOpen = !historyOpen">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>
+        </button>
+        <!-- 历史面板(弹出;点外部关)-->
+        <div v-if="sessions && historyOpen" class="cs-history-menu" @click.stop>
+          <div
+            v-for="s in sessions"
+            :key="s.sessionId"
+            class="hist-item"
+            :class="{ active: currentSessionId === s.sessionId }"
+            :data-sid="s.sessionId"
+            @click="onOpenSession?.(s.sessionId)"
+          >
+            <div class="hist-title">{{ s.title || '会话 ' + s.sessionId.slice(-6) }}</div>
+            <div class="hist-meta">
+              <span>{{ fmtSessionTime(s.lastAccessed) }}</span>
+              <button v-if="currentSessionId !== s.sessionId" class="hist-del" data-test="del-btn" @click.stop="onRemoveSession?.(s.sessionId)">✕</button>
+            </div>
+          </div>
+        </div>
+        <!-- 更多按钮(调试 / skill / 清空 合并下拉,减少头部按钮平铺)-->
         <button
-          class="action-btn debug-btn"
-          :class="{ active: debugVisible }"
-          title="日志 / 执行流程 / Agent 信息"
-          @click="debugVisible = true"
+          class="action-btn more-btn"
+          :class="{ active: moreOpen }"
+          title="更多"
+          @click.stop="historyOpen = false; moreOpen = !moreOpen"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path>
-            <path d="M9 2h6"></path>
-            <path d="M9 18h6"></path>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle>
           </svg>
           <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
         </button>
-        <button
-          v-if="props.onAddSkill"
-          class="action-btn"
-          :class="{ active: skillPanelVisible }"
-          title="创建 / 管理自定义 Skill"
-          @click="skillPanelVisible = true"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.8 5.7 21l2.3-7.2-6-4.4h7.6z"></path>
-          </svg>
-        </button>
-        <button class="action-btn" title="清空对话" @click="clearMessages" :disabled="!hasMessages">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-        </button>
+        <!-- 下拉菜单 -->
+        <div v-if="moreOpen" class="more-menu" @click.stop>
+          <button class="more-item" title="日志 / 执行流程 / Agent 信息" @click="debugVisible = true; moreOpen = false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path><path d="M9 2h6"></path><path d="M9 18h6"></path>
+            </svg>
+            <span>调试 / 日志</span>
+            <span v-if="hasDebugLogs" class="more-item-badge">{{ debugLogs?.length }}</span>
+          </button>
+          <button v-if="props.onAddSkill" class="more-item" title="创建 / 管理自定义 Skill" @click="skillPanelVisible = true; moreOpen = false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.8 5.7 21l2.3-7.2-6-4.4h7.6z"></path>
+            </svg>
+            <span>Skill 管理</span>
+          </button>
+          <button class="more-item" title="清空对话" @click="clearMessages(); moreOpen = false" :disabled="!hasMessages">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>清空对话</span>
+          </button>
+        </div>
+        <!-- 关闭/展开(常用,留头部)-->
         <button v-if="drawer" class="action-btn" title="关闭" @click="emit('close')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6L6 18M6 6l12 12"></path>
           </svg>
         </button>
-        <button v-else class="action-btn" @click="isExpanded = !isExpanded">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path v-if="isExpanded" d="M18 15l-6-6-6 6"></path>
-            <path v-else d="M6 9l6 6 6-6"></path>
-          </svg>
-        </button>
       </div>
+      <!-- 下拉遮罩(点外部关闭:更多菜单 / 历史面板)-->
+      <div v-if="moreOpen || historyOpen" class="more-overlay" @click="moreOpen = false; historyOpen = false"></div>
     </div>
 
     <!-- 消息列表 -->
@@ -321,37 +366,38 @@ const drawerWidthStyle = computed(() => {
           {{ msg.role === 'user' ? '👤' : '🤖' }}
         </div>
         <div class="message-content">
-          <!-- 思考过程(可折叠,默认展开:生成中实时可见,避免长时间一动不动) -->
+          <!-- 思考过程(可折叠,默认展开:生成中实时可见;色块 + 收起/展开文字,Figma 风格) -->
           <div
             v-if="msg.role === 'assistant' && msg.reasoning"
             class="reasoning-block"
             :class="{ expanded: isReasoningExpanded(idx) }"
           >
             <div class="reasoning-header" @click="toggleReasoning(idx)">
-              <span class="reasoning-icon">🧠</span>
+              <span class="status-dot ok"></span>
               <span class="reasoning-title">思考过程</span>
-              <span class="reasoning-toggle">{{ isReasoningExpanded(idx) ? '▾' : '▸' }}</span>
+              <span class="reasoning-toggle">{{ isReasoningExpanded(idx) ? '收起' : '展开' }}</span>
             </div>
             <div v-if="isReasoningExpanded(idx)" class="reasoning-body">{{ msg.reasoning }}</div>
           </div>
 
-          <!-- 工具调用步骤 -->
+          <!-- 工具调用步骤(色块 + 名称 + 状态标签 + 耗时,Figma 风格) -->
           <div
             v-if="msg.role === 'assistant' && msg.steps && msg.steps.length"
             class="steps-block"
           >
-            <div v-for="(step, sIdx) in groupedSteps(msg.steps)" :key="sIdx" class="step-item">
+            <div v-for="(step, sIdx) in groupedSteps(msg.steps)" :key="sIdx" class="step-item" :class="step.status">
               <div class="step-head">
-                <span class="step-icon">{{ groupStatusIcon(step.status) }}</span>
+                <span class="status-dot" :class="step.status"></span>
                 <span class="step-name">{{ step.name }}</span>
                 <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
-                <span v-if="step.status === 'running'" class="step-status running">执行中…</span>
+                <span class="step-status" :class="step.status">{{ statusLabel(step.status) }}</span>
+                <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ step.durationMs }}ms</span>
               </div>
-              <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具青色区分) -->
+              <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具区分) -->
               <div v-if="step.children && step.children.length" class="step-children">
                 <div class="step-children-label">🧬 子 agent 进度</div>
-                <div v-for="(c, cIdx) in step.children" :key="cIdx" class="step-child">
-                  <span class="step-icon">{{ stepStatusIcon(c) }}</span>
+                <div v-for="(c, cIdx) in step.children" :key="cIdx" class="step-child" :class="c.status">
+                  <span class="status-dot sm" :class="c.status"></span>
                   <span class="step-name">{{ c.name }}</span>
                   <span v-if="c.status === 'running'" class="step-status running">…</span>
                 </div>
@@ -485,32 +531,34 @@ const drawerWidthStyle = computed(() => {
     <!-- 输入区域 -->
     <Transition name="cs-slide">
     <div v-show="isExpanded" class="chat-footer">
-      <span v-if="props.getInfo" class="cap-badge" title="能力概览(MCP / 工具数)">
-        🔌{{ summary.mcp }} · 🔧{{ summary.tools }}
-      </span>
       <button v-if="canUndo" class="undo-foot-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="handleUndo">↩ 回退</button>
-      <textarea
-        v-model="inputText"
-        class="chat-input"
-        :placeholder="placeholder"
-        :rows="props.inputRows"
-        @keydown="handleKeydown"
-      ></textarea>
-      <button
-        class="send-btn"
-        :class="{ 'stop-btn': state.loading }"
-        :disabled="!state.loading && !inputText.trim()"
-        :title="state.loading ? '停止生成' : '发送'"
-        @click="state.loading ? stop() : handleSend()"
-      >
-        <svg v-if="state.loading" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-        </svg>
-        <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-      </button>
+      <div class="chat-input-wrap">
+        <textarea
+          v-model="inputText"
+          class="chat-input"
+          :placeholder="placeholder"
+          :rows="props.inputRows"
+          @keydown="handleKeydown"
+        ></textarea>
+        <div class="input-actions">
+          <span class="send-hint">Enter 发送 · Shift+Enter 换行</span>
+          <button
+            class="send-btn"
+            :class="{ 'stop-btn': state.loading }"
+            :disabled="!state.loading && !inputText.trim()"
+            :title="state.loading ? '停止生成' : '发送'"
+            @click="state.loading ? stop() : handleSend()"
+          >
+            <svg v-if="state.loading" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+            </svg>
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
     </Transition>
 
@@ -555,6 +603,30 @@ const drawerWidthStyle = computed(() => {
   --cs-bg: #ffffff;
   --cs-bubble-ai: #f3f4f6;
   --cs-radius: 12px;
+  /* 思考过程块(默认浅绿;深色主题覆盖 --cs-reason-* 即可) */
+  --cs-reason-bg: #f0f7f3;
+  --cs-reason-border: #b8d4c5;
+  --cs-reason-head: #2d5a47;
+  --cs-reason-text: #41544c;
+  --cs-reason-toggle: #6b8c79;
+  /* 工具步骤块(中性卡片,跨状态) */
+  --cs-step-bg: #f4f6f8;
+  --cs-step-border: #e2e6ea;
+  --cs-step-text: #374151;
+  --cs-step-meta: #9ca3af;
+  /* 语义状态色(跨主题;深色主题可适当提亮) */
+  --cs-ok: #16a34a; --cs-ok-rgb: 22, 163, 74;
+  --cs-warn: #d97706; --cs-warn-rgb: 217, 119, 6;
+  --cs-err: #dc2626; --cs-err-rgb: 220, 38, 38;
+  /* 子 agent 紫色系 */
+  --cs-sub-bg: #faf5ff;
+  --cs-sub-border: #c4b5fd;
+  --cs-sub-text: #6d28d9;
+  /* markdown 渲染(表格边框/th 背景/inline code;MessageContent.vue 消费) */
+  --cs-md-border: #e5e7eb;
+  --cs-md-th-bg: #f9fafb;
+  --cs-md-code-bg: rgba(102, 126, 234, 0.1);
+  --cs-md-code-text: #4338ca;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -594,6 +666,7 @@ const drawerWidthStyle = computed(() => {
   background: var(--cs-primary);
   color: #fff; cursor: pointer; user-select: none;
   flex-shrink: 0;
+  position: relative; z-index: 16;  /* 高于 more-overlay(15):头部按钮(新建/历史/更多)可点,不被历史/更多面板的遮罩挡 */
 }
 .header-left { display: flex; align-items: center; gap: 8px; }
 .header-icon { font-size: 20px; }
@@ -602,7 +675,7 @@ const drawerWidthStyle = computed(() => {
 .status-dot.pulse { animation: pulse 1.5s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-.header-actions { display: flex; gap: 4px; }
+.header-actions { display: flex; gap: 4px; position: relative; z-index: 20; }  /* z 高于 more-overlay(15):头部按钮(新建/历史/更多)可点,不被菜单/历史面板的遮罩挡 */
 .action-btn {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border: none; border-radius: 6px;
@@ -611,6 +684,41 @@ const drawerWidthStyle = computed(() => {
 }
 .action-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* 「更多」下拉菜单(调试 / skill / 清空 合并,减少头部按钮平铺) */
+.more-btn { position: relative; }
+.more-btn.active { background: rgba(255, 255, 255, 0.45); }
+.more-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  min-width: 168px; padding: 4px;
+  background: #fff; color: #1f2937;   /* 固定白底深字:浮层菜单跨主题清晰(不继承 .chat-header 白字;深色主题浮层仍浅,标准做法) */
+  border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+.more-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: none; background: none;
+  font: inherit; font-size: 13px; color: inherit; cursor: pointer; border-radius: 6px; text-align: left;
+}
+.more-item:hover:not(:disabled) { background: rgba(0, 0, 0, 0.06); }
+.more-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.more-item svg { opacity: 0.7; flex-shrink: 0; }
+.more-item-badge { margin-left: auto; background: var(--cs-primary, #1f4d3a); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+.more-overlay { position: fixed; inset: 0; z-index: 15; }  /* 透明遮罩:点外部关菜单(zIndex 低于 menu 的 20) */
+/* 历史会话面板(内置;复用 more-menu 风格,跟 --cs-* 主题深浅自适应) */
+.cs-history-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  min-width: 220px; max-height: 320px; overflow-y: auto; padding: 4px;
+  background: #fff; color: #1f2937;   /* 固定白底深字:历史面板跨主题清晰(同 more-menu) */
+  border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+.hist-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.hist-item:hover { background: rgba(0, 0, 0, 0.06); }
+.hist-item.active { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.15); border-left: 2px solid var(--cs-primary, #1f4d3a); }
+.hist-title { font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-meta { display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.6; }
+.hist-del { background: none; border: none; cursor: pointer; font-size: 13px; opacity: 0.6; padding: 0 4px; }
+.hist-del:hover { opacity: 1; color: #dc2626; }
 .action-btn.debug-btn { position: relative; } /* 与其他 action-btn 一致(28x28);badge 绝对定位角标 */
 .action-btn.debug-btn.active { background: rgba(255, 255, 255, 0.45); }
 .debug-badge {
@@ -652,25 +760,35 @@ const drawerWidthStyle = computed(() => {
 @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px); } }
 .typing-text { font-size: 13px; color: #9ca3af; }
 
-.reasoning-block { margin-bottom: 6px; border: 1px dashed #b8d4c5; border-radius: 8px; overflow: hidden; background: #f0f7f3; }
-.reasoning-header { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; user-select: none; font-size: 12px; color: #2d5a47; }
-.reasoning-icon { font-size: 13px; }
-.reasoning-title { font-weight: 600; }
-.reasoning-toggle { margin-left: auto; }
-.reasoning-body { padding: 8px 10px; border-top: 1px dashed #b8d4c5; font-size: 12px; line-height: 1.6; color: #16402f; white-space: pre-wrap; word-break: break-word; }
+/* 状态色块(8×8 圆角;成功/运行/失败 三色,跨主题跟 --cs-ok/warn/err) */
+.status-dot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; background: var(--cs-step-meta); }
+.status-dot.ok, .status-dot.done { background: var(--cs-ok); }
+.status-dot.running { background: var(--cs-warn); }
+.status-dot.error { background: var(--cs-err); }
+.status-dot.sm { width: 6px; height: 6px; border-radius: 2px; }
 
-.steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
-.step-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; align-self: flex-start; padding: 2px 8px; border-radius: 10px; background: #ecfeff; border: 1px solid #a5f3fc; font-size: 11px; color: #0e7490; max-width: 100%; }
-.step-head { display: inline-flex; align-items: center; gap: 5px; }
-.step-icon { font-size: 11px; }
-.step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; }
-.step-count { font-size: 10px; color: #0891b2; font-weight: 600; }
-.step-status.running { color: #0891b2; }
-.step-children { padding: 4px 8px 4px 10px; border-left: 2px solid #c4b5fd; border-radius: 0 8px 8px 0; background: #faf5ff; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
-.step-children-label { font-size: 10px; font-weight: 600; color: #7c3aed; letter-spacing: 0.3px; }
-.step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 8px; background: #ede9fe; border: 1px solid #ddd6fe; font-size: 10px; color: #6d28d9; }
-.step-child .step-name { color: #6d28d9; }
-.step-child .step-status.running { color: #8b5cf6; }
+.reasoning-block { margin-bottom: 6px; border: 1px solid var(--cs-reason-border); border-radius: 8px; overflow: hidden; background: var(--cs-reason-bg); }
+.reasoning-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--cs-reason-head); }
+.reasoning-title { font-weight: 600; }
+.reasoning-toggle { margin-left: auto; font-size: 12px; color: var(--cs-reason-toggle); }
+.reasoning-body { padding: 8px 10px; border-top: 1px solid var(--cs-reason-border); font-size: 12px; line-height: 1.6; color: var(--cs-reason-text); white-space: pre-wrap; word-break: break-word; }
+
+.steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; }
+.step-head { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; font-weight: 600; }
+.step-count { font-size: 10px; color: var(--cs-step-meta); font-weight: 600; }
+/* 状态文字标签(色块同色,低 alpha 底,跨主题跟 --cs-ok/warn/err-rgb) */
+.step-status { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.2px; }
+.step-status.done { color: var(--cs-ok); background: rgba(var(--cs-ok-rgb), 0.12); }
+.step-status.running { color: var(--cs-warn); background: rgba(var(--cs-warn-rgb), 0.12); }
+.step-status.error { color: var(--cs-err); background: rgba(var(--cs-err-rgb), 0.12); }
+.step-duration { font-size: 10px; color: var(--cs-step-meta); font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.step-children { padding: 4px 8px 4px 10px; border-left: 2px solid var(--cs-sub-border); border-radius: 0 6px 6px 0; background: var(--cs-sub-bg); display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.step-children-label { font-size: 10px; font-weight: 600; color: var(--cs-sub-text); letter-spacing: 0.3px; }
+.step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 4px; border-radius: 6px; font-size: 10px; color: var(--cs-sub-text); }
+.step-child .step-name { color: var(--cs-sub-text); font-weight: 400; }
+.step-child .step-status.running { color: var(--cs-sub-text); background: rgba(108, 92, 231, 0.12); }
 
 .stream-cursor, .typing-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--cs-primary); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
@@ -686,20 +804,26 @@ const drawerWidthStyle = computed(() => {
   padding: 12px 16px;
   /* 底部安全区:防止输入框底部贴边/被遮挡;移动端 safe-area 适配 */
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid #f3f4f6; background: #fafafa;
+  
   /* footer 不收缩不溢出:textarea 撑高时由 chat-body(flex:1, min-height:0)吸收,避免容器竖向滚动 */
   flex-shrink: 0;
 }
+/* 输入框容器:relative,容纳 textarea + 右下角 input-actions(发送按钮 + 提示紧挨) */
+.chat-input-wrap { flex: 1; position: relative; min-width: 0; }
 .chat-input {
-  flex: 1; resize: vertical; border: 1px solid #e5e7eb; border-radius: 8px;
-  padding: 9px 12px; font-size: 13px; font-family: inherit; line-height: 1.5;
-  outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
+  width: 100%; resize: vertical; border: 1px solid rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2); border-radius: 8px;
+  padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);
+  background: transparent; outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
   overflow-wrap: anywhere; word-break: break-word;
 }
+.chat-input::placeholder { color: var(--cs-bg-muted, #9ca3af); opacity: 0.7; }
 .chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
+/* 输入框右下角:提示 + 发送按钮(紧挨,Figma) */
+.input-actions { position: absolute; bottom: 10px; right: 10px; display: flex; align-items: center; gap: 8px; }
+.send-hint { font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.6; pointer-events: none; white-space: nowrap; }
 .send-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; border: none; border-radius: 8px;
+  width: 28px; height: 28px; border: none; border-radius: 50%;   /* 圆形,内置输入框右下角 */
   background: var(--cs-primary); color: #fff; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s; flex-shrink: 0;
 }
@@ -708,9 +832,6 @@ const drawerWidthStyle = computed(() => {
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .send-btn.stop-btn { background: #9ca3af; }
 .send-btn.stop-btn:hover:not(:disabled) { background: #6b7280; transform: none; }
-
-/* 能力徽标(footer 左,纯展示 MCP/工具数;位置预留后续拓展) */
-.cap-badge { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; white-space: nowrap; user-select: none; }
 
 /* 最后一条 assistant 操作(复制/重新生成,hover 显示) */
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }

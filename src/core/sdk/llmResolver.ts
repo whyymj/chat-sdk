@@ -10,6 +10,21 @@ import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/m
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, type ModelCaps } from '../utils/modelCaps'
 import type { ChatSdkOptions, LLMConfig } from './createChatSdk'
+import type { AgentMessage } from '../types'
+
+/**
+ * 从首条 user 消息派生会话标题(截取前 30 字 + …,供历史列表显示,替代「会话 xxxxxx」)。
+ * 纯函数:无 user → undefined;content 是 string 或 parts 数组(parts 取 .text 拼接);超 30 字截断。
+ */
+export function deriveTitle(msgs: AgentMessage[]): string | undefined {
+  const u = msgs.find((m) => m.role === 'user')
+  if (!u) return undefined
+  const c = (u as any).content
+  const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join('') : String(c ?? '')
+  const t = text.trim().replace(/[\n\r]+/g, ' ')
+  if (!t) return undefined
+  return t.length > 30 ? t.slice(0, 30) + '…' : t
+}
 
 /** 判定 llm 选项是模型实例(BaseChatModel)还是配置对象(LLMConfig) */
 export function isChatModel(v: unknown): v is BaseChatModel {
@@ -81,12 +96,57 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
 }
 
 /**
- * 解析初始模型能力 + 摘要 LLM invoke(供 buildCore 装配)。
- * 返回 {modelCaps, summaryLlmInvoke};主 LLM 实例化(currentLlm)与 setLlm 运行时切换由 buildCore/createAgent 管(闭包依赖)。
+ * 构建标题生成 LLM invoke(供 persistRuntime 自动生成会话标题,像 ChatGPT 总结主旨)。
+ * 优先 options.titleLlm → summaryLlm → llm;实例优先,否则按 LLMConfig 构造 ChatOpenAI(低温 + 限 30 token)。
+ * 失败/无 apiKey → undefined(调用方用 deriveTitle 规则兜底)。
+ */
+export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentMessage[]) => Promise<string>) | undefined {
+  const llmOpt = options.titleLlm ?? options.summaryLlm ?? options.llm
+  if (!llmOpt) return undefined
+  let llm: BaseChatModel
+  if (isChatModel(llmOpt)) {
+    llm = llmOpt
+  } else {
+    const cfg = llmOpt as LLMConfig
+    if (!cfg.apiKey) return undefined
+    llm = new ChatOpenAI({
+      apiKey: cfg.apiKey, model: cfg.model, temperature: 0, maxTokens: 30,
+      configuration: { ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}), ...cfg.extraConfig },
+      ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
+    })
+  }
+  return async (messages: AgentMessage[]) => {
+    const dialogue = messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${extractText(m)}`)
+      .join('\n')
+      .slice(0, 800)
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 10000)
+    try {
+      const res = await llm.invoke(
+        [
+          new SystemMessage('根据以下对话的主旨,生成一个简短的中文标题(不超过15个字,不要标点和引号,直接输出标题文字)。'),
+          new HumanMessage(dialogue),
+        ],
+        { signal: ac.signal } as any,
+      )
+      return extractText(res).trim().replace(/^["'""「『]|["'""」』]$/g, '').split('\n')[0].slice(0, 20)
+    } catch {
+      return ''
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}
+
+/**
+ * 解析初始模型能力 + 摘要/标题 LLM invoke(供 buildCore 装配)。
  */
 export function resolveLlm(options: ChatSdkOptions): {
   modelCaps: ModelCaps
   summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined
+  titleLlmInvoke: ((messages: AgentMessage[]) => Promise<string>) | undefined
 } {
   const llmCfg = isChatModel(options.llm) ? undefined : (options.llm as LLMConfig)
   const modelCaps = resolveModelCaps({
@@ -95,5 +155,6 @@ export function resolveLlm(options: ChatSdkOptions): {
     maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
   })
   const summaryLlmInvoke = buildSummaryLlmInvoke(options)
-  return { modelCaps, summaryLlmInvoke }
+  const titleLlmInvoke = buildTitleLlmInvoke(options)
+  return { modelCaps, summaryLlmInvoke, titleLlmInvoke }
 }

@@ -126,14 +126,15 @@ onUnmounted(() => agent?.unmount())
 .pane-left {
   flex: 1;
   overflow: auto;
-  background: #ffffff;
+  background: var(--ark-bg);
   padding: 20px;
+  color: var(--ark-fg);
 }
 .pane-right {
   width: 50%;
   flex: 1;
-  border-left: 1px solid #e5e7eb;
-  background: #fff;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--ark-panel);
 }
 .pane-right > :deep(.chat-dialog) {
   width: 100%;

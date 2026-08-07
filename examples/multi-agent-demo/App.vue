@@ -164,12 +164,12 @@ onUnmounted(() => agents.value.forEach((a) => a?.unmount()))
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #fff; padding: 70px 32px 28px; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 70px 32px 28px; color: var(--ark-fg); }
 .pane-right { width: 0; height: 0; }  /* drawer 模式 fixed,挂载点无需尺寸 */
 
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-h3 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 14px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+h3 { font-size: 14px; margin: 18px 0 8px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 14px; }
 .hint code { background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 
 .agent-bar {
@@ -193,11 +193,11 @@ h3 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
 .status { font-size: 13px; color: #6b7280; margin: 6px 0 0; }
 
 .data-block { margin: 14px 0; }
-.data-head { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
-.data-id { color: #9ca3af; font-weight: 400; font-size: 11px; }
+.data-head { font-size: 13px; font-weight: 600; color: var(--ark-fg); margin-bottom: 6px; }
+.data-id { color: var(--ark-muted); font-weight: 400; font-size: 11px; }
 .data-json {
-  margin: 0; font-size: 11px; line-height: 1.5; color: #374151;
-  background: #f9fafb; padding: 10px; border-radius: 6px; max-height: 160px; overflow: auto;
+  margin: 0; font-size: 11px; line-height: 1.5; color: var(--ark-fg);
+  background: var(--ark-bg); padding: 10px; border-radius: 6px; max-height: 160px; overflow: auto;
 }
 
 .try { font-size: 13px; color: #7c3aed; background: #f3e8ff; padding: 10px 14px; border-radius: 8px; margin-top: 18px; line-height: 1.7; }

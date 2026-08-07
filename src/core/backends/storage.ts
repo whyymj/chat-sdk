@@ -96,6 +96,8 @@ export interface SessionStore {
   listSessions(agentId: string): Promise<SessionMeta[]>
   load(agentId: string, sessionId: string): Promise<SessionSnapshot | undefined>
   save(agentId: string, sessionId: string, snap: Partial<SessionSnapshot>): Promise<void>
+  /** 更新会话标题(自动从首条 user 消息生成,供历史列表显示;替代「会话 xxxxxx」) */
+  updateTitle(agentId: string, sessionId: string, title: string): Promise<void>
   flush(): Promise<void>
   deleteSession(agentId: string, sessionId: string): Promise<void>
   createSession(agentId: string, title?: string, sessionId?: string): Promise<string>
@@ -535,6 +537,13 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
         tasks.push(debouncedSave(agentId, sessionId, kind, snap[kind]))
       }
       await Promise.all(tasks)
+    },
+    async updateTitle(agentId, sessionId, title) {
+      const metaKey = encodeKey(dbName, agentId, sessionId, META_KIND)
+      return runSerial(chains, metaKey, async () => {
+        const meta = (await backend.get(metaKey)) as SessionMeta | undefined
+        if (meta) { meta.title = title; meta.lastAccessed = Date.now(); await backend.set(metaKey, meta) }
+      })
     },
     async flush() {
       for (const k of Array.from(timers.keys())) {

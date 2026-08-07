@@ -186,16 +186,16 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #ffffff; padding: 28px 32px; }
-.pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 14px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 14px; }
 .hint code { background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 .tree-wrap {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--ark-panel);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
   padding: 16px 18px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
@@ -205,8 +205,8 @@ h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
   font-weight: 600;
   margin: 0 0 10px;
   padding-bottom: 8px;
-  border-bottom: 1px dashed #d1d5db;
-  color: #1f2937;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+  color: var(--ark-fg);
 }
 .try {
   font-size: 13px;
@@ -221,25 +221,25 @@ h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
 /* ✋ 人工介入编辑面板 */
 .manual-panel {
   margin-top: 14px;
-  background: #fff;
-  border: 1px solid #c7d2fe;
+  background: var(--ark-panel);
+  border: 1px solid rgba(var(--ark-accent-rgb), 0.3);
   border-radius: 10px;
   padding: 14px 16px;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.08);
+  box-shadow: 0 2px 8px rgba(var(--ark-accent-rgb), 0.15);
 }
-.manual-title { font-size: 14px; font-weight: 600; color: #4338ca; margin-bottom: 4px; }
-.manual-id { font-size: 11px; color: #9ca3af; font-weight: 400; }
-.manual-hint { font-size: 12px; line-height: 1.6; color: #6b7280; margin: 0 0 12px; }
+.manual-title { font-size: 14px; font-weight: 600; color: var(--ark-accent); margin-bottom: 4px; }
+.manual-id { font-size: 11px; color: var(--ark-muted); font-weight: 400; }
+.manual-hint { font-size: 12px; line-height: 1.6; color: var(--ark-muted); margin: 0 0 12px; }
 .manual-hint code { background: #e0e7ff; color: #4338ca; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-.field { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; color: #374151; }
-.field > span { width: 92px; flex-shrink: 0; color: #6b7280; }
-.field input[type='text'], .field input:not([type]) { flex: 1; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
-.field input[type='number'], .field select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; }
-.field input[type='color'] { width: 38px; height: 30px; padding: 0; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; background: #fff; }
+.field { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; color: var(--ark-fg); }
+.field > span { width: 92px; flex-shrink: 0; color: var(--ark-muted); }
+.field input[type='text'], .field input:not([type]) { flex: 1; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; font-size: 13px; background: var(--ark-bg); color: var(--ark-fg); }
+.field input[type='number'], .field select { padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; font-size: 13px; background: var(--ark-bg); color: var(--ark-fg); }
+.field input[type='color'] { width: 38px; height: 30px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; cursor: pointer; background: var(--ark-bg); }
 .field .color-text { flex: 1; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; font-family: ui-monospace, monospace; }
 .manual-actions { display: flex; gap: 8px; margin-top: 12px; }
-.btn { padding: 6px 14px; border: none; border-radius: 6px; background: #4338ca; color: #fff; font-size: 13px; cursor: pointer; }
-.btn:hover { background: #3730a3; }
-.btn-ghost { background: #fff; color: #4338ca; border: 1px solid #c7d2fe; }
-.btn-ghost:hover { background: #eef2ff; }
+.btn { padding: 6px 14px; border: none; border-radius: 6px; background: var(--ark-accent); color: #fff; font-size: 13px; cursor: pointer; }
+.btn:hover { opacity: 0.9; }
+.btn-ghost { background: var(--ark-bg); color: var(--ark-accent); border: 1px solid rgba(var(--ark-accent-rgb), 0.3); }
+.btn-ghost:hover { background: rgba(var(--ark-accent-rgb), 0.08); }
 </style>

@@ -33,3 +33,5 @@ doc/
 
 test-results/
 openspec/
+.env
+.env.example

@@ -28,7 +28,7 @@
 - **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
 - **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
-- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 1130 assertions) + `npm run test:e2e` (integration e2e, 286 assertions) + `npm run test:browser` (browser E2E, 25 assertions)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 1159 assertions) + `npm run test:e2e` (integration e2e, 303 assertions) + `npm run test:browser` (browser E2E, 28 assertions)
 
 ## Quick start
 ```bash

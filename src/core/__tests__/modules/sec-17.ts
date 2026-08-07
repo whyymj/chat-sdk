@@ -201,6 +201,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     const mgr4 = createCheckpointManager({ getData: () => bind, vfsStore: { files: {} } as any, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
     mgr4.importStack([{ id: 'bad', messages: [] }, { id: 5, messages: [] }] as any)
     assert(mgr4.list().length === 1, 'importStack 过滤非数字 id(字符串 id 不灌入,防 nextId=NaN)')
+
+    // session-history S1:importStack([]) 清栈(切会话/清空聊天防旧 checkpoint 残留污染新会话)
+    const mgr5 = createCheckpointManager({ getData: () => bind, vfsStore: { files: {}, consumeDirty: () => true } as any, todosMw: todosMw as any, getTodos: () => [], messages: [] as any })
+    mgr5.save('r1')
+    mgr5.save('r2')
+    assert(mgr5.list().length === 2 && mgr5.canRestore() === true, 'S1 前置:save 2 个 checkpoint')
+    mgr5.importStack([])
+    assert(mgr5.list().length === 0 && mgr5.canRestore() === false, 'S1 importStack([]) → 清空栈 + canRestore=false(切会话不再回退到旧会话)')
+    // 清栈后 save 的 id 从 1 起(空栈 reduce 初值 0 + 1 = 1;防旧栈 id 冲突)
+    const newId5 = mgr5.save('r3')
+    assert(newId5 === 1 && mgr5.list().length === 1, 'S1 清栈后 save id 重置从 1(空栈 nextId=0+1)')
   }
 
   // vfs 脏标记增量(checkpoint save 省 8MB 深拷贝;vfsStore 写经 Proxy 统一标脏,零遗漏)

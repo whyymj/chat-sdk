@@ -79,17 +79,17 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
-.pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 16px; }
-.hint code { background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 16px; }
+.hint code { background: rgba(var(--ark-accent-rgb), 0.15); color: var(--ark-fg); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 .steps { display: flex; flex-direction: column; gap: 10px; }
-.step { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; font-size: 13px; }
-.step b { display: block; color: #1f2937; margin-bottom: 4px; }
-.step code { display: inline-block; background: #1f2937; color: #e5e7eb; padding: 4px 10px; border-radius: 6px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 12px; margin: 2px 0; }
-.muted { color: #9ca3af; font-size: 12px; }
+.step { background: var(--ark-panel); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 10px 14px; font-size: 13px; }
+.step b { display: block; color: var(--ark-fg); margin-bottom: 4px; }
+.step code { display: inline-block; background: var(--ark-bg); color: var(--ark-fg); padding: 4px 10px; border-radius: 6px; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 12px; margin: 2px 0; }
+.muted { color: var(--ark-muted); font-size: 12px; }
 .try { font-size: 12px; color: #92400e; background: #fef3c7; padding: 10px 14px; border-radius: 8px; margin-top: 16px; line-height: 1.6; }
 .try code { background: rgba(0,0,0,0.08); padding: 1px 6px; border-radius: 4px; }
 </style>

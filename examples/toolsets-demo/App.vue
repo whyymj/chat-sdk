@@ -98,13 +98,13 @@ tools: [
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
-.pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 12px; }
-.hint code { background: #eef2ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
-.hint.muted { color: #9ca3af; }
-.hint.muted code { background: #f3f4f6; color: #6b7280; }
-.code { background: #1f2937; color: #e5e7eb; padding: 12px 14px; border-radius: 8px; font-size: 12px; line-height: 1.6; font-family: 'SF Mono', Monaco, Consolas, monospace; overflow-x: auto; margin: 0 0 12px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 12px; }
+.hint code { background: rgba(var(--ark-accent-rgb), 0.15); color: var(--ark-fg); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+.hint.muted { color: var(--ark-muted); }
+.hint.muted code { background: var(--ark-panel); color: var(--ark-muted); }
+.code { background: var(--ark-bg); color: var(--ark-fg); padding: 12px 14px; border-radius: 8px; font-size: 12px; line-height: 1.6; font-family: 'SF Mono', Monaco, Consolas, monospace; overflow-x: auto; margin: 0 0 12px; }
 </style>

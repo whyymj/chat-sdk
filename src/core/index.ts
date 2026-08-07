@@ -63,7 +63,7 @@ export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数(refactor-module-extraction 期二 从 useContextManager 抽离;白盒可测)
 export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds } from './composables/contextIndex'
 // LLM 解析(refactor-module-extraction 期二 从 createChatSdk 抽离;isChatModel 实例判定 + resolveLlm 初始装配入口)
-export { isChatModel, resolveLlm } from './sdk/llmResolver'
+export { isChatModel, resolveLlm, deriveTitle } from './sdk/llmResolver'
 // 乐观锁冲突管理器(refactor-module-extraction 期二 从 createChatSdk 抽离;headless 自建冲突 UI 可复用)
 export { createConflictManager } from './sdk/conflictManager'
 export type { ConflictManager } from './sdk/conflictManager'
@@ -95,6 +95,7 @@ export type { ContextManagerOptions, CompressionStats } from './composables/useC
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from './utils/modelCaps'
 export type { ModelCaps } from './utils/modelCaps'
 export { copyText } from './utils/clipboard'
+export { createSerialRunner } from './utils/serialRunner'
 // UI 模块(组件 + composable,供 headless 自建 UI 复用)
 export { default as ChatDialog } from './components/ChatDialog.vue'
 export { default as MessageContent } from './components/MessageContent.vue'

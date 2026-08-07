@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * 开发期导航 —— 折叠下拉式(避免链接过多超长),固定左上角浮动。
- * 默认收起(仅显示 brand 按钮 + 当前页标签),hover/focus 展开完整列表;点击链接跳转。
+ * 开发期导航 —— 收起态左上角圆按钮(不遮挡 demo 内容主体),悬停展开为左侧侧栏(176px,垂直全链接)。
+ * 用纯 CSS :hover 控制(非 JS 状态),避免展开/收起 transition 期间 mouseenter/mouseleave 抖动闪烁。
  * 纯客户端,基于 location.pathname 判定当前页。仅 dev 用,不影响 SDK 产物。
  */
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 
 const LINKS = [
   { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
@@ -18,6 +18,7 @@ const LINKS = [
   { href: '/examples/dynamic-demo/', label: '动态注册', match: (p: string) => p.startsWith('/examples/dynamic-demo') },
   { href: '/examples/animation-demo/', label: '动画演示', match: (p: string) => p.startsWith('/examples/animation-demo') },
   { href: '/examples/multi-agent-demo/', label: '多 Agent', match: (p: string) => p.startsWith('/examples/multi-agent-demo') },
+  { href: '/examples/session-history-demo/', label: '会话历史', match: (p: string) => p.startsWith('/examples/session-history-demo') },
   { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
   { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
   { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
@@ -25,106 +26,59 @@ const LINKS = [
   { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
 ]
 const path = typeof location !== 'undefined' ? location.pathname : ''
-const open = ref(false)
 const current = computed(() => LINKS.find((l) => l.match(path)))
 </script>
 
 <template>
-  <nav
-    class="dev-nav"
-    :class="{ 'dev-nav--open': open }"
-    aria-label="demo 导航"
-    @mouseenter="open = true"
-    @mouseleave="open = false"
-  >
-    <button class="dev-nav__trigger" :aria-expanded="open" @click="open = !open">
-      <span class="dev-nav__brand">🧪 demos</span>
-      <span v-if="current" class="dev-nav__current">{{ current.label }}</span>
-      <span class="dev-nav__arrow" :class="{ 'dev-nav__arrow--up': open }">▾</span>
-    </button>
-    <div v-show="open" class="dev-nav__menu">
-      <a
-        v-for="l in LINKS"
-        :key="l.href"
-        :href="l.href"
-        class="dev-nav__link"
-        :class="{ active: l.match(path) }"
-      >{{ l.label }}</a>
+  <nav class="dev-nav" aria-label="demo 导航">
+    <div class="dev-nav__brand">
+      <span class="dev-nav__brand-icon">🧪</span>
+      <span class="dev-nav__brand-label">demos</span>
     </div>
+    <a
+      v-for="l in LINKS"
+      :key="l.href"
+      :href="l.href"
+      class="dev-nav__link"
+      :class="{ active: l.match(path), current: current && l.href === current.href }"
+      :title="l.label"
+    >{{ l.label }}</a>
   </nav>
 </template>
 
 <style scoped>
+/* 收起态:左上角小圆按钮(50×50,不遮挡内容);:hover 时浏览器稳定判定,transition 期间不抖动 */
 .dev-nav {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 10002;
-  font-size: 12px;
-  line-height: 1;
-  user-select: none;
+  position: fixed; top: 10px; left: 10px; bottom: 10px;   /* 位置固定:top+bottom 始终拉伸,展开不切换 bottom → 盒模型稳定,hover 不抖 */
+  width: 50px; max-height: 50px; overflow: hidden;   /* 收起 max-height 限到 50(圆按钮);展开释放到 100vh(可平滑过渡,无 height:auto 瞬变) */
+  display: flex; flex-direction: column;
+  background: linear-gradient(135deg, #8b7ff0, #6c5ce7 55%, #5a4bd6);   /* 收起:紫色渐变,深色背景上的精致醒目入口 */
+  border: 1.5px solid rgba(255, 255, 255, 0.4); border-radius: 18px;   /* 18px 圆角(非 50% 整圆):角部歧义区小,hit-box 全程稳定不脱离 hover */
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), 0 0 0 4px rgba(108, 92, 231, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.2);   /* 外光晕 + 顶部内高光,立体感 */
+  z-index: 10002; font-size: 12px; line-height: 1.2; user-select: none;
+  transition: width 0.2s ease 0.15s, max-height 0.2s ease 0.15s, border-radius 0.2s ease 0.15s, padding 0.2s ease 0.15s, box-shadow 0.2s ease 0.15s;   /* 收起方向 delay 0.15s:鼠标瞬间脱离不立即收起,防闪烁 */
 }
-.dev-nav__trigger {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: rgba(31, 41, 55, 0.94);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #e5e7eb;
-  cursor: pointer;
-  border-radius: 999px;
-  font: inherit;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  transition: background 0.15s;
-}
-.dev-nav__trigger:hover { background: rgba(31, 41, 55, 1); }
-.dev-nav__brand {
-  font-weight: 600;
-  white-space: nowrap;
-}
-.dev-nav__current {
-  color: #c7d2fe;
-  padding-left: 8px;
-  border-left: 1px solid rgba(255, 255, 255, 0.18);
-  white-space: nowrap;
-}
-.dev-nav__arrow {
-  font-size: 10px;
-  opacity: 0.7;
-  transition: transform 0.18s;
-}
-.dev-nav__arrow--up { transform: rotate(180deg); }
-/* 下拉菜单:小圆角矩形卡片,与 trigger 分离(有 4px 间距),更像标准下拉 */
-.dev-nav__menu {
-  margin-top: 4px;
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 3px;
-  padding: 8px;
+/* 悬停展开:max-height 释放到满高(top+bottom 拉伸),侧栏转深灰链接可读;所有属性平滑过渡无瞬变 */
+.dev-nav:hover {
+  width: 176px; max-height: 100vh; border-radius: 12px; padding: 8px 6px;
   background: rgba(31, 41, 55, 0.96);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  transition: width 0.2s ease, max-height 0.2s ease, border-radius 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;   /* 展开方向 delay 0:即时响应 */
 }
+.dev-nav__brand {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 50px; padding: 0; color: #e5e7eb; font-weight: 600; white-space: nowrap;
+}
+.dev-nav:hover .dev-nav__brand { justify-content: flex-start; height: auto; padding: 4px 8px 8px; }
+.dev-nav__brand-icon { font-size: 18px; }
+.dev-nav__brand-label { display: none; }   /* 收起:不占位,避免挤压 icon */
+.dev-nav:hover .dev-nav__brand-label { display: inline; opacity: 0.7; }
 .dev-nav__link {
-  color: #d1d5db;
-  text-decoration: none;
-  padding: 6px 12px;
-  border-radius: 6px;
-  white-space: nowrap;
-  text-align: center;
+  color: #d1d5db; text-decoration: none; padding: 7px 8px; border-radius: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background 0.15s, color 0.15s;
 }
-.dev-nav__link:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-}
-.dev-nav__link.active {
-  background: #6366f1;
-  color: #fff;
-  font-weight: 600;
-}
+.dev-nav:not(:hover) .dev-nav__link { display: none; }   /* 收起:链接移出布局,避免被圆角裁剪变形 */
+.dev-nav__link:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.dev-nav__link.active { background: #6366f1; color: #fff; font-weight: 600; }
 </style>

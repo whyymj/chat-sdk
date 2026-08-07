@@ -128,7 +128,7 @@ function switchKb(name: keyof typeof KB) {
   margin: 80px auto 0;
   padding: 0 20px;
   font-family: system-ui, sans-serif;
-  color: #333;
+  color: var(--ark-fg);
 }
 h1 {
   font-size: 24px;
@@ -136,7 +136,7 @@ h1 {
 }
 p {
   line-height: 1.6;
-  color: #666;
+  color: var(--ark-muted);
   margin-bottom: 16px;
 }
 .kb-switcher {
@@ -148,26 +148,28 @@ p {
 }
 .label {
   font-size: 14px;
-  color: #666;
+  color: var(--ark-muted);
 }
 .kb-btn {
   padding: 4px 12px;
-  border: 1px solid #d0d0d0;
-  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--ark-panel);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
+  color: var(--ark-fg);
 }
 .kb-btn.active {
-  background: #667eea;
+  background: var(--ark-accent);
   color: #fff;
-  border-color: #667eea;
+  border-color: var(--ark-accent);
 }
 .status {
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 4px;
-  background: #f0f0f0;
+  background: var(--ark-panel);
+  color: var(--ark-muted);
 }
 .status[data-status='ready'] {
   color: #16a34a;
@@ -187,23 +189,24 @@ p {
 .kb-preview summary {
   cursor: pointer;
   font-size: 13px;
-  color: #666;
+  color: var(--ark-muted);
 }
 .kb-preview pre {
   margin-top: 8px;
   padding: 12px;
-  background: #f7f7f7;
+  background: var(--ark-bg);
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
+  color: var(--ark-fg);
 }
 .chat-mount {
   margin-top: 24px;
   height: 600px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
 }

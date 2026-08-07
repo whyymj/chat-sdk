@@ -43,7 +43,7 @@ import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
-import { isChatModel, resolveLlm } from './llmResolver'
+import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { createConflictManager } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
 import { resolveCapabilities } from '../capabilities'
@@ -63,11 +63,12 @@ import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { dedupeTools } from './toolRegistry'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
-import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot } from '../backends/storage'
+import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../utils/rounds'
+import { createSerialRunner } from '../utils/serialRunner'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
 
@@ -289,6 +290,10 @@ export interface ChatSdkOptions {
    * 不传则默认用主 agent 的模型(options.llm)。
    */
   summaryLlm?: BaseChatModel | LLMConfig
+  /** 标题生成 LLM(BaseChatModel 实例或 LLMConfig;不传则用 summaryLlm → 主 llm)。用于首轮后自动生成会话标题(主旨,替代规则截取) */
+  titleLlm?: BaseChatModel | LLMConfig
+  /** 自动生成会话标题(默认 true:首轮 user+assistant 后调 LLM 生成主旨标题;false 关闭用规则 deriveTitle 截取) */
+  autoTitle?: boolean
   /** 摘要 LLM 温度(默认 0.3,稳定输出) */
   summaryTemperature?: number
   /** 摘要 LLM 输出上限(默认 1024;摘要无需大输出,省成本) */
@@ -343,6 +348,14 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
+  /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
+  listSessions(): Promise<import('../backends/storage').SessionMeta[]>
+  /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh) */
+  readonly sessions: Ref<import('../backends/storage').SessionMeta[]>
+  /** 删除指定历史会话;不可删除当前会话(删当前请先 switchSession 切走);storage 未开启 → no-op + warn */
+  deleteSession(sessionId: string): Promise<void>
+  /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
+  readonly sessionId: string
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
   /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
@@ -463,6 +476,8 @@ const DEFAULT_MAX_MEMORY_ROUNDS = 50
 type AgentInstance = ReturnType<typeof createAgent>
 type TodosMw = ReturnType<typeof createTodosMiddleware>
 type MemoryMw = ReturnType<typeof createMemoryMiddleware>
+type MissionMw = ReturnType<typeof createMissionMiddleware>
+type WorkingMemoryMw = ReturnType<typeof createWorkingMemoryMiddleware>
 
 /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);resolve 由 resolveConflict 调用,清空后工具继续 */
 export interface PendingConflict {
@@ -485,6 +500,10 @@ interface AgentCore {
   listeners: Set<SdkEventHandler>
   todosMw: TodosMw
   memoryMw: MemoryMw
+  /** mission 中间件实例(switchSession/onClear 调 reset;capabilities.missionAnchor 关闭仍创建但不装载) */
+  missionMw: MissionMw
+  /** workingMemory 中间件实例(switchSession/onClear 调 reset;capabilities.workingMemory 关闭仍创建但不装载) */
+  workingMemoryMw: WorkingMemoryMw
   agent: AgentInstance | null
   initDone: Promise<void>
   /** 当前会话 id(可变;共享时多实例同步) */
@@ -505,6 +524,10 @@ interface AgentCore {
   infoTick: Ref<number>
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
   pendingConflict: Ref<PendingConflict | null>
+  /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;storage 未开启 → []) */
+  sessions: Ref<SessionMeta[]>
+  /** 刷新历史会话列表到 sessions(内部 switchSession/deleteSession/onClear/init 调;集成方一般无需手动调,直接消费 sessions) */
+  refreshSessions: () => Promise<void>
   /** 当前主数据配置(反映运行时替换;供 inspect/verify/getData 读最新状态) */
   liveData: () => DataConfig | undefined
   /** 累计 token 用量(每轮 LLM 调用累加;供 sdk.usage 暴露) */
@@ -636,7 +659,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // ===== 模型能力 + 摘要 LLM invoke(统一由 resolveLlm 解析;声明优先 > model 名查表 > 缺省)=====
   // let modelCaps:setLlm 后经 onLlmChange 重解析(影响 offload 阈值/压缩触发/maxTokens 缺省)
-  const { modelCaps: initialModelCaps, summaryLlmInvoke } = resolveLlm(options)
+  const { modelCaps: initialModelCaps, summaryLlmInvoke, titleLlmInvoke } = resolveLlm(options)
   let modelCaps = initialModelCaps
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
   // 当前 LLM 实例/配置:setLlm 后更新(inspect().model 读最新);主 LLM 实例化由 createAgent/setLlm 处理
@@ -1002,6 +1025,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
 
+  // session-history Phase 6:会话历史响应式状态下沉(集成方直接消费 sdk.sessions,无需手动 listSessions/refresh/hook)
+  const sessionsRef: Ref<SessionMeta[]> = ref([])
+  /** 刷新历史会话列表到 sessionsRef(switchSession/deleteSession/onClear/init 后调;storage 未开启 no-op) */
+  async function refreshSessions(): Promise<void> {
+    if (!store) return
+    sessionsRef.value = (await store.listSessions(agentId)).sort((a, b) => b.lastAccessed - a.lastAccessed)
+  }
+
   const core: AgentCore = {
     agentId,
     store,
@@ -1010,6 +1041,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     listeners: events.listeners,
     todosMw,
     memoryMw,
+    missionMw,
+    workingMemoryMw,
     agent: null,
     initDone: Promise.resolve(),
     sessionId: '',
@@ -1021,6 +1054,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     skillsController: skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null,
     infoTick,
     pendingConflict: conflictMgr.pendingConflict,
+    sessions: sessionsRef,
+    refreshSessions,
     liveData,
     usage,
     emit,
@@ -1183,6 +1218,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       vfsStore.clear?.()
       todosMw.reset([])
       if (!options.memory) memoryMw.reset('')
+      // P1-5:切会话重置 mission/workingMemory,防旧会话 goal / 定位 path·hash 污染新会话(过期 hash 诱发乐观锁误冲突)
+      missionMw.reset()
+      workingMemoryMw.reset()
+      // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
+      if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
       core.agent!.debugLogs.value = []
       if (!snap) snap = await store.load(agentId, target)
@@ -1191,6 +1231,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         emit({ type: 'session_restored', sessionId: target, rounds: snap.messages?.length ?? 0 })
       }
       if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
+      void refreshSessions()  // session-history Phase 6:切会话后刷新历史列表(响应式 sessions 自动更新)
+      lastTitle = undefined; titleLLMDone = false   // 切会话:重置 title 缓存 + LLM 标志,新会话重新生成
       return target
     },
 
@@ -1323,6 +1365,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     getInfo(): AgentInfo {
       return {
         id: agentId,
+        sessionId: core.sessionId,
         model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
         // 代理到 createAgent 权威拼装(base + Σ augmentPrompt,含 usageHints/skills/memory/todos/subagents/augmentSystem 等全部段);agent 未构造时回退 base+data(fix-introspection-consistency)
         systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint)),
@@ -1414,6 +1457,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // options.memory 落盘(每次启动确保持久化;加载时 options 优先已在 applySnapshot 处理)
     // 函数 source 落盘已解析的文本(函数本身不可序列化,且 reload 时 options.memory 仍是函数会重新求值)
     if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
+    void refreshSessions()  // session-history Phase 6:init 载入会话后刷新历史列表
   }
 
   /** Skill 独立加载:从 SkillStore 恢复用户创建的 skill(与 storage 选项分离,即使 storage:false 也持久化) */
@@ -1431,6 +1475,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     if (r.trimmed) messages.splice(r.deleteFrom, r.deleteCount, r.summary)
   }
 
+  // 会话标题自动生成:首条 user 截取(deriveTitle 纯函数,从 llmResolver 导入);变化才 updateTitle,避免每轮重复写
+  let lastTitle: string | undefined
+  let titleLLMDone = false   // LLM 标题是否已生成(每会话一次,主旨更准;switchSession/onClear 重置)
+
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */
   function persistRuntime(): void {
     if (!core.sessionId || !store) return
@@ -1446,6 +1494,21 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     if (useAutomation && checkpointMgr) {
       void store.save(agentId, core.sessionId, { checkpoints: checkpointMgr.exportStack() } as Partial<SessionSnapshot>)
       void store.save(agentId, core.sessionId, { usage } as Partial<SessionSnapshot>)
+    }
+    // 自动 title:首条 user 截取(变化才写,避免每轮重复;供历史列表显示,替代「会话 xxxxxx」)
+    const title = deriveTitle(messages)
+    if (title && title !== lastTitle) {
+      lastTitle = title
+      void store.updateTitle(agentId, core.sessionId, title)
+    }
+    // LLM 标题(异步,首轮 user+assistant 完成后一次;主旨更准,覆盖规则 title;失败/无 LLM 用规则兜底)
+    const autoTitle = options.autoTitle !== false
+    if (autoTitle && titleLlmInvoke && !titleLLMDone && messages.some((m) => m.role === 'user') && messages.some((m) => m.role === 'assistant')) {
+      titleLLMDone = true
+      void (async () => {
+        const llmTitle = await titleLlmInvoke(messages)
+        if (llmTitle) { await store.updateTitle(agentId, core.sessionId, llmTitle); await refreshSessions() }
+      })()
     }
     if (options.debug) console.log('[page-agent-sdk][persist] save', core.sessionId, `${messages.length} msgs`)
   }
@@ -1619,9 +1682,18 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
               core.vfsStore.clear?.()
               core.todosMw.reset([])
               if (!options.memory) core.memoryMw.reset('')
+              // P1-5:新建会话重置 mission/workingMemory,防旧会话 goal / 定位 path·hash 残留污染新会话
+              core.missionMw.reset()
+              core.workingMemoryMw.reset()
+              // session-history S1:新建会话清 checkpoint 栈(防旧会话快照残留污染新会话)
+              if (core.checkpoint) core.checkpoint.importStack([])
               // 同步释放上一会话的调试日志(否则要等下次 send 才重置,清空后抽屉仍挂旧日志占内存)
               core.agent!.debugLogs.value = []
               void core.store.createSession(core.agentId, options.session?.title, core.sessionId)
+              // session-history S5:新建会话发 session_restored(与 switchSession 对齐,供历史列表同步当前会话)
+              core.emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
+              void core.refreshSessions()  // session-history Phase 6:新建会话(清空)后刷新历史列表
+              lastTitle = undefined; titleLLMDone = false   // 新建会话:重置 title 缓存 + LLM 标志(下次 user+assistant 后重新生成)
             },
             pendingConflict: core.pendingConflict.value,
             onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
@@ -1636,6 +1708,14 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             drawerHidden: dialogCfg.drawerHidden === true,
             inputRows: dialogCfg.inputRows,
             onClose: dialogCfg.onClose ?? (dialogCfg.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
+            // 内置会话管理(storage 开启 → ChatDialog 默认显示「新建/历史」按钮 + 历史面板;关 → 不传,隐藏,向后兼容)
+            ...(core.store ? {
+              sessions: core.sessions.value,            // Ref 响应式 → Wrapper render 重渲染 → ChatDialog 自动更新
+              currentSessionId: core.sessionId,
+              onNewSession: () => { void runSerial(() => core.switchSession()) },          // 经 runSerial(与 return 的 switchSession 一致,防并发 state 竞态)
+              onOpenSession: (id: string) => { void runSerial(() => core.switchSession(id)) },
+              onRemoveSession: async (id: string) => { if (id !== core.sessionId) { await core.store!.deleteSession(agentId, id); await core.refreshSessions() } },
+            } : {}),
           })
       },
     })
@@ -1711,15 +1791,35 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     if (maskEl) maskEl.classList.remove('cs-hidden')
   }
 
+  // P1-2(arch-review):实例级操作串行化 —— 并发 send/switchSession/batch 排队执行,防共享闭包 state 竞态
+  // (单实例同一时刻只服务一个会话:一个操作完整跑完下一个才开始;「一个会话操作 data 时,其他会话等它结束」)
+  const runSerial = createSerialRunner()
+
   return {
     mount,
     unmount,
     hide,
     show,
-    send: core.send,
+    send: (...args: Parameters<typeof core.send>) => runSerial(() => core.send(...args)),
     /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离(单任务失败不中断整批);详见 ChatSdk.batch */
-    batch: core.batch,
-    switchSession: core.switchSession,
+    batch: (...args: Parameters<typeof core.batch>) => runSerial(() => core.batch(...args)),
+    switchSession: (...args: Parameters<typeof core.switchSession>) => runSerial(() => core.switchSession(...args)),
+    /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */
+    sessions: core.sessions,
+    /** 列出当前 agent 的所有历史会话(主动查;一般用响应式 sessions 替代;storage 未开启 → []) */
+    async listSessions(): Promise<import('../backends/storage').SessionMeta[]> {
+      if (!core.store) return []
+      return core.store.listSessions(agentId)
+    },
+    /** 删除指定历史会话;不可删除当前会话(删当前请先 switchSession 切走);storage 未开启 → no-op + warn */
+    async deleteSession(sessionId: string): Promise<void> {
+      if (!core.store) return
+      if (sessionId === core.sessionId) { console.warn('[page-agent-sdk] deleteSession 忽略:不能删除当前会话,请先 switchSession 切到其他会话'); return }
+      await core.store.deleteSession(agentId, sessionId)
+      await core.refreshSessions()  // session-history Phase 6:删除后刷新历史列表(响应式 sessions 自动更新)
+    },
+    /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
+    get sessionId(): string { return core.sessionId },
     stream: core.stream,
     inspect: core.getInfo,
     /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */

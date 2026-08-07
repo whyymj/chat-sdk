@@ -138,6 +138,7 @@ export function useChat(
                 if (assistantMsg.steps[i].name === event.name && assistantMsg.steps[i].status === 'running') {
                   assistantMsg.steps[i].result = event.result
                   assistantMsg.steps[i].status = event.status
+                  assistantMsg.steps[i].durationMs = event.durationMs
                   break
                 }
               }

@@ -1,0 +1,45 @@
+/* 共享深色紫主题(Figma 方舟专题风格)—— 所有 demo 统一引用
+ * 用法:demo main.ts 加 `import '../_shared/theme.css'`
+ * 机制:定义 --ark-* 变量 + 覆盖 ChatDialog 的 --cs-*(ChatDialog 无 theme prop,只能 CSS 变量覆盖)
+ */
+:root {
+  --ark-bg: #1a1a2e;          /* 深色背景 */
+  --ark-panel: #222244;       /* 面板/顶部栏/历史层 */
+  --ark-accent: #6c5ce7;      /* 紫色强调 */
+  --ark-accent-rgb: 108, 92, 231;
+  --ark-fg: #e5e7eb;          /* 前景文字 */
+  --ark-muted: #8888aa;       /* 次要文字 */
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { min-height: 100vh; background: var(--ark-bg); color: var(--ark-fg); }
+
+/* ChatDialog 跟深色主题:覆盖其 --cs-* 变量(ChatDialog.vue 无 theme prop;默认 --cs-primary 深绿,这里改紫 + 深背景) */
+.chat-dialog {
+  --cs-primary: var(--ark-accent);
+  --cs-primary-rgb: var(--ark-accent-rgb);
+  --cs-bg: var(--ark-panel);
+  --cs-bubble-ai: #2a2a4e;
+  /* 思考/步骤深色(Figma 方舟专题:深灰卡片 #2c2c2c + 语义状态色) */
+  --cs-reason-bg: #2c2c2c;
+  --cs-reason-border: #3a3a3a;
+  --cs-reason-head: #e5e7eb;
+  --cs-reason-text: #9a9aaa;
+  --cs-reason-toggle: #9993ff;
+  --cs-step-bg: #2c2c2c;
+  --cs-step-border: #3a3a3a;
+  --cs-step-text: #e5e7eb;
+  --cs-step-meta: #666;
+  --cs-ok: #00c562; --cs-ok-rgb: 0, 197, 98;
+  --cs-warn: #f5a623; --cs-warn-rgb: 245, 166, 35;
+  --cs-err: #f04848; --cs-err-rgb: 240, 72, 72;
+  --cs-sub-bg: rgba(108, 92, 231, 0.14);
+  --cs-sub-border: #4a3f7a;
+  --cs-sub-text: #b9a9ff;
+  /* markdown 表格/inline code 深色(跟主题,避免浅灰突兀) */
+  --cs-md-border: #444;
+  --cs-md-th-bg: rgba(255, 255, 255, 0.05);
+  --cs-md-code-bg: rgba(108, 92, 231, 0.18);
+  --cs-md-code-text: #b9a9ff;
+}

@@ -96,4 +96,37 @@ export async function run(ctx: TestCtx): Promise<void> {
     const upd: any = mw.beforeAgent!(mkState([]) as any)
     assert(upd.mission === undefined && mw.getMission() === undefined, '✓ 无 user 消息 → 不 capture,getMission undefined')
   }
+
+  // === P1-6:setMission({}) 防重捕 + P1-5:reset() 切会话归零(arch-review) ===
+  {
+    // P1-6:先正常 capture,集成方收尾 setMission({}) 解除锚定 → 同会话历史含任务型 user 也不再重捕(防过期目标重锚)
+    const mw = createMissionMiddleware()
+    mw.beforeAgent!(mkState([{ role: 'user', content: '帮我搭建一个活动页面' }]) as any)
+    assert(/帮我搭建一个活动页面/.test(mw.getMission()?.goal), '✓ P1-6 前置:先 capture mission')
+    mw.setMission({})
+    assert(mw.getMission() === undefined, '✓ P1-6 setMission({}) → mission 清空')
+    // 同会话再次 beforeAgent(历史仍含任务型 user)→ 不重捕
+    const upd: any = mw.beforeAgent!(mkState([{ role: 'user', content: '帮我搭建一个活动页面' }]) as any)
+    assert(upd.mission === undefined && mw.getMission() === undefined, '✓ P1-6 setMission({}) 后同会话不重捕历史任务消息(防过期目标重锚)')
+
+    // reset() 切会话归零:撤销清空标记 → 新会话首条任务型 user 可正常 capture
+    mw.reset()
+    assert(mw.getMission() === undefined, '✓ reset() → mission undefined')
+    const upd2: any = mw.beforeAgent!(mkState([{ role: 'user', content: '帮我设计一个全新的页面' }]) as any)
+    assert(/帮我设计一个全新的页面/.test(upd2.mission?.goal), '✓ reset() 切会话后 → 新会话可正常 capture(撤销清空标记)')
+
+    // P1-6 补:setMission({}) 后再 setMission 显式设新目标 → 撤销清空标记(可被新目标正常锚定)
+    mw.setMission({})
+    mw.setMission({ goal: '切换到新任务' })
+    assert(mw.getMission()?.goal === '切换到新任务', '✓ P1-6 setMission({}) 后再 setMission(新目标) → 正常锚定(撤销清空标记)')
+  }
+
+  // P1-5:reset() 对全新 mw(从未 capture)无副作用,且之后仍可正常 capture
+  {
+    const mw = createMissionMiddleware()
+    mw.reset()
+    assert(mw.getMission() === undefined, '✓ reset() 全新 mw → 无副作用(getMission undefined)')
+    const upd: any = mw.beforeAgent!(mkState([{ role: 'user', content: '帮我改一下页面的标题颜色' }]) as any)
+    assert(/帮我改一下页面的标题颜色/.test(upd.mission?.goal), '✓ reset() 后仍可正常 capture(清空标记已撤销,未误置 explicitlyCleared)')
+  }
 }

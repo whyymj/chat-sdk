@@ -1,7 +1,7 @@
 # 活跃 Changes 优先级索引
 
-> 11 个活跃 change 的**优先级 / 依赖 / 批次组织**。change 归档或新增时同步更新本表。
-> 评估日期:2026-08-05。已归档 change 见 `archive/`。
+> 12 个活跃 change 的**优先级 / 依赖 / 批次组织**。change 归档或新增时同步更新本表。
+> 评估日期:2026-08-06。已归档 change 见 `archive/`。
 > `project.md`「进行中的 change」给一句话概览,本文件给**可执行的推进顺序与依赖约束**——两者不重复。
 
 ## 全景盘点
@@ -12,6 +12,7 @@
 | **harden-large-json-write** | 安全+正确性+性能(A1 draft_commit 乐观锁 / A4 子路径 hash / A2-A3,B1-B2,C1-C2) | 🔴 P0(A1/A4)/🟡 P1(其余) | M-L | 中 | ✅ draft_commit + read hash |
 | **placeholder-protected-read-write** | 精确值保护(freeze/verbatim + vfs 第四资源池 + 跨压缩 pin) | 🟡 P1 | L | 中 | ✅ 强制层注入 commit/apply/eval 三处 |
 | **arch-review-p1-fixes** | 架构债 6 项(wrap-up 绕中间件 / 并发 state / beforeReturn 门禁 / subagent 工具快照 / switchSession 重置 / setMission 重捕) | 🟠 P1 | M | 中 | ❌(改 createAgent/createChatSdk) |
+| **session-history-management** | 会话历史管理(listSessions/deleteSession/sessionId 对外暴露 + checkpoint 切会话残留修复 + onClear 发事件) | 🟡 P1(S1 bug)/🟢 P2(API) | S-M | 低 | ❌(改 switchSession/onClear 重置 + 新增 return API;接续 arch-review P1-5 同段代码) |
 | **tool-name-collision** | 工具重名覆盖语义(装配期 dedupe + removeTool 可删内置) | 🟠 P1 | S | 低 | ❌ |
 | **context-inspector** | 上下文构成面板(大小/分类/占比,DebugDrawer tab + 常驻进度条) | 🟢 P2 | M | 低 | ❌ |
 | **focus-context** | 上下文聚焦·指定组件精修(strict 写拦截 + 三触发) | 🟢 P2 | M | 中(wrapToolCall 拦写) | ⚠️ wrapToolCall 拦写工具 |
@@ -50,7 +51,7 @@ UI 块(互补,各自先做内置 prop 版可并行,chatdialog-split 后挪 slot)
   chatdialog-split ↔ focus-context(焦点条) ↔ context-inspector(进度条)
 
 完全独立、随时可插队:
-  arch-review-p1-fixes / tool-name-collision / skill-external-scripts / simplify-toolset
+  arch-review-p1-fixes(P1-5 已提交)/ tool-name-collision / skill-external-scripts / simplify-toolset / session-history-management(接续 P1-5 改 switchSession/onClear 同段,已在干净底座)
 ```
 
 ## 推进批次
@@ -63,9 +64,10 @@ UI 块(互补,各自先做内置 prop 版可并行,chatdialog-split 后挪 slot)
 - A2/A3/B1/B2(性能/体验)可同批;**C1/C2**(多草稿合并、子树 patches)降级 P2,可选。
 - 完成后写链稳定,解锁 placeholder。
 
-**批次 2 · 架构债 + 工具语义(P1,与批次 1 完全并行)**
-- `arch-review-p1-fixes`(6 项可分批 commit,不碰写链核心)
+**批次 2 · 架构债 + 工具语义 + 会话管理(P1,与批次 1 完全并行)**
+- `arch-review-p1-fixes`(6 项可分批 commit,不碰写链核心;P1-5/P1-6 已提交,余 P1-1/2/3/4 推后)
 - `tool-name-collision`(小、明确、向后兼容)
+- `session-history-management`(Phase 1 checkpoint 修复接续 P1-5 同段;Phase 2-3 会话 API + onClear 事件,向后兼容;Phase 4 title 编辑/demo 可选)
 
 **批次 3 · 能力增强(P2,按依赖与人力安排)**
 - `placeholder-protected-read-write`(批次 1 完成后)

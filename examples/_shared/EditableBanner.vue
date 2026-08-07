@@ -29,12 +29,12 @@ defineProps<{
 
 <style scoped>
 .editable-area {
-  border: 4px solid #4f46e5;
+  border: 4px solid var(--ark-accent);
   border-radius: 12px;
-  background: #ddd6fe;
+  background: rgba(var(--ark-accent-rgb), 0.08);
   position: relative;
   min-height: 60px;
-  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.2), 0 6px 20px rgba(79, 70, 229, 0.18);
+  box-shadow: 0 0 0 1px rgba(var(--ark-accent-rgb), 0.3), 0 6px 20px rgba(var(--ark-accent-rgb), 0.25);
 }
 .editable-banner {
   position: absolute;

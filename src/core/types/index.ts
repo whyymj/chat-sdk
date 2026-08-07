@@ -4,6 +4,8 @@ export interface ToolStep {
   args?: any
   result?: string
   status: 'running' | 'done' | 'error'
+  /** 工具执行耗时(毫秒,tool_result 时回填;供步骤行展示) */
+  durationMs?: number
   /** 子 agent 的工具步骤(spawn_agent/spawn_agents 委派时,展示子 agent 工作进度) */
   children?: ToolStep[]
 }
@@ -37,7 +39,7 @@ export type StreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
   | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void }
   | { type: 'done'; content: string }
@@ -55,7 +57,7 @@ export type SdkEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
   | { type: 'done'; content: string }
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
@@ -129,6 +131,8 @@ export interface SubagentInfo {
 }
 export interface AgentInfo {
   id: string
+  /** 当前会话 id(switchSession/onClear 后实时反映) */
+  sessionId: string
   model?: string
   /** 当前生效的 systemPrompt(默认或用户传入;含中间件 augmentPrompt 段则仅为 base 段,便于调试/验证默认提示词) */
   systemPrompt: string

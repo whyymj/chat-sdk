@@ -21,6 +21,8 @@ const CAPTURE_TOOLS = new Set(['read', 'query_data', 'search_data'])
 
 export function createWorkingMemoryMiddleware(): Middleware & {
   getWorkingMemory: () => import('./state').WorkingMemory | undefined
+  /** 重置为初始态(切会话/清空聊天):清 locatedPaths + lastHashes,防旧会话 path/hash 污染新会话(P1-5) */
+  reset: () => void
 } {
   // 闭包真相源(跨轮持久);state.workingMemory 是其投影(每轮 beforeModel 刷,供 augmentPrompt + inspect)
   const locatedPaths: string[] = []
@@ -52,7 +54,10 @@ export function createWorkingMemoryMiddleware(): Middleware & {
     }
   }
 
-  const mw: Middleware & { getWorkingMemory: () => import('./state').WorkingMemory | undefined } = {
+  const mw: Middleware & {
+    getWorkingMemory: () => import('./state').WorkingMemory | undefined
+    reset: () => void
+  } = {
     name: 'workingMemory',
     beforeAgent: () => (isEmpty() ? undefined : { workingMemory: snapshot() }),
     // 每轮模型调用前投影闭包到 state.workingMemory(wrapToolCall 捕获后,下轮 beforeModel 刷;供 augmentPrompt 读最新)
@@ -89,6 +94,11 @@ export function createWorkingMemoryMiddleware(): Middleware & {
       return lines.join('\n')
     },
     getWorkingMemory: () => (isEmpty() ? undefined : snapshot()),
+    /** 重置为初始态(切会话/清空聊天):清空闭包 locatedPaths + lastHashes,防旧会话定位/hash 污染新会话 */
+    reset: () => {
+      locatedPaths.length = 0
+      for (const k of Object.keys(lastHashes)) delete lastHashes[k]
+    },
   }
   return mw
 }

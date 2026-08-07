@@ -94,7 +94,7 @@ onUnmounted(() => agent?.unmount())
   margin: 80px auto 0;
   padding: 0 20px;
   font-family: system-ui, sans-serif;
-  color: #333;
+  color: var(--ark-fg);
 }
 h1 {
   font-size: 24px;
@@ -102,11 +102,11 @@ h1 {
 }
 p {
   line-height: 1.6;
-  color: #666;
+  color: var(--ark-muted);
   margin-bottom: 8px;
 }
 code {
-  background: #f0f0f0;
+  background: var(--ark-panel);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 0.9em;
@@ -117,7 +117,7 @@ code {
 }
 .custom-ui {
   margin-top: 16px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
   display: flex;
@@ -128,7 +128,7 @@ code {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  background: #fafafa;
+  background: var(--ark-bg);
 }
 .msg {
   margin-bottom: 12px;
@@ -138,7 +138,7 @@ code {
   display: inline-block;
   min-width: 32px;
   font-weight: 600;
-  color: #888;
+  color: var(--ark-muted);
   margin-right: 8px;
 }
 .msg--user .msg__role {
@@ -152,31 +152,33 @@ code {
   word-break: break-word;
 }
 .empty {
-  color: #aaa;
+  color: var(--ark-muted);
   text-align: center;
   padding: 40px 0;
 }
 .input-bar {
   display: flex;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding: 12px;
-  background: #fff;
+  background: var(--ark-panel);
   gap: 8px;
 }
 .input-bar input {
   flex: 1;
   padding: 8px 12px;
-  border: 1px solid #d0d0d0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   font-size: 14px;
   outline: none;
+  background: var(--ark-bg);
+  color: var(--ark-fg);
 }
 .input-bar input:focus {
-  border-color: #2563eb;
+  border-color: var(--ark-accent);
 }
 .input-bar button {
   padding: 8px 20px;
-  background: #2563eb;
+  background: var(--ark-accent);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -184,7 +186,7 @@ code {
   font-size: 14px;
 }
 .input-bar button:disabled {
-  background: #aaa;
+  background: var(--ark-muted);
   cursor: not-allowed;
 }
 </style>

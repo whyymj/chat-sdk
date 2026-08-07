@@ -131,9 +131,9 @@ watch(() => props.content, enhanceCodeBlocks)
   border-collapse: collapse; margin: 8px 0;
 }
 .message-md th, .message-md td {
-  border: 1px solid #e5e7eb; padding: 4px 8px; font-size: 12px; white-space: nowrap;
+  border: 1px solid var(--cs-md-border, #e5e7eb); padding: 4px 8px; font-size: 12px; white-space: nowrap;
 }
-.message-md th { background: #f9fafb; }
+.message-md th { background: var(--cs-md-th-bg, #f9fafb); }
 .message-md img { max-width: 100%; }
 
 .message-md ul,
@@ -163,8 +163,8 @@ watch(() => props.content, enhanceCodeBlocks)
 }
 
 .message-md code:not(.hljs) {
-  background: rgba(102, 126, 234, 0.1);
-  color: #4338ca;
+  background: var(--cs-md-code-bg, rgba(102, 126, 234, 0.1));
+  color: var(--cs-md-code-text, #4338ca);
   padding: 1px 5px;
   border-radius: 4px;
   font-family: 'SF Mono', Monaco, Consolas, monospace;

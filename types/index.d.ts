@@ -21,6 +21,8 @@ export interface ToolStep {
   args?: any;
   result?: string;
   status: 'running' | 'done' | 'error';
+  /** 工具执行耗时(毫秒,tool_result 时回填) */
+  durationMs?: number;
   /** 子 agent 工具步骤(spawn 委派时展示子进度) */
   children?: ToolStep[];
 }
@@ -152,6 +154,8 @@ export interface SubagentConfig {
 }
 export interface AgentInfo {
   id: string;
+  /** 当前会话 id(switchSession/onClear 后实时反映) */
+  sessionId: string;
   model?: string;
   /** 当前生效的 systemPrompt(默认或用户传入;仅 base 段,不含中间件 augmentPrompt,便于调试/验证默认提示词) */
   systemPrompt: string;
@@ -412,6 +416,8 @@ export interface SessionStore {
   listSessions(agentId: string): Promise<SessionMeta[]>;
   load(agentId: string, sessionId: string): Promise<SessionSnapshot | undefined>;
   save(agentId: string, sessionId: string, snap: Partial<SessionSnapshot>): Promise<void>;
+  /** 更新会话标题(自动从首条 user 消息生成,供历史列表显示) */
+  updateTitle(agentId: string, sessionId: string, title: string): Promise<void>;
   flush(): Promise<void>;
   deleteSession(agentId: string, sessionId: string): Promise<void>;
   createSession(agentId: string, title?: string, sessionId?: string): Promise<string>;
@@ -540,6 +546,10 @@ export interface ChatSdkOptions {
   contextPreset?: 'auto' | 'conservative' | 'aggressive' | 'complex';
   /** 摘要压缩专用 LLM(BaseChatModel 实例或 LLMConfig);不传则默认用主 agent 模型(llm) */
   summaryLlm?: any;
+  /** 标题生成 LLM(BaseChatModel 实例或 LLMConfig);不传则用 summaryLlm → 主 llm。首轮后自动生成会话标题(主旨) */
+  titleLlm?: any;
+  /** 自动生成会话标题(默认 true:首轮后调 LLM 生成主旨标题;false 关闭,用规则 deriveTitle 截取) */
+  autoTitle?: boolean;
   /** 摘要 LLM 温度(默认 0.3) */
   summaryTemperature?: number;
   /** 摘要 LLM 输出上限(默认 1024) */
@@ -602,6 +612,14 @@ export interface ChatSdk {
   show(): void;
   send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
+  /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
+  listSessions(): Promise<SessionMeta[]>;
+  /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */
+  readonly sessions: import('vue').Ref<SessionMeta[]>;
+  /** 删除指定历史会话;不可删除当前会话(删当前请先 switchSession 切走);storage 未开启 → no-op + warn */
+  deleteSession(sessionId: string): Promise<void>;
+  /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
+  readonly sessionId: string;
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos) */
   inspect(): AgentInfo;
@@ -818,6 +836,7 @@ export declare function recallRounds(older: any[], query: string, topK: number):
 // ============ LLM 解析(llmResolver,refactor-module-extraction 期二 从 createChatSdk 抽离)============
 export declare function isChatModel(v: unknown): boolean;
 export declare function resolveLlm(options: any): { modelCaps: any; summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined };
+export declare function deriveTitle(msgs: AgentMessage[]): string | undefined;
 // ============ 乐观锁冲突管理器(conflictManager,refactor-module-extraction 期二 从 createChatSdk 抽离)============
 export interface ConflictManager {
   pendingConflict: import('vue').Ref<any | null>;
@@ -1038,3 +1057,9 @@ export interface ModelCaps { [k: string]: any }
 
 // 剪贴板复制(clipboard API + execCommand 降级,兼容非 secure context / 旧浏览器)
 export declare function copyText(text: string): Promise<boolean>;
+/**
+ * 串行化运行器(P1-2,arch-review):把并发异步操作排成串行链,一个跑完下一个才开始。
+ * createChatSdk 的 send/switchSession/batch 经此串行化,防并发共享 state 竞态。
+ * 返回的 runSerial(fn):fn 排队执行(前一个无论成败都继续),返回 fn 的 Promise(透传结果/错误)。
+ */
+export declare function createSerialRunner(): <T>(fn: () => Promise<T>) => Promise<T>;

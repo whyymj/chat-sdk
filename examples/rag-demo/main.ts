@@ -4,5 +4,6 @@
 //   3) 大文档走 VFS + vfs_grep 检索(见 doc/usage-guide.md §6.4 / §6.11)
 import { createApp } from 'vue'
 import App from './App.vue'
+import '../_shared/theme.css'
 
 createApp(App).mount('#app')

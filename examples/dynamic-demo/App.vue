@@ -198,13 +198,13 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #ffffff; padding: 28px 32px; }
-.pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-h3 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 14px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+h3 { font-size: 14px; margin: 18px 0 8px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 14px; }
 .hint code { background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 .hint.small { font-size: 12px; margin: 0 0 6px; }
 
@@ -212,20 +212,20 @@ h3 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
 .btn-load { padding: 7px 14px; border: 1px solid #1f4d3a; background: #1f4d3a; color: #fff; border-radius: 7px; font-size: 13px; cursor: pointer; }
 .btn-load:hover { background: #163a2c; }
 
-.empty { font-size: 13px; color: #9ca3af; padding: 14px; background: #fff; border: 1px dashed #d1d5db; border-radius: 8px; text-align: center; }
+.empty { font-size: 13px; color: var(--ark-muted); padding: 14px; background: var(--ark-panel); border: 1px dashed rgba(255, 255, 255, 0.1); border-radius: 8px; text-align: center; }
 .comp-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
-.comp-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+.comp-item { background: var(--ark-panel); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 10px 12px; }
 .comp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.comp-type { font-size: 13px; font-weight: 600; color: #1f4d3a; }
-.comp-id { font-size: 11px; color: #9ca3af; font-family: ui-monospace, monospace; }
-.btn-unload { margin-left: auto; padding: 3px 10px; border: 1px solid #ef4444; background: #fff; color: #ef4444; border-radius: 5px; font-size: 12px; cursor: pointer; }
-.btn-unload:hover { background: #fef2f2; }
-.comp-json { font-size: 11px; line-height: 1.5; color: #374151; background: #f9fafb; border-radius: 6px; padding: 8px; margin: 0; font-family: ui-monospace, monospace; overflow-x: auto; }
+.comp-type { font-size: 13px; font-weight: 600; color: var(--ark-fg); }
+.comp-id { font-size: 11px; color: var(--ark-muted); font-family: ui-monospace, monospace; }
+.btn-unload { margin-left: auto; padding: 3px 10px; border: 1px solid #ef4444; background: var(--ark-panel); color: #ef4444; border-radius: 5px; font-size: 12px; cursor: pointer; }
+.btn-unload:hover { background: rgba(239, 68, 68, 0.1); }
+.comp-json { font-size: 11px; line-height: 1.5; color: var(--ark-fg); background: var(--ark-bg); border-radius: 6px; padding: 8px; margin: 0; font-family: ui-monospace, monospace; overflow-x: auto; }
 
 .reg-list { list-style: none; padding: 0; margin: 0; font-size: 12px; line-height: 1.8; }
-.reg-list li { color: #4b5563; }
-.reg-list code { background: #ecfdf5; color: #065f46; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-.reg-desc { color: #6b7280; }
+.reg-list li { color: var(--ark-muted); }
+.reg-list code { background: rgba(var(--ark-accent-rgb), 0.15); color: var(--ark-fg); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.reg-desc { color: var(--ark-muted); }
 
 .try { font-size: 13px; color: #7c3aed; background: #f3e8ff; padding: 10px 14px; border-radius: 8px; margin-top: 14px; line-height: 1.7; }
 .try code { background: #fff; color: #6d28d9; padding: 1px 5px; border-radius: 4px; font-size: 12px; }

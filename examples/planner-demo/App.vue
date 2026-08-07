@@ -155,15 +155,15 @@ onUnmounted(() => agent?.unmount())
 
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-.pane-left { flex: 1; overflow: auto; background: #f5f7fa; padding: 28px 32px; }
-.pane-right { flex: 0 0 460px; border-left: 1px solid #e5e7eb; background: #fff; }
+.pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 
-h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
-.hint { font-size: 13px; line-height: 1.7; color: #4b5563; margin: 0 0 16px; }
-.hint code { background: #e0e7ff; color: #4338ca; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }
+.hint { font-size: 13px; line-height: 1.7; color: var(--ark-muted); margin: 0 0 16px; }
+.hint code { background: rgba(var(--ark-accent-rgb), 0.15); color: var(--ark-fg); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 
-.preview { border: 2px solid #e5e7eb; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06); transition: all 0.25s; }
+.preview { border: 2px solid rgba(255, 255, 255, 0.06); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2); transition: all 0.25s; }
 .preview__tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; margin-bottom: 10px; }
 .preview__title { font-size: 18px; font-weight: 700; margin: 0 0 8px; }
 .preview__text { font-size: 13px; line-height: 1.6; margin: 0 0 14px; opacity: 0.9; }
@@ -171,9 +171,9 @@ h2 { font-size: 20px; margin: 0 0 12px; color: #1f2937; }
 .preview__btn:hover { opacity: 0.9; }
 
 .cfg { list-style: none; padding: 0; margin: 16px 0 0; display: flex; gap: 14px; flex-wrap: wrap; }
-.cfg li { font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px; }
-.cfg span { color: #9ca3af; }
-.cfg code { background: #fff; border: 1px solid #e5e7eb; padding: 2px 8px; border-radius: 6px; font-family: ui-monospace, monospace; color: #374151; }
+.cfg li { font-size: 12px; color: var(--ark-muted); display: flex; align-items: center; gap: 6px; }
+.cfg span { color: var(--ark-muted); }
+.cfg code { background: var(--ark-panel); border: 1px solid rgba(255, 255, 255, 0.06); padding: 2px 8px; border-radius: 6px; font-family: ui-monospace, monospace; color: var(--ark-fg); }
 
 .try { font-size: 13px; color: #7c3aed; background: #f3e8ff; padding: 10px 14px; border-radius: 8px; margin-top: 16px; line-height: 1.7; }
 </style>

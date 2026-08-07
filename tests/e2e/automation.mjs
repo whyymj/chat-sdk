@@ -45,7 +45,7 @@ export async function run() {
     )
     const sdk = createChatSdk({
       ui: false, id: 'e2e-budget', storage: 'memory', llm: model,
-      capabilities: { ...MIN_CAPS, automation: true }, tokenBudget: 500,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, tokenBudget: 500,
       tools: [defineTool({ name: 'echo', description: '测试用', schema: z.object({ msg: z.string() }), handler: async () => 'ok' })],
     })
     await sdk.mount()
@@ -67,7 +67,7 @@ export async function run() {
     )
     const sdk = createChatSdk({
       ui: false, id: 'e2e-auto-recover', storage: 'memory', llm: model,
-      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true, maxAutoRetries: 1,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true, maxAutoRetries: 1,
     })
     await sdk.mount()
     const events = []
@@ -90,7 +90,7 @@ export async function run() {
     )
     const sdk = createChatSdk({
       ui: false, id: 'e2e-batch', storage: 'memory', llm: model,
-      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true,
     })
     await sdk.mount()
     const events = []
@@ -113,7 +113,7 @@ export async function run() {
     const sess = { id: 'e2e-resume-sess' }  // 固定 sessionId,直接 load 该 id snapshot(避免依赖 listSessions autoResume 时序)
     const sdk1 = createChatSdk({
       ui: false, id: 'e2e-resume', storage: 'session', session: sess, llm: stubModel({ text: '任务完成', usage: { total_tokens: 500 } }),
-      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true,
     })
     await sdk1.mount()
     await sdk1.send('跑任务')  // beforeModel save(checkpoint 栈)+ afterModel usage 累加 500
@@ -121,7 +121,7 @@ export async function run() {
     // sdk2:同 id + 同 storage + 同 session.id(session 共享 globalThis)→ mount load → applySnapshot 恢复 checkpoint 栈 + usage
     const sdk2 = createChatSdk({
       ui: false, id: 'e2e-resume', storage: 'session', session: sess, llm: stubModel({ text: 'x' }),
-      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true,
     })
     await sdk2.mount()
     assert(sdk2.listCheckpoints().length > 0, `断点续跑:listCheckpoints 恢复有值(checkpoint 栈从 store 恢复),实际 ${sdk2.listCheckpoints().length}`)
@@ -203,7 +203,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-auto-on', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, automation: true }, tokenBudget: 50000, timeBudgetMs: 60000, maxAutoRetries: 2,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, tokenBudget: 50000, timeBudgetMs: 60000, maxAutoRetries: 2,
     })
     await sdk.mount()
     const mws = sdk.inspect().middleware
@@ -226,7 +226,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-auto-cp', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, automation: true }, checkpoint: true, tokenBudget: 100000,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true, tokenBudget: 100000,
     })
     await sdk.mount()
     const mws = sdk.inspect().middleware
@@ -249,7 +249,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-auto-retry', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, automation: true }, maxAutoRetries: 3,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, maxAutoRetries: 3,
     })
     await sdk.mount()
     assert(sdk.inspect().middleware.includes('budget'), 'maxAutoRetries 配置 + automation → mount 成功(无人值守错误恢复配置项)')

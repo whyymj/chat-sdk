@@ -36,6 +36,10 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     // 断言 2:DOM .navbar-title 文本更新
     const domTitle = await page.textContent('.navbar-title')
     expect(domTitle).toBe('测试改标题')
+    // 断言 3:工具步骤行按 Figma 风格渲染(色块 status-dot + 状态标签 step-status「成功」;替代旧 emoji)
+    const stepStatus = await page.locator('.step-item .step-status').first().textContent()
+    expect(stepStatus, '步骤状态标签:done → 「成功」(Figma 色块+文字风格)').toContain('成功')
+    expect(await page.locator('.step-item .status-dot.done').count(), '步骤色块:done 状态绿色 status-dot').toBeGreaterThan(0)
   })
 
   test('read 子路径 → write patch 改页面 title → read 确认', async ({ page }) => {

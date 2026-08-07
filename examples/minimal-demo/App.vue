@@ -46,7 +46,7 @@ onUnmounted(() => agent?.unmount())
   margin: 80px auto 0;
   padding: 0 20px;
   font-family: system-ui, sans-serif;
-  color: #333;
+  color: var(--ark-fg);
 }
 h1 {
   font-size: 24px;
@@ -54,13 +54,13 @@ h1 {
 }
 p {
   line-height: 1.6;
-  color: #666;
+  color: var(--ark-muted);
   margin-bottom: 8px;
 }
 .chat-mount {
   margin-top: 24px;
   height: 600px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
 }
