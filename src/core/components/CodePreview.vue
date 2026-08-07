@@ -88,9 +88,19 @@ function copyCode() {
 }
 
 function openInNewTab() {
-  const blob = new Blob([previewDoc.value], { type: 'text/html' })
+  // 安全(主流程审查 P0-2):新标签页里用 sandbox iframe(无 allow-same-origin)加载预览 ——
+  // AI 生成的 HTML 在隔离的不透明 origin 执行,无法访问宿主 cookie/localStorage/SDK 数据;
+  // blob URL + noopener 防新标签 window.opener 反写宿主(旧实现裸 blob 同源,等于在宿主 origin 跑 AI HTML = XSS)。
+  const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  const wrapper =
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>代码预览 · ' +
+    escAttr(props.lang) +
+    '</title><style>html,body{margin:0;height:100%;background:#fff}iframe{border:none;width:100%;height:100%}</style></head><body>' +
+    '<iframe sandbox="allow-scripts allow-modals allow-popups allow-forms" srcdoc="' + escAttr(previewDoc.value) + '"></iframe>' +
+    '</body></html>'
+  const blob = new Blob([wrapper], { type: 'text/html' })
   const url = URL.createObjectURL(blob)
-  window.open(url, '_blank')
+  window.open(url, '_blank', 'noopener,noreferrer')
   setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 </script>

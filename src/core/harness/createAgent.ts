@@ -26,7 +26,7 @@ import { runPool } from '../utils/pool'
 import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
 import { getTraceMetrics } from '../utils/traceMetrics'
 import { createInitialState, type HarnessState } from './state'
-import { withRetry, isAbort } from './retry'
+import { withRetry, isAbort, type RetryOptions } from './retry'
 import {
   type Middleware,
   type ModelRequest,
@@ -369,9 +369,13 @@ export function createAgent(options: CreateAgentOptions) {
     return lc
   }
 
-  /** 重新渲染消息列表首部的 system 段(state 变化后) */
+  /** 重新渲染消息列表首部的 system 段(state 变化后)。
+   *  只替换首部 system(主 prompt,每轮重渲染),保留其余 SystemMessage ——
+   *  压缩摘要 / trim 累积摘要经 toLC 转成 SystemMessage 落在 index≥1;旧实现 filter 掉所有 system,
+   *  会把这些摘要首轮即剥光 → 长对话跨轮摘要从未送达模型(主流程审查 P0-1)。
+   *  循环内无新增 system(工具结果/模型回复均非 system),messages[0] 由 toLC 保证恒为主 prompt。 */
   function replaceSystem(messages: BaseMessage[]): BaseMessage[] {
-    const rest = messages.filter((m) => typeOf(m) !== 'system')
+    const rest = messages[0] && typeOf(messages[0]) === 'system' ? messages.slice(1) : messages.slice()
     return [new SystemMessage(buildSystemPrompt()), ...rest]
   }
 
@@ -383,36 +387,7 @@ export function createAgent(options: CreateAgentOptions) {
   async function coreModelCall(req: ModelRequest, onEvent?: StreamHandler, signal?: AbortSignal, caller?: BaseChatModel): Promise<ModelResponse> {
     // caller 默认 llmWithTools(绑工具);收口综合传裸 llm,避免模型再触发工具调用
     const streamer = caller ?? llmWithTools
-    const run = async (): Promise<ModelResponse> => {
-      let aggregated: AIMessageChunk | null = null
-      let content = ''
-      try {
-        // stream 启动 + 迭代都纳入 try:启动阶段被 abort 也走 aborted 分支(不冒泡、不重试)
-        const stream = await streamer.stream(req.messages, signal ? { signal } : undefined)
-        for await (const chunk of stream) {
-          aggregated = aggregated ? aggregated.concat(chunk) : chunk
-          const textDelta = typeof chunk.content === 'string' ? chunk.content : ''
-          if (textDelta && onEvent) {
-            content += textDelta
-            onEvent({ type: 'text', delta: textDelta })
-          }
-          const ak: any = (chunk as any).additional_kwargs || {}
-          const rDelta = ak.reasoning_content || ak.reasoning || ''
-          if (rDelta && onEvent) onEvent({ type: 'reasoning', delta: rDelta })
-        }
-      } catch (err) {
-        // abort:不抛,把已累积的 partial 带出来(不丢失已生成内容)
-        if (isAbort(err, signal)) {
-          const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
-          return { message, toolCalls: [], content, aborted: true }
-        }
-        throw err
-      }
-      const message = aggregated as unknown as BaseMessage
-      const toolCalls = ((message as any).tool_calls || []) as ModelResponse['toolCalls']
-      return { message, toolCalls, content }
-    }
-    return withRetry(run, {
+    const retryOpts: RetryOptions = {
       signal,
       maxRetries,
       baseDelayMs: retryDelayMs,
@@ -421,7 +396,44 @@ export function createAgent(options: CreateAgentOptions) {
         log('error', { stage: 'model_retry', attempt, waitMs, error: reason })
         console.warn(`[Agent] 模型调用失败,第 ${attempt}/${maxRetries} 次重试(等 ${waitMs}ms):${reason}`)
       },
-    })
+    }
+    // P1-d:仅 stream「启动」(连接建立)走重试;迭代中失败时已 emit 文本 delta,withRetry 重跑 run 会从头再 emit
+    // → UI 文本重复两遍。故启动失败(连接)可重试,迭代失败(已吐字)不重试,直接抛。
+    let stream: AsyncIterable<AIMessageChunk> | undefined
+    try {
+      stream = await withRetry(() => streamer.stream(req.messages, signal ? { signal } : undefined), retryOpts)
+    } catch (err) {
+      // 启动阶段 abort:带空 partial(等同未开始);其他错误透传(withRetry 已对可重试类重试过)
+      if (isAbort(err, signal)) return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
+      throw err
+    }
+    // catch 已 return/throw,此处 stream 必已赋值;narrow 防 TS 报 possibly undefined
+    if (!stream) return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
+    let aggregated: AIMessageChunk | null = null
+    let content = ''
+    try {
+      for await (const chunk of stream) {
+        aggregated = aggregated ? aggregated.concat(chunk) : chunk
+        const textDelta = typeof chunk.content === 'string' ? chunk.content : ''
+        if (textDelta && onEvent) {
+          content += textDelta
+          onEvent({ type: 'text', delta: textDelta })
+        }
+        const ak: any = (chunk as any).additional_kwargs || {}
+        const rDelta = ak.reasoning_content || ak.reasoning || ''
+        if (rDelta && onEvent) onEvent({ type: 'reasoning', delta: rDelta })
+      }
+    } catch (err) {
+      // abort:不抛,带出已累积 partial;迭代中其他失败不重试(已 emit,重发会重复)→ 直接抛
+      if (isAbort(err, signal)) {
+        const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
+        return { message, toolCalls: [], content, aborted: true }
+      }
+      throw err
+    }
+    const message = aggregated as unknown as BaseMessage
+    const toolCalls = ((message as any).tool_calls || []) as ModelResponse['toolCalls']
+    return { message, toolCalls, content }
   }
 
   /** 核心工具执行(洋葱最内层):find + invoke */
@@ -680,7 +692,13 @@ export function createAgent(options: CreateAgentOptions) {
           ...rest,
         ]
         log('llm_request', { round: 'wrap_up', model, tools: [], messages: formatForLog(wrapUpMessages) })
-        const resp = await coreModelCall({ messages: wrapUpMessages, state }, onEvent, signal, llm)
+        // P1-1(arch-review):wrap-up 经中间件 wrapModelCall 洋葱 + afterModel,与主循环 modelHandler 对齐。
+        // 此前直接调 coreModelCall 绕过中间件栈 → 收口轮 token 不计入 sdk-events afterModel 的 usage 累加(漏计 sdk.usage),
+        // 且 budget 预算闸 / 用户自定义 wrapModelCall(埋点/缓存)在收口轮失效。裸 llm(不绑工具)防收口再触发工具调用。
+        // 不跑 beforeModel:收口轮不需 todos 推进等 state 变更,且避免重渲染 system 覆盖上方收口提示。
+        const wrapUpHandler = composeModelCall(middlewares, (req) => coreModelCall(req, onEvent, signal, llm))
+        const resp = await wrapUpHandler({ messages: wrapUpMessages, state })
+        state = runAfterModel(middlewares, resp, state)
         log('llm_response', { round: 'wrap_up', content: resp.content })
         if (resp.aborted) {
           onEvent({ type: 'done', content: resp.content })

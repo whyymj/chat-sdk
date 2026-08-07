@@ -187,7 +187,49 @@ export interface AgentInfo {
   checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
   /** 结构化追踪(revive-observability-tracing;capabilities.tracing 开时填充,否则 undefined) */
   trace?: { spans: TraceSpan[]; metrics: TraceMetrics };
+  /** 上下文构成快照(context-inspector;每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
+  context?: ContextSnapshot;
 }
+/** 上下文分类(context-inspector) */
+export interface ContextCategory {
+  key: string;
+  label: string;
+  tokens: number;
+  pct: number;
+  msgCount: number;
+}
+/** 上下文构成快照(context-inspector;每轮 wrapModelCall 覆盖,不累积) */
+export interface ContextSnapshot {
+  totalTokens: number;
+  contextWindow?: number;
+  /** totalTokens / contextWindow(无窗口为 0) */
+  occupancy: number;
+  /** 压缩触发阈值占比 */
+  thresholdRatio: number;
+  /** 分类明细(按 tokens 降序) */
+  categories: ContextCategory[];
+  /** 最近一次压缩统计(复用 state.lastCompression) */
+  compression?: { triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number; originalMessages: number; compressedMessages: number; strategy: string };
+}
+/** analyzeContext 选项(context-inspector) */
+export interface AnalyzeContextOptions {
+  contextWindow?: number;
+  thresholdRatio?: number;
+}
+/** 对「实际发给 LLM 的消息」分类切分 + token 估算(纯函数,零 LLM 成本) */
+export declare function analyzeContext(messages: import('@langchain/core/messages').BaseMessage[], opts?: AnalyzeContextOptions): ContextSnapshot;
+/** 上下文检查中间件选项(context-inspector) */
+export interface ContextInspectorOptions {
+  contextWindow?: number;
+  thresholdRatio?: number;
+}
+/** 上下文检查中间件(context-inspector;getSnapshot 读最近快照) */
+export interface ContextInspectorMiddleware {
+  name: string;
+  getSnapshot(): ContextSnapshot | undefined;
+}
+/** 创建上下文检查中间件(capabilities.contextInspector 默认开) */
+export declare function createContextInspectorMiddleware(opts?: ContextInspectorOptions): ContextInspectorMiddleware;
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
@@ -623,6 +665,8 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos) */
   inspect(): AgentInfo;
+  /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
+  inspectContext(): ContextSnapshot | undefined;
   /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
   getMission(): Mission | undefined;
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */

@@ -105,6 +105,46 @@ export async function run(ctx: TestCtx): Promise<void> {
     await agentA.stream([{ role: 'user', content: '做点事', timestamp: Date.now() }], (e) => { if (e.type === 'done') finalA = e.content }, undefined)
     assert(finalA === '最终综合回答', '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
 
+    // ①+ P1-1(arch-review):收口综合经中间件栈 —— wrap-up 不再直接调 coreModelCall 绕过 wrapModelCall/afterModel。
+    // 修复前:收口轮 token 不计入 sdk-events afterModel 的 usage 累加(漏计 sdk.usage)、budget 预算闸与用户自定义 wrapModelCall 失效。
+    // 验证:计数中间件在收口轮也被调用(主循环 2 轮 + wrap-up 1 轮 = 3 次 model call)。
+    {
+      let wrapModelCallCount = 0
+      let afterModelCount = 0
+      const countingMw: Middleware = {
+        name: 'p1-1-count',
+        wrapModelCall: async (req, next) => { wrapModelCallCount++; return next(req) },
+        afterModel: () => { afterModelCount++; return undefined },
+      }
+      const mockP11 = new MockLLM([
+        { toolCalls: [{ name: 'noop', args: {} }] },
+        { toolCalls: [{ name: 'noop', args: {} }] },
+        { content: '收口综合' },
+      ])
+      const agentP11 = createAgent({ llm: mockP11 as any, maxToolRounds: 2, maxRetries: 0, middleware: [countingMw] })
+      await agentP11.stream([{ role: 'user', content: '做点事', timestamp: Date.now() }], () => {}, undefined)
+      assert(wrapModelCallCount === 3, 'P1-1 收口经中间件:wrap-up 轮也走 wrapModelCall(budget/用户埋点参与,不再绕过)')
+      assert(afterModelCount === 3, 'P1-1 收口经中间件:wrap-up 轮也走 afterModel(收口 token 计入 sdk.usage,不再漏计)')
+    }
+
+    // ①++ P1-4(arch-review):subagent allTools 走 getter —— spawn 时取主 agent 最新工具集
+    // (运行时 setTools/addTool 动态加的工具对子 agent 可见,不再用装配期快照)。
+    // 验证:spy getter 在 spawn_agent 委派时被调用(子 agent 工具集经 getter 取,非闭包快照)。
+    {
+      let getterCalls = 0
+      const childLlm = new MockLLM([{ content: '子结论' }])
+      const subMw = createSubagentMiddleware({ llm: childLlm, allTools: () => { getterCalls++; return [] } })
+      const mainLlm = new MockLLM([
+        { toolCalls: [{ name: 'spawn_agent', args: { prompt: '查一下' } }] },
+        { content: '主综合' },
+      ])
+      const agentP14 = createAgent({ llm: mainLlm, middleware: [subMw], maxToolRounds: 2, maxRetries: 0 })
+      let finalP14 = ''
+      await agentP14.stream([{ role: 'user', content: '委派子任务', timestamp: Date.now() }], (e) => { if (e.type === 'done') finalP14 = e.content }, undefined)
+      assert(getterCalls >= 1, 'P1-4 subagent getter:spawn 时经 getter 取工具集(动态加的工具对子 agent 可见,不再用装配期快照)')
+      assert(finalP14 === '主综合', 'P1-4 subagent getter:spawn 链路正常完成(子 agent 返回结论 → 主综合)')
+    }
+
     // ② afterAgent 兜底:模型抛错时 stream reject,但 afterAgent 经 finally 仍执行(中间件清理不跳过)
     class ThrowingLLM extends MockLLM {
       async *_streamResponseChunks(): AsyncGenerator<any> { throw new Error('boom') }
@@ -128,6 +168,57 @@ export async function run(ctx: TestCtx): Promise<void> {
     const agentC = createAgent({ llm: new MockLLM([{ content: 'ok' }]) as any, middleware: [compressMw], maxToolRounds: 2, maxRetries: 0 })
     await agentC.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
     assert(capturedStats && capturedStats.triggered === true && capturedStats.strategy === 'token-window+llm_summary', '压缩统计:compressInput stats 写入 state.lastCompression(afterAgent 可观测)')
+
+    // ②++ P0-1(主流程审查):压缩/累积摘要经 toLC 转 SystemMessage 后必须送达模型。
+    // replaceSystem 只替首部 system,不再 filter 掉所有 system(否则摘要首轮即被剥,长对话跨轮记忆静默失效)。
+    // 验证:fake compressInput 产出摘要 system 消息 → 捕获「实际发给模型的消息」含该摘要 SystemMessage。
+    {
+      let capturedReq: any[] = []
+      class CaptureLLM extends MockLLM {
+        async *_streamResponseChunks(messages: any): AsyncGenerator<any> {
+          capturedReq = messages
+          yield { text: '完成', message: new AIMessageChunk({ content: '完成' }), generationInfo: {} }
+        }
+      }
+      const summaryMw: Middleware = {
+        name: 'p0-1-summary',
+        compressInput: async (msgs) => ({
+          messages: [{ role: 'system', content: '【对话历史摘要】之前讨论了 X 的实现细节' }, ...msgs],
+          stats: { triggered: true },
+        }),
+      }
+      const agentP01 = createAgent({ llm: new CaptureLLM([]) as any, middleware: [summaryMw], maxToolRounds: 1, maxRetries: 0 })
+      await agentP01.stream([{ role: 'user', content: '继续', timestamp: Date.now() }], () => {}, undefined)
+      const sysMsgs = capturedReq.filter((m: any) => typeof m._getType === 'function' && m._getType() === 'system')
+      assert(sysMsgs.length >= 2, 'P0-1 摘要送达:压缩产出的摘要 SystemMessage 保留(replaceSystem 只替首部,不剥其余 system)')
+      assert(sysMsgs.some((m: any) => /对话历史摘要/.test(String(m.content))), 'P0-1 摘要送达:摘要内容确实出现在发给模型的消息里(非被 filter 剥光)')
+
+      // 对照:无摘要注入时,system 仅主 prompt 一条(防 replaceSystem 误保留旧主 prompt)
+      let capturedReq2: any[] = []
+      class CaptureLLM2 extends MockLLM {
+        async *_streamResponseChunks(messages: any): AsyncGenerator<any> { capturedReq2 = messages; yield { text: 'ok', message: new AIMessageChunk({ content: 'ok' }), generationInfo: {} } }
+      }
+      const agentP01b = createAgent({ llm: new CaptureLLM2([{ content: 'ok' }]) as any, maxToolRounds: 1, maxRetries: 0 })
+      await agentP01b.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
+      const sysMsgs2 = capturedReq2.filter((m: any) => typeof m._getType === 'function' && m._getType() === 'system')
+      assert(sysMsgs2.length === 1, 'P0-1 基线:无摘要注入时 system 仅主 prompt 一条(replaceSystem 不重复堆积)')
+    }
+
+    // ②++++ P1-d(主流程审查):流式迭代中途失败不重试 —— 已 emit 文本,withRetry 重跑会从头再 emit 致 UI 重复两遍。
+    // 修复:仅 stream 启动(连接建立)走重试,迭代中失败直接抛。验证:_streamResponseChunks 只执行 1 次(未重跑重发)。
+    {
+      let streamCallCount = 0
+      class MidStreamFailLLM extends MockLLM {
+        async *_streamResponseChunks(): AsyncGenerator<any> {
+          streamCallCount++
+          yield { text: 'Hello', message: new AIMessageChunk({ content: 'Hello' }), generationInfo: {} }
+          throw new Error('mid-stream network reset')  // 已 emit 'Hello' 后迭代中途失败
+        }
+      }
+      const agentP1d = createAgent({ llm: new MidStreamFailLLM([]) as any, maxToolRounds: 1, maxRetries: 2 })
+      await agentP1d.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined).catch(() => {})
+      assert(streamCallCount === 1, 'P1-d 迭代中途失败不重试:_streamResponseChunks 只执行 1 次(未重跑重发致文本重复;旧实现 withRetry 包整体会重跑 maxRetries+1 次)')
+    }
 
     // ③ 逐轮 trim 纯函数:tool 结果累积超放行上限 → 最早 ToolMessage 压缩为占位摘要(保留 tool_call_id)
     const big = 'x'.repeat(1000)

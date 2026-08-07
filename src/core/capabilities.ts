@@ -27,8 +27,8 @@ export type CapabilityFlags = Partial<Record<string, boolean>>
 export type ResolvedCapabilities = Record<string, boolean>
 
 /**
- * 能力注册表(17 开关)。
- * - opt-out 默认开(11 个):核心能力,关才需显式 false
+ * 能力注册表(18 开关)。
+ * - opt-out 默认开(12 个):核心能力,关才需显式 false
  * - opt-in 默认关(6 个):有 token 成本/最远能力,需显式 true 开启
  */
 export const CAPABILITIES: readonly Capability[] = [
@@ -44,6 +44,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'memory', defaultOn: true },
   { name: 'subagent', defaultOn: true },
   { name: 'inspectEnv', defaultOn: true },
+  { name: 'contextInspector', defaultOn: true },
   // —— opt-in 默认关 ——
   { name: 'verify', defaultOn: false },
   { name: 'domInspect', defaultOn: false },

@@ -277,6 +277,18 @@ export function useChat(
     currentController?.abort()
   }
 
+  /** 重置生成状态(切会话/新建会话前调):停止 ghost 流 + 清 loading/排队/错误/待确认,
+   *  防切会话时进行中的流继续烧 token、loading 残留、排队任务/待确认跨会话泄漏(P1-b)。
+   *  不清 messages(switchSession 由 snapshot 恢复新会话;onClear 由 clearMessages 清)。 */
+  function reset() {
+    queuedTasks.value = []
+    currentController?.abort()
+    currentController = null
+    state.loading = false
+    state.error = null
+    pendingApproval.value = null
+  }
+
   /** 人工确认:用户点「允许」(true) / 「拒绝」(false) / 选某方案(string) → 收口挂起的 approval_request */
   function resolveApproval(approved: boolean | string) {
     const p = pendingApproval.value
@@ -303,5 +315,5 @@ export function useChat(
     await sendMessage(content)
   }
 
-  return { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel }
+  return { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, reset, retry, regenerate, resolveApproval, onScroll, onWheel }
 }

@@ -40,6 +40,7 @@ import {
 import type { Middleware } from '../harness/middleware'
 import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfig } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
+import { createContextInspectorMiddleware } from '../harness/contextInspector'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
@@ -538,6 +539,8 @@ interface AgentCore {
   afterRound(): void
   send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>
   switchSession(sessionId?: string): Promise<string>
+  /** 新建/清空会话:重置内存态 + 新 sessionId + emit session_restored(onClear 调;P0-4 收编,原 onClear 闭包越界引用 buildCore 局部致 ReferenceError) */
+  resetSession(): void
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 添加用户创建的 skill(持久化 + 入 controller;同名覆盖) */
   addSkill(skill: SkillSpec): void
@@ -827,6 +830,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
   const verifyMaxAttempts = options.verify?.maxAttempts ?? 2
   const useVerify = caps.verify && options.verify?.enabled !== false && verifyMaxAttempts > 0
+  const useContextInspector = caps.contextInspector  // 上下文检查(默认开,纯计算零 LLM 成本;inspectContext/进度条/tab)
   // 诊断:常见误用 warn(与 options.id/mcp 的 warn 惯例一致),避免"以为开了实际没开"
   if (options.verify?.check && !caps.verify) {
     console.warn('[page-agent-sdk][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
@@ -841,7 +845,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ? undefined
       : createSubagentMiddleware({
           llm: subOpts?.llm ?? options.llm,
-          allTools,
+          allTools: () => allTools, // P1-4:getter —— setTools/addTool/MCP 动态加的工具对子 agent 立即可见(不用装配期快照)
           allowedTools: subAllowed.length ? subAllowed : undefined,
           // 子 agent 独立配置(自定义身份/温度/上下文上限/技能)
           systemPrompt: subOpts?.systemPrompt,
@@ -858,7 +862,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools, debug: options.debug })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -873,6 +877,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           root: () => liveData()?.bind,  // 单对象 data 模式:读回 root = bind(不挂 window);getter 适配 sdk.setData 运行时替换
         }),
         adversarial: options.verify?.adversarial ? { llm: options.llm, tools: readonlyTools } : undefined,
+      })
+    : undefined
+
+  // 上下文检查中间件(context-inspector):每轮 wrapModelCall 快照实际消息构成(大小/分类/占比);默认开,纯计算零 LLM 成本
+  const contextInspectorMw = useContextInspector
+    ? createContextInspectorMiddleware({
+        contextWindow: modelCaps.contextWindow,
+        thresholdRatio: resolveContextOptions(options, modelCaps.contextWindow).summaryThresholdRatio,
       })
     : undefined
 
@@ -1015,6 +1027,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
+    ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
     ...(options.middleware || []),
     // 资源预算闸(automation-layer Phase 4):wrapModelCall 每轮检查 token/time,超限 → aborted response 停止 agent + emit BUDGET_EXCEEDED
     ...(useAutomation ? [createBudgetMiddleware(usage, { tokenBudget: options.tokenBudget, timeBudgetMs: options.timeBudgetMs }, emit)] : []),
@@ -1236,6 +1249,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       return target
     },
 
+    /** 新建/清空会话:重置内存态(vfs/todos/memory/mission/workingMemory/checkpoint/debugLogs)+ 新 sessionId + emit session_restored。
+     *  收编进 core(主流程审查 P0-4):onClear 闭包原在 createChatSdk 作用域赋值 buildCore 局部 lastTitle/titleLLMDone → 运行期 ReferenceError;
+     *  共享状态变更一律 AgentCore 方法(mount Wrapper 只传引用不写逻辑,1.3.1 教训机制化)。 */
+    resetSession: () => {
+      if (!store) return
+      core.sessionId = makeId()
+      vfsStore.clear?.()
+      todosMw.reset([])
+      if (!options.memory) memoryMw.reset('')
+      missionMw.reset()
+      workingMemoryMw.reset()
+      if (checkpointMgr) checkpointMgr.importStack([])
+      if (core.agent) core.agent.debugLogs.value = []
+      void store.createSession(core.agentId, options.session?.title, core.sessionId)
+      emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
+      void refreshSessions()
+      lastTitle = undefined; titleLLMDone = false
+    },
+
     stream: (msgs, onEvent, signal) => {
       if (!core.agent) throw new Error('page-agent-sdk: agent 尚未初始化完成,请先 await mount()')
       // 包装:把 stream 事件同时转发给集成方 onEvent(approval_request 已由 emit 过滤)
@@ -1400,6 +1432,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           maxAttempts: useVerify ? verifyMaxAttempts : 0,
           adversarial: useVerify && !!options.verify?.adversarial,
         },
+        // 上下文构成快照(每轮 wrapModelCall 覆盖;复用 state.lastCompression 注入压缩统计,非新增写入路径)
+        context: (() => {
+          const snap = contextInspectorMw?.getSnapshot()
+          if (snap) {
+            const lc = core.agent?.getState?.()?.lastCompression
+            if (lc) snap.compression = lc
+          }
+          return snap
+        })(),
         mcp: { servers: core.mcpServers },
         lastCompression: core.agent?.getState?.()?.lastCompression as AgentInfo['lastCompression'],
         checkpoints: checkpointMgr
@@ -1523,7 +1564,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const results = await Promise.allSettled(options.mcp.map((c) => connectMcp(c)))
       core.mcpClosers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
       core.mcpServers = []
-      const mcpTools: StructuredToolInterface[] = []
+      // 复用外层 mcpTools 数组(buildCore 作用域声明):旧实现在此用 const 声明同名局部变量遮蔽外层,
+      // 致 push 进局部数组、rebuildExtraTools 读外层空数组 → MCP 工具从未注入 agent(主流程审查 P0-3)
       results.forEach((r, i) => {
         const cfg = options.mcp![i]
         const label = cfg.name ?? cfg.url
@@ -1655,7 +1697,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       setup() {
         return () =>
           h(ChatDialog, {
-            fetchStream: streaming ? core.agent!.stream : undefined,
+            fetchStream: streaming ? core.stream : undefined,   // P1-c:走 core.stream 包装(事件转发 onEvent/hook + abort 收口冲突),非裸 core.agent.stream
             fetchResponse: streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => {
               if (signal) {
                 const abortConflict = () => core.resolveConflict('keep_external')
@@ -1675,26 +1717,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
               core.afterRound()
               if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
             },
-            onClear: () => {
-              // 新建会话:同步生成 id + 重置内存态(vfs/todos/memory/debugLogs),防旧会话数据残留或污染新会话
-              if (!core.store) return
-              core.sessionId = makeId()
-              core.vfsStore.clear?.()
-              core.todosMw.reset([])
-              if (!options.memory) core.memoryMw.reset('')
-              // P1-5:新建会话重置 mission/workingMemory,防旧会话 goal / 定位 path·hash 残留污染新会话
-              core.missionMw.reset()
-              core.workingMemoryMw.reset()
-              // session-history S1:新建会话清 checkpoint 栈(防旧会话快照残留污染新会话)
-              if (core.checkpoint) core.checkpoint.importStack([])
-              // 同步释放上一会话的调试日志(否则要等下次 send 才重置,清空后抽屉仍挂旧日志占内存)
-              core.agent!.debugLogs.value = []
-              void core.store.createSession(core.agentId, options.session?.title, core.sessionId)
-              // session-history S5:新建会话发 session_restored(与 switchSession 对齐,供历史列表同步当前会话)
-              core.emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
-              void core.refreshSessions()  // session-history Phase 6:新建会话(清空)后刷新历史列表
-              lastTitle = undefined; titleLLMDone = false   // 新建会话:重置 title 缓存 + LLM 标志(下次 user+assistant 后重新生成)
-            },
+            onClear: () => core.resetSession(),   // P0-4:收编进 core(见 core.resetSession);原闭包越界引用 buildCore 局部 lastTitle/titleLLMDone 致 ReferenceError
             pendingConflict: core.pendingConflict.value,
             onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
             infoTick: core.infoTick,  // 响应式 tick:setSkills/setData 后 ++,DebugDrawer watch 后重新拉 getInfo() 实时刷新 Agent 信息
@@ -1822,7 +1845,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     get sessionId(): string { return core.sessionId },
     stream: core.stream,
     inspect: core.getInfo,
-    /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
+    /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
+    inspectContext: () => core.getInfo().context,
     getMission: core.getMission,
     /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
     setMission: core.setMission,

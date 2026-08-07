@@ -194,6 +194,23 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(fb2.ok === false && /禁用模式/.test(fb2.error || ''), '✓ runSandboxedScript 静态扫描拒绝 eval()')
     const fb3 = await runSandboxedScript({ x: 1 }, 'return new Function("x","return x")()')
     assert(fb3.ok === false && /禁用模式/.test(fb3.error || ''), '✓ runSandboxedScript 静态扫描拒绝 new Function()')
+
+    // harden-eval-sandbox:lockSandboxGlobal defineProperty 锁网络/存储 API(防 delete self.fetch 恢复原生外泄)
+    const { lockSandboxGlobal } = await import('../../tools/dataSlotQuery')
+    const fakeSelf: any = { navigator: {} }
+    lockSandboxGlobal(fakeSelf)
+    const fd = Object.getOwnPropertyDescriptor(fakeSelf, 'fetch')
+    assert(!!fd && fd.configurable === false && fd.writable === false, '✓ lockSandboxGlobal:fetch 锁 configurable:false+writable:false(delete/赋值均堵死)')
+    // delete/赋值在 configurable:false+writable:false 下无效(strict 抛 / 非严格静默):fetch 仍是禁用函数(调用抛"禁用",非原生)
+    try { delete fakeSelf.fetch } catch {}
+    try { (fakeSelf as any).fetch = () => 'leak' } catch {}
+    let fetchDisabled = false
+    try { (fakeSelf.fetch as any)('http://x') } catch (e: any) { fetchDisabled = /禁用/.test(String((e && e.message) || e)) }
+    assert(fetchDisabled, '✓ lockSandboxGlobal:delete/赋值 self.fetch 均无效 → 调用仍抛"禁用"(原生 fetch 不可达,逃逸外泄堵死)')
+    const sd = Object.getOwnPropertyDescriptor(fakeSelf.navigator, 'sendBeacon')
+    assert(!!sd && sd.configurable === false, '✓ lockSandboxGlobal:navigator.sendBeacon 锁')
+    const idd = Object.getOwnPropertyDescriptor(fakeSelf, 'indexedDB')
+    assert(!!idd && idd.configurable === false && idd.value === undefined, '✓ lockSandboxGlobal:indexedDB 锁为 undefined 不可恢复')
   }
 
   // ============ budget middleware 运行时(automation §1 资源预算闸;maintain 测试盲区 HIGH 补)============

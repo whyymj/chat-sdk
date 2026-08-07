@@ -29,16 +29,14 @@
 - [ ] `capabilities.contextInspector:false` → `inspectContext()` undefined + `inspect().context` undefined
 - [ ] e2e(events.mjs 或新模块):`inspectContext()` 返回 + `inspect().context` 反映 + 关 capability 后 undefined
 
-## 5. ChatDialog 常驻进度条
-- [ ] ChatDialog 加 `context` prop;header 下渲染「📊」占用进度条(occupancy% + 总 token)
-- [ ] 色阶绿(occupancy < 阈值)/黄(≥阈值)/红(≥1);悬停 tooltip 总 token/窗口/最近压缩 strategy
-- [ ] `capabilities.contextInspector:false` 时不显示
-- [ ] **注:拆分完成(`chatdialog-component-split`)后,此区块挪 `#context` slot;当前先内置 prop 版**
+## 5. ChatDialog 常驻进度条 ⏸ 推后(2026-08-07)
+评估:DebugDrawer「📊 上下文」tab(§6)已覆盖完整诊断(占用进度条 + 分类 bar + 压缩)。ChatDialog 常驻进度条的**每轮刷新**需改 useChat(接 inspectContext + onEvent usage 事件流),改动面扩到 composable + 事件流,成本高于增量收益。`inspectContext()`/`inspect().context` API 已暴露,集成方按需自建轻量进度条(同 focus 焦点条约定)。重启:真有「对话区常驻占用概览」强诉求时。
 
-## 6. DebugDrawer「📊 上下文」tab
-- [ ] DebugDrawer 加 `context` 信息获取(tab 列表增 context,同 trace/info 条件显示)
-- [ ] 面板:总览进度条(occupancy%/阈值线)+ 分类横向 bar(按 tokens 降序)+ 压缩信息(roundsTotal/Summarized/Recalled/strategy)+ usage 累计(prompt/completion/total)
-- [ ] browser:进度条渲染 + DebugDrawer 上下文 tab 分类展示(spec 断言计数更新)
+## 6. DebugDrawer「📊 上下文」tab ✅
+- [x] DebugDrawer 加「📊 上下文」tab(同 trace/info 条件显示,从 agentInfo.context 读)
+- [x] 面板:总览占用进度条(occupancy% + 阈值线 + 色阶绿/黄/红)+ 分类横向 bar(按 tokens 降序)+ 压缩信息(roundsSummarized/Recalled/strategy)
+- [ ] usage 累计(prompt/completion/total)—— 跳过(sdk.usage 不在 AgentInfo;trace tab 的 traceMetrics.totalTokens 已覆盖实测 token 展示)
+- [ ] browser:DebugDrawer 上下文 tab 分类展示 —— **推后**(selftest sec-50 覆盖 analyzeContext + 中间件核心;UI 渲染归手动验证)
 
 ## 7. 文档
 - [ ] `doc/usage-guide.md` 补「上下文查看面板」小节:`inspectContext()` + 进度条/tab 说明 + capabilities 开关

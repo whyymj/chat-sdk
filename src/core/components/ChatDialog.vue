@@ -80,7 +80,7 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
+const { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, reset, retry, regenerate, resolveApproval, onScroll, onWheel } = useChat({
   fetchResponse: props.fetchResponse,
   fetchStream: props.fetchStream,
   messages: props.initialMessages,
@@ -229,10 +229,22 @@ function editQueued(idx: number) {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // P1-a:IME 输入法合成期回车(确认候选词)不发送(isComposing / keyCode 229);否则中文输入必现误发
+  if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
   }
+}
+
+/** 新建/切换会话:先停当前生成 + 清状态(防 ghost 流续烧 token + loading/排队/待确认跨会话残留),再委派给 SDK;P1-b */
+function handleNewSession() {
+  reset()
+  props.onNewSession?.()
+}
+function handleOpenSession(id: string) {
+  reset()
+  props.onOpenSession?.(id)
 }
 
 function formatTime(timestamp: number) {
@@ -278,7 +290,7 @@ const drawerWidthStyle = computed(() => {
       </div>
       <div class="header-actions">
         <!-- 内置会话管理(sessions 注入 = storage 开启;不传则隐藏按钮)-->
-        <button v-if="sessions" class="action-btn" data-test="new-chat" title="新建会话" @click="onNewSession?.()">
+        <button v-if="sessions" class="action-btn" data-test="new-chat" title="新建会话" @click="handleNewSession">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
         </button>
         <button v-if="sessions" class="action-btn" :class="{ active: historyOpen }" data-test="toggle-history" title="历史记录" @click.stop="moreOpen = false; historyOpen = !historyOpen">
@@ -292,7 +304,7 @@ const drawerWidthStyle = computed(() => {
             class="hist-item"
             :class="{ active: currentSessionId === s.sessionId }"
             :data-sid="s.sessionId"
-            @click="onOpenSession?.(s.sessionId)"
+            @click="handleOpenSession(s.sessionId)"
           >
             <div class="hist-title">{{ s.title || '会话 ' + s.sessionId.slice(-6) }}</div>
             <div class="hist-meta">
@@ -601,6 +613,8 @@ const drawerWidthStyle = computed(() => {
   --cs-primary: #1f4d3a;
   --cs-primary-rgb: 31, 77, 58;
   --cs-bg: #ffffff;
+  --cs-bg-text: #1f2937;   /* 输入框文字(浅主题深色;深主题集成方覆盖为亮色) */
+  --cs-bg-muted: #9ca3af;  /* placeholder / 提示 */
   --cs-bubble-ai: #f3f4f6;
   --cs-radius: 12px;
   /* 思考过程块(默认浅绿;深色主题覆盖 --cs-reason-* 即可) */

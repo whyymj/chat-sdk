@@ -167,6 +167,8 @@ export interface AgentInfo {
     compressedMessages: number
     strategy: string
   }
+  /** 最近一次 wrapModelCall 的上下文构成快照(context-inspector 中间件;capabilities.contextInspector 关 → undefined) */
+  context?: import('../utils/contextAnalysis').ContextSnapshot
   /** 会话级 checkpoint 装载状态(未开启 → undefined) */
   checkpoints?: {
     enabled: boolean

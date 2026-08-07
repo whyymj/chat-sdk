@@ -37,8 +37,8 @@ export interface SubagentLlmConfig {
 export interface SubagentOptions {
   /** 主 agent 的 LLM(配置对象或预构造实例,子 agent 复用) */
   llm: SubagentLlmConfig | BaseChatModel
-  /** 主 agent 全部工具(子 agent 按白名单筛选只读子集) */
-  allTools: StructuredToolInterface[]
+  /** 主 agent 全部工具(子 agent 按白名单筛选只读子集)。支持 getter:运行时 setTools/addTool 动态加的工具对子 agent 立即可见(P1-4) */
+  allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
   /** 子 agent 额外可用的工具名(默认仅只读主数据 + fetch) */
   allowedTools?: string[]
   /** 子 agent 默认身份(spawn 运行时的 role 优先;都缺省用兜底) */
@@ -140,15 +140,17 @@ async function runSubagent(
   const maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH
   // 子 agent 工具子集:只读白名单 + 用户 allowedTools;排除 spawn(防递归)
   const allow = new Set([...DEFAULT_READONLY_TOOLS, ...(opts.allowedTools ?? [])])
+  // P1-4:allTools 支持 getter —— 子 agent spawn 时取主 agent 最新工具集(运行时 setTools/addTool 动态加的工具对子 agent 可见,不再用装配期快照)
+  const getAllTools = typeof opts.allTools === 'function' ? opts.allTools : () => opts.allTools
   // 子 agent 工具:主 allTools 按白名单筛只读子集 + extraTools(预声明子 agent 的专属工具,不经筛选)
   let childTools = [
-    ...opts.allTools.filter((t) => allow.has(t.name) && !SPAWN_TOOL_NAMES.includes(t.name)),
+    ...getAllTools().filter((t) => allow.has(t.name) && !SPAWN_TOOL_NAMES.includes(t.name)),
     ...(opts.extraTools ?? []),
   ]
   // writablePaths(子 agent 写权限):写工具包 path guard 后加入(越界 PATH_OUT_OF_SCOPE;整体 set 禁)
   if (opts.writablePaths?.length) {
     childTools = childTools.filter((t) => !SUB_WRITE_TOOLS.includes(t.name)) // 移除可能的原版写工具(防重复)
-    const guardedWrites = opts.allTools
+    const guardedWrites = getAllTools()
       .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !SPAWN_TOOL_NAMES.includes(t.name))
       .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
     childTools = [...childTools, ...guardedWrites]
@@ -306,8 +308,8 @@ export interface SubagentConfig {
 export interface SubagentsMiddlewareOptions {
   /** 主 agent 的 llm(子 agent 缺省继承) */
   llm: SubagentLlmConfig | BaseChatModel
-  /** 主 agent 全部工具(子 agent 按只读白名单筛) */
-  allTools: StructuredToolInterface[]
+  /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
+  allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
   debug?: boolean
 }
 

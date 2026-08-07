@@ -85,7 +85,7 @@ function roleOf(t: string) {
 function close() { emit('update:visible', false) }
 function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 
-const tab = ref<'logs' | 'flow' | 'trace' | 'info'>('logs')
+const tab = ref<'logs' | 'flow' | 'trace' | 'context' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
 // skill 全文展开状态:name → { loading, content, error }
 const skillExpanded = ref<Record<string, { loading: boolean; content: string | null; error?: string }>>({})
@@ -115,14 +115,14 @@ function refreshInfo() {
     try { agentInfo.value = props.getInfo() } catch { agentInfo.value = null }
   }
 }
-function switchTab(t: 'logs' | 'flow' | 'info') {
+function switchTab(t: 'logs' | 'flow' | 'context' | 'info') {
   tab.value = t
-  // 切到「Agent 信息」时实时拉取(含动态 todos)
-  if (t === 'info') refreshInfo()
+  // 切到「Agent 信息」/「上下文」时实时拉取(含动态 todos / 上下文快照)
+  if (t === 'info' || t === 'context') refreshInfo()
 }
 // infoTick 变化(setSkills/setData 后 ++):抽屉可见且停在 info tab 时实时刷新,反映动态 skill/data
 watch(() => props.infoTick?.value, () => {
-  if (props.visible && tab.value === 'info') refreshInfo()
+  if (props.visible && (tab.value === 'info' || tab.value === 'context')) refreshInfo()
 })
 const statusMeta: Record<string, { label: string; color: string }> = {
   pending: { label: '待办', color: '#9ca3af' },
@@ -159,6 +159,16 @@ function truncate(s: string, n: number): string {
 /** trace(observability-tracing):spans + metrics 从 agentInfo.trace 读 */
 const traceSpans = computed<TraceSpan[]>(() => agentInfo.value?.trace?.spans ?? [])
 const traceMetrics = computed(() => agentInfo.value?.trace?.metrics)
+/** 上下文构成(context-inspector):从 agentInfo.context 读最近 wrapModelCall 快照 */
+const contextSnap = computed(() => agentInfo.value?.context)
+/** 占用色阶:绿(<阈值)< 黄(≥阈值)< 红(≥1 超窗口) */
+const ctxOccupancyLevel = computed<'green' | 'yellow' | 'red' | ''>(() => {
+  const s = contextSnap.value
+  if (!s) return ''
+  if (s.occupancy >= 1) return 'red'
+  if (s.thresholdRatio > 0 && s.occupancy >= s.thresholdRatio) return 'yellow'
+  return 'green'
+})
 function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '🧠' : t === 'tool' ? '🔧' : t === 'compression' ? '📦' : '•' }
 /** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
 function flowNodeDetail(lg: DebugLog): string {
@@ -186,6 +196,7 @@ function flowNodeDetail(lg: DebugLog): string {
               <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 日志</button>
               <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 流程</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'trace' }" @click="switchTab('trace')">🌳 Trace</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'context' }" @click="switchTab('context')">📊 上下文</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
             </div>
             <div class="header-actions">
@@ -229,6 +240,39 @@ function flowNodeDetail(lg: DebugLog): string {
                     <span class="span-name">{{ s.name }}</span>
                     <span class="span-dur" v-if="s.durationMs">{{ s.durationMs }}ms</span>
                     <span class="span-status" v-if="s.status === 'error'">❌</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div v-if="tab === 'context'" class="context-panel">
+              <div v-if="!contextSnap" class="trace-empty">未开启 contextInspector(默认开)或暂无快照。跑一轮 agent 后切回刷新。</div>
+              <template v-else>
+                <div class="ctx-overview">
+                  <div class="ctx-occupancy">
+                    <div class="ctx-bar-track" :title="`占用 ${Math.round(contextSnap.occupancy * 100)}%`">
+                      <div class="ctx-bar-fill" :class="ctxOccupancyLevel" :style="{ width: Math.min(contextSnap.occupancy * 100, 100) + '%' }"></div>
+                      <div v-if="contextSnap.thresholdRatio > 0" class="ctx-threshold-mark" :style="{ left: Math.min(contextSnap.thresholdRatio * 100, 100) + '%' }" title="压缩阈值"></div>
+                    </div>
+                    <span class="ctx-pct">{{ Math.round(contextSnap.occupancy * 100) }}%</span>
+                  </div>
+                  <div class="ctx-kv-row">
+                    <span class="ctx-kv">估算 {{ contextSnap.totalTokens }} token</span>
+                    <span class="ctx-kv" v-if="contextSnap.contextWindow">窗口 {{ contextSnap.contextWindow }}</span>
+                    <span class="ctx-kv" v-if="contextSnap.thresholdRatio > 0">阈值 {{ Math.round(contextSnap.thresholdRatio * 100) }}%</span>
+                  </div>
+                </div>
+                <div class="ctx-section-title">分类构成(近似)</div>
+                <div v-for="c in contextSnap.categories" :key="c.key" class="ctx-cat">
+                  <span class="ctx-cat-label" :title="c.label">{{ c.label }}</span>
+                  <div class="ctx-cat-bar"><div class="ctx-cat-fill" :style="{ width: Math.max(Math.round(c.pct * 100), 2) + '%' }"></div></div>
+                  <span class="ctx-cat-tokens">{{ c.tokens }} <i>({{ Math.round(c.pct * 100) }}%)</i></span>
+                </div>
+                <div v-if="contextSnap.compression" class="ctx-compression">
+                  <div class="ctx-section-title">最近压缩</div>
+                  <div class="ctx-kv-row">
+                    <span class="ctx-kv">摘要 {{ contextSnap.compression.roundsSummarized }}/{{ contextSnap.compression.roundsTotal }} 轮</span>
+                    <span class="ctx-kv">召回 {{ contextSnap.compression.roundsRecalled }}</span>
+                    <span class="ctx-kv">{{ contextSnap.compression.strategy }}</span>
                   </div>
                 </div>
               </template>
@@ -621,4 +665,26 @@ function flowNodeDetail(lg: DebugLog): string {
 .span-name { flex: 1; color: #374151; font-family: 'SF Mono', Monaco, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .span-dur { font-size: 10px; color: #6b7280; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
 .span-status { font-size: 11px; flex-shrink: 0; }
+
+/* 上下文构成视图(context-inspector) */
+.context-panel { padding: 12px; }
+.ctx-overview { margin-bottom: 14px; }
+.ctx-occupancy { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ctx-bar-track { position: relative; flex: 1; height: 10px; background: #f3f4f6; border-radius: 5px; overflow: hidden; cursor: help; }
+.ctx-bar-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+.ctx-bar-fill.green { background: #10b981; }
+.ctx-bar-fill.yellow { background: #f59e0b; }
+.ctx-bar-fill.red { background: #ef4444; }
+.ctx-threshold-mark { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #6b7280; }
+.ctx-pct { font-size: 13px; font-weight: 700; color: #1f2937; min-width: 40px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.ctx-kv-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctx-kv { font-size: 11px; color: #6b7280; background: #f9fafb; padding: 2px 8px; border-radius: 8px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.ctx-section-title { font-size: 11px; font-weight: 600; color: #6b7280; margin: 12px 0 6px; }
+.ctx-cat { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
+.ctx-cat-label { width: 130px; flex-shrink: 0; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-cat-bar { flex: 1; height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
+.ctx-cat-fill { height: 100%; background: var(--cs-primary); border-radius: 4px; }
+.ctx-cat-tokens { min-width: 76px; text-align: right; color: #6b7280; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
+.ctx-cat-tokens i { font-style: normal; color: #9ca3af; }
+.ctx-compression { margin-top: 14px; padding-top: 10px; border-top: 1px solid #f3f4f6; }
 </style>

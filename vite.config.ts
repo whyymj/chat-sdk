@@ -41,5 +41,15 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    // dev 代理:绕过浏览器 CORS。部分第三方 API(modelverse 等)的 preflight 不允许 openai SDK 自动附加的
+    // x-stainless-* 遥测头 → 浏览器直连被拒。.env 用 VITE_AI_BASE_URL=/llm/v1(同源),请求经 vite 转发到真实 API。
+    // 切换 API 提供商时改 target;仅 dev 用(库构建不用 server)。
+    proxy: {
+      '/llm': {
+        target: 'https://api.modelverse.cn',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/llm/, ''),
+      },
+    },
   },
 })

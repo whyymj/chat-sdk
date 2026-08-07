@@ -20,6 +20,8 @@ body { min-height: 100vh; background: var(--ark-bg); color: var(--ark-fg); }
   --cs-primary: var(--ark-accent);
   --cs-primary-rgb: var(--ark-accent-rgb);
   --cs-bg: var(--ark-panel);
+  --cs-bg-text: #f1f1fa;      /* 输入框文字:亮白(深背景上高对比,替代 inherit 的不确定灰) */
+  --cs-bg-muted: #9a9ab8;     /* placeholder / 提示:次亮灰 */
   --cs-bubble-ai: #2a2a4e;
   /* 思考/步骤深色(Figma 方舟专题:深灰卡片 #2c2c2c + 语义状态色) */
   --cs-reason-bg: #2c2c2c;

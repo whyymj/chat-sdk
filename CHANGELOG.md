@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+### Fixed(安全 · harden-eval-sandbox)
+- **eval_script 沙箱逃逸堵死**:`runSandboxedScript` 的 Worker 沙箱此前以**赋值覆盖**禁用网络/存储 API(`self.fetch=...`),可被 `delete self.fetch` 露出原生 fetch 外泄 transform 数据(逃逸链:原型链 `(function(){}).constructor` 取 Function → 跑任意码 → `delete self.fetch` 恢复原生 fetch → 外泄)。修复:禁用逻辑抽纯函数 `lockSandboxGlobal`(导出),用 `Object.defineProperty(configurable:false, writable:false)` 锁死 fetch/XHR/WebSocket/importScripts/indexedDB/caches/Worker/SharedWorker/EventSource/BroadcastChannel/sendBeacon —— delete/重新赋值均失败,原生 API 永久不可达;WORKER_PREAMBLE 经 `lockSandboxGlobal.toString()` 注入 Worker(单一真相源)。selftest sec-21 加纯函数锁验证;selftest 1196→1200。
+
+### Fixed(主流程审查 main-flow-audit)
+- **P0-1 压缩摘要送达 LLM**:`replaceSystem` 此前 filter 掉**所有** system 消息 → 压缩/trim 摘要(经 toLC 转 SystemMessage 落 index≥1)首轮即被剥,**从未送达 LLM**,长对话跨轮记忆静默失效。修复:只替换首部主 system,保留其余 SystemMessage。
+- **P0-2 Markdown XSS 防护**:AI 回复经 `v-html` 渲染全程无 sanitize(marked v18 默认不净化)→ `<img onerror>`/`<svg onload>` 即在宿主 origin 执行(fetchDoc 抓取的恶意文档经 LLM 回显可触发)。新增打包进库依赖 `dompurify`,`useMarkdown` 输出经 `sanitizeMarkdownHtml` 净化(剥事件属性/`javascript:` 协议,保留 `data-*` 供代码块交互);`CodePreview` 新窗口改 sandbox iframe + noopener(防同源执行 AI HTML)。
+- **P0-3 MCP 工具注入**:initDone 内 `const mcpTools` 遮蔽外层数组 → 工具 push 进局部数组、`rebuildExtraTools` 读外层空数组 → **所有 MCP 集成工具对 agent 彻底失效**(server 显示已连 + 日志谎报注入)。修复:删遮蔽声明,直接用外层数组。
+- **P0-4 清空对话 ReferenceError**:`onClear` 闭包(createChatSdk 作用域)赋值 buildCore 局部 `lastTitle`/`titleLLMDone` → 运行期 ReferenceError(storage 开 + 点清空对话必现)。修复:重置逻辑收编进 `core.resetSession()`(共享状态变更一律 AgentCore 方法)。
+- **P1-a 中文 IME 回车误发送**:handleKeydown 缺 `isComposing` 防护,中文输入法回车确认候选词即发送。前置 `if (e.isComposing || e.keyCode === 229) return`。
+- **P1-b 会话切换不停 ghost 流**:新建/切换会话不停止进行中生成 → ghost 流续烧 token + loading/排队/待确认跨会话残留。useChat 增 `reset()`,ChatDialog `handleNewSession`/`handleOpenSession` 先 reset 再委派。
+- **P1-c UI 流式绕过 core.stream**:默认 UI 流式 `fetchStream` 直给裸 `core.agent.stream`,绕过 `core.stream` 包装 → 流式事件不到 onEvent/hook + abort 不收口挂起冲突。改走 `core.stream`(drop-in)。
+- **P1-d 流式重试重复文本**:`coreModelCall` 此前 `withRetry` 包整个 run,流式迭代中途失败重试 → 从头重发已 emit 的文本 → UI 显示两遍。修复:仅 stream 启动(连接建立)走重试,迭代中失败(已吐字)不重试直接抛。
+- selftest 1189→1201(sec-23 P0-1 摘要送达 + P1-d 迭代不重试白盒 + sec-51 escapeHtmlAttr + sec-21 lockSandboxGlobal);e2e 308→311(inspect.mjs P0-3 MCP 工具真注入,in-process server fixture);browser 28 全绿;`test:size` IIFE 阈值 1.7MB→1.9MB(dompurify +95KB)。
+- ⏸ 推后:css 产物名/exports 不一致(pre-existing,集成方 `import 'page-agent-sdk/style.css'` 会 404,另立)。(P1-d 流式重试去重 + eval_script 沙箱逃逸已实施,见上)
+
+### Added
+- **上下文检查(context-inspector)**:长对话/大 JSON 场景诊断刚需 —— 看上下文什么占了最多、离压缩阈值多远。新增:
+  - `analyzeContext(messages, opts)` 纯函数(导出):对「实际发给 LLM 的消息」分类切分 + token 估算,返回 `ContextSnapshot`(totalTokens/occupancy/categories/compression)。system 段按 augmentPrompt 标记前缀**定位**切分(## 可操作数据 / ## 能力使用提示 / ## 当前主线目标 / ## 工作记忆 / 摘要/召回段);工具结果计 ToolMessage.content + AIMessage.tool_calls.args。
+  - `createContextInspectorMiddleware` 中间件(导出):`wrapModelCall` 每轮快照(采集 replaceSystem + trim 后的最终消息),经闭包持有(不进 state —— wrapModelCall 无 state update 机制)。
+  - `sdk.inspectContext()` / `inspect().context`:读最近快照;`capabilities.contextInspector` 默认开(opt-out,纯计算零 LLM 成本),`false` → undefined。
+  - DebugDrawer「📊 上下文」tab:占用进度条(色阶绿/黄/红 + 阈值线)+ 分类横向 bar + 压缩信息。
+  - ⏸ 推后:ChatDialog 常驻进度条(每轮刷新需改 useChat 事件流,DebugDrawer tab + inspectContext API 已覆盖诊断需求)。
+- selftest 1165→1189(sec-50 analyzeContext 分类/标记定位/args/占比 + 中间件 wrapModelCall 快照);e2e 303→308(inspect.mjs inspectContext + inspect().context + capability 关)。
+
+### Fixed
+- **arch-review P1-1 wrap-up 走中间件栈**:工具轮耗尽后的收口综合(wrap-up)此前直接调 `coreModelCall` 绕过中间件栈 → 收口轮 token 不计入 `sdk.usage`(sdk-events afterModel 漏计)+ automation `budget` 预算闸 + 用户自定义 `wrapModelCall`(埋点/缓存)在收口轮失效。修复:wrap-up 改走 `composeModelCall`(裸 llm 不绑工具防收口再触发工具调用)+ `runAfterModel`,与主循环 modelHandler 对齐(budget/用户中间件参与,收口 token 计入 usage)。不跑 beforeModel(收口轮不需 todos 推进,避免重渲染 system 覆盖收口提示)。budget 超限时 wrap-up 照常 aborted 中断(automation 语义,checkpoint 回退兜底)。
+- **arch-review P1-4 subagent 工具池 getter 化**:`createSubagentMiddleware`/`createSubagentsMiddleware` 此前捕获 `allTools` 装配期快照 → 运行时 `setTools`/`addTool`/MCP 动态加的工具对子 agent **不可见**。修复:`allTools` 接受 getter,createChatSdk 装配传 `() => allTools`,子 agent spawn 时取主 agent 最新工具集(与 dataOps `liveData()` / verify `root` getter 模式一致)。⏸ verify readonlyTools getter 化推后(verify+adversarial 双 opt-in,收益边缘)。
+- selftest 1161→1165(sec-23 加 P1-1 收口经中间件计数 + P1-4 subagent getter spy 白盒);e2e 303 不变。
+
 ### Added
 - **所有 demo 统一 Figma 深色紫主题**:新建 `examples/_shared/theme.css`(`--ark-*` 深色紫变量 + ChatDialog `--cs-*` 覆盖 + reset);16 demo main.ts import + App.vue 外层深色(模式 A 双栏 `.pane` / B 单栏 `.page` / C 全屏);EditableBanner `.editable-area` 改深。
 - **会话标题自动生成(session-history)**:历史列表显示**首条 user 消息内容**(截取 30 字),替代「会话 xxxxxx」。`store.updateTitle`(新)+ persistRuntime `deriveTitle`(纯函数,导出 + selftest sec-49)+ 变化才写 + switchSession/onClear 重置 lastTitle。
@@ -35,7 +64,7 @@
 - **arch-review P1-5/P1-6(切会话状态污染 + mission 清空后被历史重捕)**:
   - **P1-5 switchSession/onClear 不重置 mission/workingMemory**:`switchSession`/`onClear` 只重置 messages/vfs/todos/memory/debugLogs,缺 missionMw/workingMemoryMw → 切新会话后旧 mission goal + workingMemory 的 pin(path/hash)原样注入新会话 → 过期 hash 诱发乐观锁误冲突 / 按错误 path 写。修复:`missionMw`/`workingMemoryMw` 补 `reset()`(清 mission / 清 locatedPaths+lastHashes),`switchSession` 与 `onClear` 内调用(与现有 todos/vfs/memory 重置对齐);两中间件实例挂 `core` 对象(原仅闭包局部变量,`onClear` 经 `core.` 访问)。
   - **P1-6 `setMission({})` 清空后被历史重捕**:`beforeAgent` 仅判 `!mission` → 无法区分「从未 capture」与「被显式清空」,集成方收尾 `setMission({})` 解除锚定后,下次 send 从完整历史重新捕获含任务动词的旧 user → agent 被锚到过期目标,无告警。修复:加 `explicitlyCleared` 标记,`setMission({})` 置 true(同会话不再自动重捕),`setMission(新目标)` 与 `reset()` 撤销(显式设新目标或切会话归零后可正常 capture)。
-  - ⏸ 推后(同 change 其余项,评估后统一处理):P1-1 wrap-up 走中间件 model-call 栈(usage/budget 收口漏计)/ P1-2 并发 send 串行化(顺序安全,真并发场景少)/ P1-3 beforeReturn 门禁解耦(verify 预算语义)/ P1-4 subagent/verify 工具池 getter 化(与 setTools/MCP 动态工具协同)。
+  - ⏸ 推后(同 change 其余项):P1-1/P1-2/P1-4 已后续实施(见上各段),仅剩 **P1-3 beforeReturn 门禁解耦**评估后推迟(收益边缘 + 无低风险防死循环方案,真有用户自定义 beforeReturn 需求时重启)。
 - selftest 1130→1142(sec-35 加 P1-5 reset + P1-6 防重捕白盒 8 断言;sec-38 加 reset 白盒 4 断言);e2e 286→288(storage 加 P1-5 switchSession 后 mission 重置断言)。
 
 ### Fixed

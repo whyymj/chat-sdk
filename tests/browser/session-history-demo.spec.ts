@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { mockLlm } from './_helpers'
+import { mockLlm, fillInput, clickSend, waitForAgentIdle, clearChat } from './_helpers'
 
 /**
  * session-history-demo 浏览器 E2E:会话历史管理端到端
@@ -63,5 +63,24 @@ test.describe('session-history-demo: 新建/列表/切换/删除', () => {
     const delBefore = await page.locator('.hist-item').count()
     await page.locator('.hist-item [data-test="del-btn"]').first().click()
     await expect.poll(async () => page.locator('.hist-item').count(), { timeout: 5000 }).toBe(delBefore - 1)
+  })
+
+  test('清空对话 → UI 消息清空 + 无 ReferenceError(P0-4 resetSession 收编 onClear)', async ({ page }) => {
+    const consoleErrors: string[] = []
+    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
+    page.on('pageerror', (e) => consoleErrors.push(String(e)))
+    await fillInput(page, '你好')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 生成回复后:有 message-md
+    await page.waitForFunction(() => document.querySelectorAll('.chat-dialog .message-md').length > 0, { timeout: 5000 })
+    expect(await page.locator('.chat-dialog .message-md').count()).toBeGreaterThan(0)
+    // 清空对话(更多 → 清空)→ onClear → core.resetSession(P0-4 修复前此处抛 ReferenceError)
+    await clearChat(page)
+    await page.waitForTimeout(300)
+    // UI 消息清空
+    await expect.poll(async () => page.locator('.chat-dialog .message-md').count(), { timeout: 3000 }).toBe(0)
+    // 无 P0-4 的 ReferenceError(lastTitle 越界)
+    expect(consoleErrors.some((e) => /ReferenceError|lastTitle/i.test(e))).toBe(false)
   })
 })

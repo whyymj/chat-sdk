@@ -1,6 +1,55 @@
 // inspect 反映配置:tools / middleware / id / model / subagent / verify / mcp / 初始状态
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z, defineTool } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
+import http from 'node:http'
+import { randomUUID } from 'node:crypto'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+
+/** 起一个 in-process MCP(StreamableHTTP)server 暴露 mock_weather 工具,供 P0-3 注入测试连接。返回 { url, close }。
+ *  复用 scripts/mcp-mock-server.ts 同款 SDK server + http 集成(完整 initialize/POST/GET/DELETE),不 spawn 子进程。 */
+async function startMockMcp(port) {
+  const transports = new Map()
+  const server = http.createServer(async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', '*')
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
+    if (req.url !== '/mcp') { res.writeHead(404); res.end('mock'); return }
+    try {
+      if (req.method === 'POST') {
+        const body = await new Promise((resolve, reject) => {
+          let d = ''
+          req.on('data', (c) => (d += c))
+          req.on('end', () => { try { resolve(d ? JSON.parse(d) : undefined) } catch (e) { reject(e) } })
+          req.on('error', reject)
+        })
+        const sid = req.headers['mcp-session-id']
+        const existing = sid ? transports.get(sid) : undefined
+        if (existing) { await existing.handleRequest(req, res, body); return }
+        if (!sid && isInitializeRequest(body)) {
+          let transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID(), onsessioninitialized: (id) => transports.set(id, transport) })
+          transport.onclose = () => { if (transport.sessionId) transports.delete(transport.sessionId) }
+          const mcp = new McpServer({ name: 'e2e-mock', version: '1.0' })
+          mcp.tool('mock_weather', 'mock weather', { city: z.string() }, async () => ({ content: [{ type: 'text', text: 'sunny' }] }))
+          await mcp.connect(transport)
+          await transport.handleRequest(req, res, body)
+          return
+        }
+        res.writeHead(400); res.end(JSON.stringify({ error: '需先 initialize' })); return
+      }
+      const sid = req.headers['mcp-session-id']
+      const transport = sid ? transports.get(sid) : undefined
+      if (!transport) { res.writeHead(400); res.end('no session'); return }
+      await transport.handleRequest(req, res)
+    } catch (e) {
+      if (!res.headersSent) { res.writeHead(500); res.end(String(e)) }
+    }
+  })
+  await new Promise((r) => server.listen(port, r))
+  return { url: `http://localhost:${port}/mcp`, close: () => new Promise((r) => server.close(r)) }
+}
 
 export async function run() {
   setupEnv()
@@ -234,6 +283,24 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:inspect] P0-3 MCP 工具真注入 agent 工具表(旧实现 mcpTools 遮蔽致彻底失效)')
+  {
+    const mock = await startMockMcp(13098)
+    try {
+      const sdk = createChatSdk({ ui: false, id: 'e2e-mcp-inject', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, mcp: [{ transport: 'http', url: mock.url }] })
+      await sdk.mount()
+      const tools = sdk.inspect().tools
+      const t = tools.find((x) => x.name === 'mock_weather')
+      assert(!!t, 'P0-3 MCP 注入:mock_weather 出现在 inspect().tools(遮蔽修复前永不出现)')
+      assert(!!t && /^mcp:/.test(t.source), 'P0-3 MCP 注入:source 标 mcp:*(非 user/builtin 误标)')
+      const srv = sdk.inspect().mcp.servers[0]
+      assert(!!srv && srv.toolCount === 1, 'P0-3 MCP server 反映:1 server / toolCount=1')
+      sdk.unmount()
+    } finally {
+      await mock.close()
+    }
+  }
+
   console.log('[e2e:inspect] inspect 初始状态:todos 空 / lastCompression undefined / checkpoints undefined')
   {
     const sdk = createChatSdk({ ui: false, id: 'e2e-init-state', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
@@ -436,6 +503,34 @@ export async function run() {
     const sm = sdkSendM.inspect().mission
     assert(sm?.goal === '显式锚定目标' && sm?.explicit === true, 'send(text,{mission}) → 显式 capture(inspect().mission.explicit=true,覆盖自动 capture)')
     sdkSendM.unmount()
+  }
+
+  console.log('[e2e:inspect] inspectContext 上下文构成快照(context-inspector)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-ctx', storage: 'memory',
+      llm: stubModel({ text: '回复' }),
+      capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 'x' }, description: '页面' },
+    })
+    await sdk.mount()
+    await sdk.send('问题')
+    const snap = sdk.inspectContext()
+    assert(!!snap && snap.totalTokens > 0, 'inspectContext() → wrapModelCall 触发后返回 snapshot(含 totalTokens)')
+    assert(!!snap && Array.isArray(snap.categories) && snap.categories.length > 0, 'inspectContext() snapshot 含分类明细(按 tokens 降序)')
+    assert(!!sdk.inspect().context && sdk.inspect().context.totalTokens === snap.totalTokens, 'inspect().context 反映同一快照(totalTokens 一致)')
+    sdk.unmount()
+
+    const sdkOff = createChatSdk({
+      ui: false, id: 'e2e-ctx-off', storage: 'memory',
+      llm: stubModel({ text: 'x' }),
+      capabilities: { ...MIN_CAPS, contextInspector: false },
+    })
+    await sdkOff.mount()
+    await sdkOff.send('问')
+    assert(sdkOff.inspectContext() === undefined, 'capabilities.contextInspector:false → inspectContext() undefined(不装中间件)')
+    assert(sdkOff.inspect().context === undefined, 'capabilities.contextInspector:false → inspect().context undefined')
+    sdkOff.unmount()
   }
 
   return { pass: ctx.pass, fail: ctx.fail }
