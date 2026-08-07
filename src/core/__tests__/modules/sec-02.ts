@@ -88,22 +88,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['edit_data'], { op: 'set', jsonPath: '__proto__.x', value: '1' })
     assert(/PATH_UNSAFE/.test(r), 'edit __proto__ → PATH_UNSAFE')
 
-    // 自动快照:set/edit 前自动入栈 → list 有记录
-    r = await invoke(t['list_data_snapshots'], {})
-    assert(/#1/.test(r), 'list_data_snapshots 列出自动快照')
-
-    // 手动快照(命名检查点)
-    r = await invoke(t['snapshot_data'], { label: '检查点A' })
-    assert(/检查点A/.test(r), 'snapshot_data 手动快照')
+    // 自动快照:set/edit 前自动入栈 → history_data list 有记录(吸收已移除的 list_data_snapshots)
+    r = await invoke(t['history_data'], { list: true })
+    assert(/#1/.test(r) && /时间线/.test(r), 'history_data({list:true}) 列出自动快照(返回时间线格式,吸收 list_data_snapshots)')
 
     // restore 到 #1(初始 a=1),先破坏再回退
     appObj.cfg.a = 99999
     r = await invoke(t['restore_data'], { id: 1 })
     assert(appObj.cfg.a === 1, 'restore_data 回退到指定快照(初始 a=1)')
 
-    // restore 不入栈:已有快照(含检查点A)保留
-    r = await invoke(t['list_data_snapshots'], {})
-    assert(/检查点A/.test(r), 'restore 不入栈(已有快照保留)')
+    // restore 不入栈:已有快照保留(history_data list 仍可见)
+    r = await invoke(t['history_data'], { list: true })
+    assert(/#1/.test(r), 'restore 不入栈(history_data list 仍列出已有快照)')
 
     // get_data 支持读后代子路径(精确读局部,而非整体)
     r = await invoke(t['get_data'], { jsonPath: 'cfg.a' })

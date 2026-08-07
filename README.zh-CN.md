@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1196%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1208%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -261,7 +261,7 @@ createChatSdk({ subagents: [
 
 ### 内置工具（Agent 可调用）
 
-- **数据操作**（默认 `toolMode:'simple'`）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `describe_data` / `get_data` / `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `snapshot_data` / `list_data_snapshots` / `restore_data`
+- **数据操作**（默认 `toolMode:'simple'`）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`toolMode:'advanced'` 另暴露底层 `describe_data` / `get_data`（@deprecated，改用 read）/ `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `restore_data` / `history_data`（含 list 模式）/ `diff_data`
 - **window 查询**：`query_data`（JSONPath）/ `search_data`（模糊搜索）/ `eval_script`（沙箱脚本）
 - **抓取**：`fetch_document`
 - **DOM 读取**（2.18+,`capabilities.domInspect:true` 开,默认关）：`get_dom`（读渲染后 DOM 结构,看修改是否生效;区别于 eval_script 的结构化只读）
@@ -460,8 +460,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1196 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 311 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1208 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 309 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

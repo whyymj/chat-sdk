@@ -1,5 +1,7 @@
 # Change: session-history-management(会话历史管理:对外暴露 API + checkpoint 切会话残留修复)
 
+> 📦 **已归档(2026-08-07)**:listSessions/deleteSession/sessionId/switchSession + `sdk.sessions` 响应式 + S1 checkpoint 切会话残留修复(`importStack([])`)已实施并随 **2.24.0** 发布;browser session-history spec 4 项覆盖。renameSession + 内置 ChatDialog 侧边栏为独立新 change(Phase 4 决策推后);usage-guide 小节为可选文档(已记入收尾)。
+
 > 状态:proposal(未实施)。让集成方能实现「新建会话 + 多历史切换」侧边栏:补齐对外会话管理 API + 修 switchSession/onClear 的 checkpoint 栈残留(P1-5 同类)。
 > 关联:`2026-08-03-arch-review-p1-fixes`(P1-5 已修 mission/workingMemory 切会话残留,本 change 延续同模式修 checkpoint + 暴露会话能力)。
 

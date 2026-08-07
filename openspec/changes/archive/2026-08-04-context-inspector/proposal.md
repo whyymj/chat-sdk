@@ -1,5 +1,7 @@
 # Change: context-inspector(上下文查看面板 · 大小/分类/占比)
 
+> 📦 **已归档(2026-08-07)**:`analyzeContext` 纯函数 + `wrapModelCall` 中间件(每轮覆盖快照)+ DebugDrawer「📊 上下文」tab(进度条+分类 bar)+ `sdk.inspectContext()`/`inspect().context` + `capabilities.contextInspector`(默认开)已实施并随 **2.24.1** 发布(selftest sec-50 23 项 + e2e inspect.mjs 5 项;usage-guide 中文小节已补)。tasks.md 未勾项:ChatDialog 常驻进度条**用户拍板推后**(DebugDrawer tab + inspectContext API 已覆盖诊断需求)、browser tab 测试归手动、`HarnessState.contextSnapshot` 字段改用闭包持有(效果等价,wrapModelCall 无 state update 机制);英文 usage-guide 同步归入文档收尾。
+
 > 用户诉求(2026-08-04):「对话框增加上下文大小、分类、占比的查看面板」。
 > **状态**:proposal(未实施)。独立 change,与 `chatdialog-component-split`(ChatDialog 拆分)互补但可独立实施。**用户拍板:DebugDrawer 新 tab + 常驻进度条 / beforeModel 真实快照 / 细分类。**
 

@@ -4,7 +4,7 @@ import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
-import { createVfs, createVfsTools } from '../../backends/vfs'
+import { createVfs, createVfsTools, VFS_TOOL_NAMES } from '../../backends/vfs'
 import { createTodosMiddleware } from '../../harness/todos'
 import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
 import { createPermissionsMiddleware } from '../../harness/permissions'
@@ -69,6 +69,15 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     r = await invoke(t['vfs_read'], { path: 'a.txt', offset: 1, limit: 1 })
     assert(/LINE2/.test(r), 'vfs_read 分页(offset/limit)')
+
+    // vfs_rm 删除闭环(simplify-toolset:补「只进不出」)
+    assert(VFS_TOOL_NAMES.includes('vfs_rm'), 'VFS_TOOL_NAMES 含 vfs_rm')
+    r = await invoke(t['vfs_rm'], { path: 'a.txt' })
+    assert(/已删除/.test(r), 'vfs_rm 删除文件')
+    r = await invoke(t['vfs_read'], { path: 'a.txt' })
+    assert(/NOT_FOUND/.test(r), 'vfs_rm 后 vfs_read 报 NOT_FOUND')
+    r = await invoke(t['vfs_rm'], { path: '不存在.txt' })
+    assert(/NOT_FOUND/.test(r), 'vfs_rm 删不存在文件返回 NOT_FOUND')
 
     // 内存上限 + LRU 淘汰:maxBytes 极小,写入超限 → 淘汰到 ≤ watermark(剩 2 个,无关哪个被删)
     const store2 = createVfs({}, { maxBytes: 30 })

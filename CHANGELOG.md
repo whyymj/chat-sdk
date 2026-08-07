@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+> ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
+
+### Changed(工具面精简 · simplify-toolset)
+- **移除冗余工具 + 补 `vfs_rm`**:① `snapshot_data` / `list_data_snapshots` 移除(被 `history_data({ list: true })` 吸收——列出快照时间线元信息,等价原 list_data_snapshots;手动检查点改靠 set/edit/delete 自动快照);② `get_data` 标 `@deprecated`(保留兼容,集成方改用 `read`——等价且支持 fields/depth/分页);③ 新增 `vfs_rm({ path })` 补 vfs「只进不出」删除闭环(`VFS_TOOL_NAMES` +1,含 drafts 草稿清理);④ usageHints 补「read 按 schema 投影隐藏未声明字段」+ 「get_dom 改完数据回看渲染」(domInspect 开时)提示。`toolMode` advanced 数据工具 16→14。selftest 1204→1208(sec-03 vfs_rm + sec-02 history list);e2e 311→309(inspect.mjs expectedDataTools 16→14)。
+
 ### Fixed(安全 · harden-eval-sandbox)
 - **eval_script 沙箱逃逸堵死**:`runSandboxedScript` 的 Worker 沙箱此前以**赋值覆盖**禁用网络/存储 API(`self.fetch=...`),可被 `delete self.fetch` 露出原生 fetch 外泄 transform 数据(逃逸链:原型链 `(function(){}).constructor` 取 Function → 跑任意码 → `delete self.fetch` 恢复原生 fetch → 外泄)。修复:禁用逻辑抽纯函数 `lockSandboxGlobal`(导出),用 `Object.defineProperty(configurable:false, writable:false)` 锁死 fetch/XHR/WebSocket/importScripts/indexedDB/caches/Worker/SharedWorker/EventSource/BroadcastChannel/sendBeacon —— delete/重新赋值均失败,原生 API 永久不可达;WORKER_PREAMBLE 经 `lockSandboxGlobal.toString()` 注入 Worker(单一真相源)。selftest sec-21 加纯函数锁验证;selftest 1196→1200。
 

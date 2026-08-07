@@ -764,6 +764,16 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 
 压缩统计可在 DebugDrawer「🧬 Agent 信息」tab 的「🗜️ 上轮压缩」段查看(触发与否、摘要轮次、召回条数、策略名),排查"上下文为何变了"。
 
+#### 上下文构成查看 `inspectContext`(2.24+)
+
+长对话 + 大 JSON 场景,回答质量下降时第一诊断动作是「上下文里什么占了最多」。2.24 新增**上下文构成检查**(默认开,`capabilities.contextInspector: false` 关):
+
+- **`sdk.inspectContext()`**:返回最近一次发给 LLM 的消息列表的**分类 token 占用快照**(`ContextSnapshot`):总 token、按类目(system 主 prompt / 工具结果 / 用户 / assistant / 摘要等)的 token + 占比 + 消息数、窗口占用率(对比模型 `contextWindow`)、是否接近压缩阈值。
+- **`inspect().context`**:同一快照经 `inspect()` 暴露(供 DebugDrawer 展示);`capabilities.contextInspector: false` → `undefined`。
+- **DebugDrawer「📊 上下文」tab**:总览进度条(色阶 + 阈值线)+ 分类横向 bar + 上次压缩信息。
+
+纯 `estimateTokens` 估算,**零额外 LLM 成本**(不调模型,只对每轮 `beforeModel` 实际发送的消息分类估算)。适合诊断「为什么压缩了 / 上下文被什么撑大 / 离阈值多远」。
+
 #### 三者关系(`maxMemoryRounds` vs `contextOptions.windowRounds` vs `capabilities.summarization`)
 
 三个配置各管不同层级,易混淆,对比:

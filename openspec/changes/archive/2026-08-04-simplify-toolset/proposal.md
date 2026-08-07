@@ -1,5 +1,7 @@
 # Change: simplify-toolset(工具面冗余精简 + 遗漏补充)
 
+> 📦 **已归档(2026-08-08)**:已实施。① `history_data({list:true})` 吸收 `list_data_snapshots`(列出快照时间线);② `snapshot_data`/`list_data_snapshots` 彻底移除(advanced 16→14);③ `vfs_rm` 补「只进不出」删除闭环;④ usageHints 补 read 按 schema 投影 + get_dom 回看提示。**调整**:`get_data` 经评估**保留并标 @deprecated**(proposal 原拟移除,但 `permissions.ts`/`subagent.ts` 只读白名单 + sec-26/02/18/16 测试引用,硬删破坏大;改 @deprecated 保留 + 文档指引 read,低风险)。selftest 1208 / e2e 309 / build 全绿。
+
 > 用户诉求(2026-08-04):「内部工具是否有多余、重复的」「是否有遗漏或需要优化的」→ 系统性评估内置工具面(30+ 工具),确认 3 处功能覆盖冗余 + 1 处能力遗漏 + 若干提示优化。
 > **状态**:proposal(未实施)。**独立 change**,无前置依赖。基于对 dataOps/vfs 工具实现的逐行核对(证据见 design §1)。
 

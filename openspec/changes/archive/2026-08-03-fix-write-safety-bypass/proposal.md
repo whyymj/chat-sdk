@@ -1,5 +1,7 @@
 # Change: fix-write-safety-bypass (P0 数据安全逃逸修复)
 
+> 📦 **已归档(2026-08-07)**:P0-1(`applyPatchesToBind` 写回 `res.data`,与 `commitSetToBind` 共用真相源)+ P0-2(`parseGarbledToolCalls` DSML 强守卫标记必择 + 围栏剥离)已实施并随 **2.23.0** 发布;selftest sec-30/46 覆盖。tasks.md 未勾项为推后的 e2e 黑盒 / 已决策跳过的占比判定(proposal 决策 5)/ CHANGELOG 整理(已记入收尾任务)。
+
 > 修复 2026-08-03 架构审查(3 agent 交叉)发现的 **P0 级数据安全逃逸**。
 > **来源**:`dataOps` 写路径白名单绕过(编辑路径写回原始值)+ `createAgent` DSML 宽松解析把模型示例当真实工具调用执行。两处均可直接导致**未授权数据写入 / 原型污染**。
 > **状态**:proposal(未实施)。P0 阻塞,建议优先 apply + 独立发布(patch 版本)。

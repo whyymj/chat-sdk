@@ -134,6 +134,23 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ---
 
+## 2026-08-08 审查暂缓项(主流程/上下文审查清理)
+
+> 2026-08-08 对 `openspec/changes/` 全量核实(4 路并行 agent 对照 `src/` 代码逐项判定),13 个 change 分类后,以下 6 个为**大工程 / 耦合 / 有疑问**,暂缓推进。每项 `proposal.md`/`design.md`/`tasks.md` 保留作底稿,重启时按正常 OpenSpec 流程(先修现状核实 + apply)。
+
+| change | 暂缓理由 | 工作量 | 重启触发 |
+|---|---|---|---|
+| `harden-large-json-write` | 7 项推后清单有疑问/耦合(尤其 **A4 子路径 hash ↔ placeholder 强绑定**,先做可能被重设计推翻);A1 安全修复(draft_commit 乐观锁)+ A5(usageHints 轮次提示)已单独完成发布 | 中-大 | placeholder 落定后批次评估(A4 协同设计) |
+| `placeholder-protected-read-write` | **0% 大工程**(freeze/verbatim 强制层 + vfs 第四池 + 4 新工具 + SDK API),从零实施;且与 harden A4 协同 | 大 | 精确值保护诉求真实出现(freeze 防幻觉 / verbatim 防压缩丢字场景) |
+| `agent-driven-compression` | **0%(40 项)**,中-大工程;核心难点在 summaryLlm 两段式工具循环(绑工具 → 决策 → 回灌)+ browser mock 扩展两段式 SSE | 中-大 | 压缩质量成痛点(当前索引/LLM 摘要够用);前置 context-inspector 已就绪可随时启动 |
+| `chatdialog-component-split` | **0%(46 项)**,2-3 天纯 UI 重构;无功能价值(可拼装原子组件库需求未出现) | 大 | 集成方真实要求自建 ChatDialog 子组件 / 多套皮肤换肤 |
+| `focus-context` | **0%(29 项)**,1.5-2 天;cross-cutting 风险(wrapToolCall 拦截写工具越界,需谨慎设计 strict 边界) | 中 | 大 schema 下 LLM 越界改无关字段成真实痛点 |
+| `context-history-resilience` | proposal 待讨论(本会话新建),6 个待决策点未收敛(尤其「持久化模型:对话文本 vs 工具结果」根因决策) | 待定 | 待决策讨论收敛后定 tasks/design |
+
+**说明**:`harden-large-json-write` 的 A1/A5 已实施发布(见 CHANGELOG),仅剩 7 项推后清单;`context-history-resilience` 是本会话审查产出的新 proposal(长对话上下文韧性),非旧规划。
+
+---
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

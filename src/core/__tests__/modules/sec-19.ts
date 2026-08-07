@@ -66,7 +66,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // defineDataToolset 工厂(依赖 data 单主对象,故为工厂)
     const config = { schema: z.enum(['light', 'dark']), bind: { $dummy: true } as any, description: '主题' }
     const wt = defineDataToolset(config)
-    assert(wt.length === 16 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 16 个数据工具(11 基础 + read/write/schema_data/history_data/diff_data)')
+    assert(wt.length === 14 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 14 个数据工具(9 基础 + read/write/schema_data/history_data/diff_data;snapshot_data/list_data_snapshots 已移除)')
 
     // selectBuiltinTools:默认全装(dataOps + fetch)
     const dataOps = createDataOps(config)
@@ -137,17 +137,17 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[filterByToolMode]')
   {
     const config = { schema: z.any(), bind: { x: 1 } as any, description: 'd' }
-    const all = createDataOps(config)  // 16 个工具
+    const all = createDataOps(config)  // 14 个工具(移除 snapshot_data/list_data_snapshots)
     const names = (ts: any[]) => ts.map((t) => t.name)
-    // advanced → 全暴露(16)
+    // advanced → 全暴露(14)
     const adv = filterByToolMode(all, 'advanced')
-    assert(adv.length === 16 && adv.length === all.length, 'advanced → 全暴露(16 工具)')
+    assert(adv.length === 14 && adv.length === all.length, 'advanced → 全暴露(14 工具;simplify-toolset 移除 snapshot/list)')
     // simple → 隐藏 9 个底层(describe/get/set/edit/delete/schema_data/snapshot/list/diff),保留 read/write + query/search/eval/restore/history(7)
     const simple = filterByToolMode(all, 'simple')
     const simpleNames = names(simple)
     assert(simple.length === 7, 'simple → 7 工具(evolve 精简:去 snapshot/list,补 history_data;diff_data 只 advanced)')
     assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'restore_data', 'history_data'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + query/search/eval/restore/history')
-    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 5 + schema_data + snapshot/list + diff_data(evolve 精简)')
+    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 5 + schema_data + diff_data(snapshot_data/list_data_snapshots 已彻底移除)')
     // minimal → 只 read/write
     const minimal = filterByToolMode(all, 'minimal')
     assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')

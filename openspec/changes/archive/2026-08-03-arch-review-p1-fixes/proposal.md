@@ -1,5 +1,7 @@
 # Change: arch-review-p1-fixes (P1 架构债修复)
 
+> 📦 **已归档(2026-08-07)**:P1-1/2/4/5/6 核心实施并随 **2.24.1** 发布(commit 6ec80b4 wrap-up 中间件栈 + subagent getter 化等);P1-3 为有文档的决策推迟。tasks.md 未勾项为明确推后的 e2e/边缘项(verify readonlyTools getter / setTools+spawn e2e / wrap-up usage e2e),归档后不再逐项回填。
+
 > 修复 2026-08-03 架构审查(3 agent 交叉)发现的 **P1 级架构债 / 边界问题**(6 项 + P2 优化附注)。P0 数据安全逃逸在独立 change:`2026-08-03-fix-write-safety-bypass`。
 > **状态**:proposal(未实施)。P1,按项独立 commit,可分批推进。
 

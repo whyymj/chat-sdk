@@ -96,7 +96,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // controller 挂在工具数组上(不可枚举)
     const controller = (tools as any).controller
     assert(!!controller, 'createDataOps 返回的工具数组上挂有 controller')
-    assert(Array.isArray(tools) && tools.length === 16, 'controller 不可枚举不影响数组长度/遍历(仍 16 工具)')
+    assert(Array.isArray(tools) && tools.length === 14, 'controller 不可枚举不影响数组长度/遍历(仍 14 工具;simplify-toolset 移除 snapshot/list)')
 
     // get() 返回当前 config
     const cfg = controller.get()
@@ -123,8 +123,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['get_data'], { jsonPath: 'count' })
     assert(/10/.test(r), 'update 换 bind 后 get_data 读新 bind 值')
 
-    // set 后快照被清:list_data_snapshots 无历史
-    r = await invoke(t['list_data_snapshots'], {})
-    assert(/#0|空|无/.test(r) || !/#1/.test(r), 'set/update 换 config 后清快照(list 无历史)')
+    // set 后快照被清:history_data list 无历史
+    r = await invoke(t['history_data'], { list: true })
+    assert(/无|空/.test(r) || !/#1/.test(r), 'set/update 换 config 后清快照(history list 无历史)')
   }
 }

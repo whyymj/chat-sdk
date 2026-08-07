@@ -17,6 +17,7 @@ type HintCapabilityFlags = {
   subagent?: boolean
   humanConfirm?: boolean
   inspectEnv?: boolean
+  domInspect?: boolean
   draftWrite?: boolean
   todoDeps?: boolean
   /** 预声明子 agent(用于注入"规划-反思-执行"路由提示;空则不注入) */
@@ -51,6 +52,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
           hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write 改值两姿势:① 改单个字段/子路径用 write({patch:{op:"set", jsonPath:"路径.字段", value:新值}})——patch.value 就是该字段的新值(类型匹配:string 直传字符串、number 传数字、对象传对象),不要包成 {字段:值} 对象(字段名已在 jsonPath);也兼容 write({value:新值, patch:{op,jsonPath}}) 顶层 value(向后兼容,但优先 patch.value,避免与整体 set 的 value 混淆);② 替换整个对象用 write({value:{整个新对象}})。op:set 设值 / remove 删 / merge 合并对象 / append 追加数组;批量多改动 write({patches:[{op,jsonPath,value},...]});删子路径 write({patch:{jsonPath:"路径"}, del:true})。写入自动经 schema 校验(失败不写,按错误提示改值类型/形状后重试)+ 自动存快照(出错可用 restore_data 回退)。')
           hints.push('修改大对象/数组优先用 write 的 patch 增量(只发改动部分),避免整体重传被 max_tokens 截断致 JSON 不完整。')
           hints.push('读大数组(read 返回 hasMore=true)用 read({jsonPath,offset,limit}) 分页(offset+=limit 续读,默认 limit=50);一次读多个不相关子路径用 read({jsonPaths:[...]}) 省轮次;复杂 patches 改动先 write({patches,dryRun:true}) 预检(走完整校验不落盘)。')
+          hints.push('read/describe 返回按 schema 投影:仅 schema 声明的字段可见(未声明字段自动隐藏,防误操作);要操作某字段需集成方在 schema 声明,查任意路径完整约束用 schema_data({jsonPath})。')
           hints.push('查历史快照值(看上一版长啥样 / 冲突诊断 / 用户问"刚才改了啥")用 history_data({id?,jsonPath?})(只读不改当前);对比当前与历史快照的差异需切 advanced 用 diff_data(返回结构化 path→from/to)。')
           hints.push('在大数组里按条件筛选用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素 path/index;定位后用 write patch 改。找名字记不清的元素用 search_data(substring/regex/fuzzy)。批量过滤/映射/聚合/重写大数组用 eval_script(沙箱脚本,mode=query 只读/transform 落地)。')
         } else {
@@ -67,6 +69,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       }
       if (rc.subagent) hints.push('独立子任务可 spawn_agent 委派(只读工具,过程不占主上下文)。')
       if (rc.inspectEnv) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
+      if (rc.domInspect) hints.push('改完数据想确认渲染是否生效(或定位元素/辅助 UI 设计问答)用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。配合宿主 actions(save_draft/publish 等)形成"改数据→get_dom 看渲染→触发动作"闭环。')
       if (rc.draftWrite) hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
       if (rc.draftWrite) hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=10 可能触顶被 while 截断导致草稿写不完;目标组件数大时集成方应在 createChatSdk 配 maxToolRounds ≥ 20(或按 N+5 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')

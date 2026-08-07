@@ -178,8 +178,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     parsed = JSON.parse(r)
     assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_data: 命中 owner.city')
 
-    // 工具数量:16(describe/get/set/edit/delete/snapshot/list/restore/history/query/search/eval/read/write/schema_data/diff_data)
-    assert(tools.length === 16, 'createDataOps: 含 16 个工具(11 基础 + read/write/schema_data/history_data/diff_data)')
+    // 工具数量:14(describe/get/set/edit/delete/restore/history/query/search/eval/read/write/schema_data/diff_data;snapshot/list 已移除)
+    assert(tools.length === 14, 'createDataOps: 含 14 个工具(9 基础 + read/write/schema_data/history_data/diff_data;simplify-toolset 移除 snapshot/list)')
 
     // eval_script 工具存在(装配检查;node 无 Worker,不实际跑)
     assert(!!t['eval_script'], 'eval_script 工具已装配')

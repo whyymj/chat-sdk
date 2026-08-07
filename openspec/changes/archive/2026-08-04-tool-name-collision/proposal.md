@@ -1,5 +1,7 @@
 # Change: tool-name-collision(自定义 tool 与内置 tool 重名处理)
 
+> 📦 **已归档(2026-08-07)**:`dedupeTools`(`src/core/sdk/toolRegistry.ts`)装配期跨最终工具集按名去重(重名=后注册者覆盖+warn)+ `addTool` 同名覆盖(含 builtin,warn)+ `removeTool` 仅删用户工具(builtin 不动)已实施并随 **2.23.0** 发布(selftest sec-47 白盒覆盖;CLAUDE.md 架构段已补)。tasks.md 未勾项:removeTool 删内置是边缘 backlog(集成方用 `capabilities` 禁内置)、inspect/e2e 重名断言推后。
+
 > 用户诉求(2026-08-04,承接「page-agent 架构对比」§3 发现):自定义 tool 与内置 tool 重名当前是**未定义行为**,需对齐 page-agent 的「显式覆盖」语义。
 > **状态**:proposal(未实施)。**独立 change**,无前置依赖。基于对源码装配链路的逐行核对(证据见 design §2)。
 

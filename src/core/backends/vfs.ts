@@ -245,7 +245,7 @@ function now(): number {
 }
 
 /** vfs 内置工具名(供 createChatSdk 标 source=builtin;经 createVfsMiddleware 注入,默认会落到 'user' 语义错)。新增 vfs 工具时同步此处 */
-export const VFS_TOOL_NAMES = ['vfs_read', 'vfs_write', 'vfs_edit', 'vfs_ls', 'vfs_glob', 'vfs_grep', 'vfs_json_read', 'vfs_json_patch'] as const
+export const VFS_TOOL_NAMES = ['vfs_read', 'vfs_write', 'vfs_edit', 'vfs_ls', 'vfs_glob', 'vfs_grep', 'vfs_json_read', 'vfs_json_patch', 'vfs_rm'] as const
 
 /** 基于 store 构建 vfs 工具集 */
 export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
@@ -481,7 +481,23 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
     },
   )
 
-  return [vfsRead, vfsWrite, vfsEdit, vfsLs, vfsGlob, vfsGrep, vfsJsonRead, vfsJsonPatch]
+  const vfsRm = tool(
+    async ({ path }) => {
+      const key = normalize(path)
+      if (!store.files[key]) {
+        return toolError({ code: 'NOT_FOUND', path, message: `未找到文件 "${path}",无需删除`, hint: '用 vfs_ls 查看虚拟工作区文件列表' })
+      }
+      delete store.files[key]
+      return `已删除 ${path}`
+    },
+    {
+      name: 'vfs_rm',
+      description: '删除虚拟工作区文件(清理中间产物 / drafts 下草稿,补「只进不出」的闭环)。不存在返回 NOT_FOUND。',
+      schema: z.object({ path: z.string().describe('要删除的文件路径') }),
+    },
+  )
+
+  return [vfsRead, vfsWrite, vfsEdit, vfsLs, vfsGlob, vfsGrep, vfsJsonRead, vfsJsonPatch, vfsRm]
 }
 
 /** vfs 中间件:beforeAgent 把 store.files 注入 state(共享引用,工具改即 state 改) */

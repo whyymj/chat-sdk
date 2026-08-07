@@ -95,7 +95,7 @@ export interface DataOpsController {
 
 export type ToolMode = 'simple' | 'advanced' | 'minimal'
 
-const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'snapshot_data', 'list_data_snapshots', 'diff_data', 'draft_write', 'draft_commit'])
+const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data', 'draft_write', 'draft_commit'])
 const MINIMAL_ALLOWED = new Set(['read', 'write'])
 
 export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
@@ -311,7 +311,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'get_data',
       description:
-        '读取主数据的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改前先 read/get 拿 hash,写入时传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"。jsonPath 可选:读整个主数据不传,读子路径传(如 components.0.text)。',
+        '@deprecated(改用 read,等价且支持 fields/depth/分页/多路径;get_data 仅为兼容保留)。读取主数据的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改前先 read/get 拿 hash,写入时传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"。jsonPath 可选:读整个主数据不传,读子路径传(如 components.0.text)。',
       schema: z.object({ jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);不传则读整个主数据') }),
     },
   )
@@ -416,36 +416,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
   )
 
-  const snapshotData = tool(
-    async ({ label }) => {
-      const id = pushSnapshot('manual', label)
-      return `已为主数据创建快照 #${id}${label ? `(${label})` : ''}。可用 list_data_snapshots 查看、restore_data 回退。`
-    },
-    {
-      name: 'snapshot_data',
-      description: '为主数据手动创建一个命名快照(检查点)。set/edit/delete 也会自动存快照。',
-      schema: z.object({ label: z.string().optional().describe('可选的快照标签,便于识别') }),
-    },
-  )
-
-  const listDataSnapshots = tool(
-    async () => {
-      if (!snapshots.length) return '无快照。set/edit/delete 会自动存快照,也可用 snapshot_data 手动创建检查点。'
-      const lines = snapshots.map((s) => {
-        const size = JSON.stringify(s.value ?? '').length
-        const time = new Date(s.ts).toLocaleTimeString('zh-CN', { hour12: false })
-        return `  #${s.id} [${s.op}]${s.label ? ` "${s.label}"` : ''} ${time} 修改前≈${size}字符`
-      })
-      return `主数据快照(共 ${snapshots.length} 条):\n${lines.join('\n')}`
-    },
-    { name: 'list_data_snapshots', description: '列出主数据的快照时间线(序号、操作类型、标签、大小)。', schema: z.object({}) },
-  )
+  // snapshot_data / list_data_snapshots 已移除(simplify-toolset):被 history_data({ list: true }) 吸收;
+  // 手动检查点改靠 set/edit/delete 自动快照(set/edit/delete 前自动存,restore_data 可回退)。
 
   const restoreData = tool(
     async ({ id }) => {
-      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'set/edit/delete 会自动存快照;也可先 snapshot_data 手动创建检查点' })
+      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'set/edit/delete 会自动存快照;或 history_data({list:true}) 查看可用快照' })
       const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
-      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 list_data_snapshots 查看可用快照序号' })
+      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
       const chk = schema.safeParse(entry.value)
       if (!chk.success) return toolError({ code: 'SNAPSHOT_SCHEMA_INVALID', message: `快照 #${entry.id} 的值不符合当前 schema,无法回退`, hint: 'schema 可能已变更;该快照已过期,选其他快照或重新设置', details: formatZodIssues(chk.error.issues) })
       restoreLive(bindRef, deepClone(entry.value))
@@ -456,17 +434,27 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
     {
       name: 'restore_data',
-      description: '把主数据回退到某个快照(就地还原,保留响应式)。不传 id 则回退最近一次(快速回退)。可用 list_data_snapshots 查看快照列表。',
+      description: '把主数据回退到某个快照(就地还原,保留响应式)。不传 id 则回退最近一次(快速回退)。可用 history_data({list:true}) 查看快照列表。',
       schema: z.object({ id: z.number().int().optional().describe('指定快照序号;不传则回退最近一次') }),
     },
   )
 
   const historyData = tool(
-    async ({ id, jsonPath }) => {
-      // 只读查看快照(填 list_data_snapshots 元信息与 restore_data 破坏性回退之间的空档),不回退当前 bind
-      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无历史快照可查看', hint: 'set/edit/delete 会自动存快照;也可先 snapshot_data 手动创建检查点' })
+    async ({ id, jsonPath, list }) => {
+      // list 模式:返回快照时间线元信息(吸收已移除的 list_data_snapshots;手动检查点 snapshot_data 已移除,靠 set/edit/delete 自动快照)
+      if (list) {
+        if (!snapshots.length) return '无快照。set/edit/delete 会自动存快照。'
+        const lines = snapshots.map((s) => {
+          const size = JSON.stringify(s.value ?? '').length
+          const time = new Date(s.ts).toLocaleTimeString('zh-CN', { hour12: false })
+          return `  #${s.id} [${s.op}]${s.label ? ` "${s.label}"` : ''} ${time} 修改前≈${size}字符`
+        })
+        return `主数据快照时间线(共 ${snapshots.length} 条,默认最近一次):\n${lines.join('\n')}\n用 history_data({id}) 查看某条快照内容;restore_data({id}) 回退;diff_data({snapshotId}) 对比差异。`
+      }
+      // 只读查看快照(填列表元信息与 restore_data 破坏性回退之间的空档),不回退当前 bind
+      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无历史快照可查看', hint: 'set/edit/delete 会自动存快照;或 history_data({list:true}) 查看可用序号' })
       const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
-      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '不传 id 查看最近一次;或用 list_data_snapshots(advanced) 查看可用序号' })
+      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '不传 id 查看最近一次;或 history_data({list:true}) 查看可用序号' })
       let val: unknown = deepClone(entry.value)
       const jp = jsonPath || ''
       if (jp) {
@@ -482,10 +470,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
     {
       name: 'history_data',
-      description: '只读查看某次快照(默认最近一次)的内容,不回退当前主数据。看上一版长啥样而不影响当前(冲突诊断/verify 自纠/用户问"刚才改了啥")。可选 id 指定快照序号、jsonPath 只看子路径(按 schema 投影)。',
+      description: '查看主数据快照(只读,不回退当前)。① list:true 列出快照时间线(序号/操作/标签/时间/大小,等价原 list_data_snapshots);② 不传或传 id 查看某次快照内容(默认最近一次),可选 jsonPath 只看子路径(按 schema 投影)。看上一版长啥样而不影响当前(冲突诊断/verify 自纠/用户问"刚才改了啥")。对比差异用 diff_data。',
       schema: z.object({
-        id: z.number().int().optional().describe('快照序号;不传则最近一次'),
+        id: z.number().int().optional().describe('快照序号;不传则最近一次(list:true 时忽略)'),
         jsonPath: z.string().optional().describe('只看快照的某子路径(相对主数据根);不传则整个快照'),
+        list: z.boolean().optional().describe('true 则列出快照时间线元信息(序号/操作/标签/时间/大小);不传则查看单条快照内容'),
       }),
     },
   )
@@ -919,7 +908,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
   const tools: StructuredToolInterface[] = [
     describeData, getData, setData, editData, deleteData,
-    snapshotData, listDataSnapshots, restoreData, historyData,
+    restoreData, historyData,
     queryData, searchData, evalScript,
     readSlot, writeSlot, schemaData, diffData,
     ...draftTools,
