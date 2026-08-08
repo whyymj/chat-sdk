@@ -92,5 +92,37 @@ export async function run() {
   assert(!sdkOff.inspect().middleware.includes('focus'), 'capabilities.focus:false → middleware 不含 focus')
   sdkOff.unmount()
 
+  console.log('[e2e:focus] 持久化 · switchSession 往返 + restore 失效丢弃 + setLlm 保留')
+  const sdkP = createChatSdk({
+    ui: false, id: 'e2e-focus-persist', storage: 'memory', llm: FAKE_LLM,
+    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' }, toolMode: 'advanced',
+  })
+  await sdkP.mount()
+  const origId = sdkP.sessionId
+  // setFocus + switchSession 往返:切走(persist)→ 新会话 reset → 切回(restore)
+  sdkP.setFocus({ path: 'components.0', label: '导航' })
+  await sdkP.switchSession()
+  assert(sdkP.getFocus() === undefined, 'persist: switchSession 切到新会话 → focus reset(不污染)')
+  await sdkP.switchSession(origId)
+  assert(sdkP.getFocus()?.path === 'components.0' && sdkP.getFocus()?.label === '导航', 'persist: 切回原会话 → focus 还原(path+label)')
+  assert(sdkP.inspect().focus?.path === 'components.0', 'persist: inspect().focus 反映还原的焦点')
+  // clearFocus 往返:不持久化为焦点
+  sdkP.clearFocus()
+  await sdkP.switchSession()
+  await sdkP.switchSession(origId)
+  assert(sdkP.getFocus() === undefined, 'persist: clearFocus 后往返 → 不恢复(未持久化为焦点)')
+  // restore 失效丢弃:setData 改 schema 使 path 失效 → 切回 restore 时丢弃(决策A)
+  sdkP.setFocus({ path: 'components.1' })
+  await sdkP.switchSession()
+  sdkP.setData({ schema: z.object({ title: z.string() }), bind: { title: '新' }, description: '无 components' })
+  await sdkP.switchSession(origId)
+  assert(sdkP.getFocus() === undefined, 'persist: restore 时 path 失效(schema 变无 components)→ 丢弃(决策A)')
+  // setLlm 后 focus 保留(setLlm 不碰 focusMw)
+  sdkP.setData({ schema, bind, description: '页面' })
+  sdkP.setFocus({ path: 'components.0' })
+  try { sdkP.setLlm(FAKE_LLM) } catch {}
+  assert(sdkP.getFocus()?.path === 'components.0', 'persist: setLlm 后 focus 保留(setLlm 不碰 focusMw)')
+  sdkP.unmount()
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

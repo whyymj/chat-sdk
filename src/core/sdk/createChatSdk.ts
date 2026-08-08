@@ -929,6 +929,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           maxDepth: subOpts?.maxDepth,
           maxParallel: subOpts?.maxParallel,
           debug: options.debug,
+          // focus-auto-switch:子 agent 继承主焦点(focusMw/liveData 在该闭包可见)
+          getFocus: () => focusMw.getFocus(),
+          getSchema: () => liveData()?.schema ?? null,
         })
 
   // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
@@ -936,7 +939,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocus: () => focusMw.getFocus(), getSchema: () => liveData()?.schema ?? null })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -1196,6 +1199,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // context-persist-resilience 功能A:恢复 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;reset 在 applySnapshot 前,恢复值不被清)
       if (snap.mission && useMission) missionMw.setMission(snap.mission)
       if (snap.workingMemory && useWorkingMemory) workingMemoryMw.restore(snap.workingMemory)
+      // focus-auto-switch:恢复 focus(刷新/切会话后聚焦状态保留);path 经 getSchemaAtPath 校验,schema 变化失效则丢弃(决策A,与 sdk.setFocus 单一真相)
+      if (snap.focus && useFocus) {
+        const focusSchema = liveData()?.schema
+        if (focusSchema && getSchemaAtPath(focusSchema, snap.focus.path)) {
+          focusMw.setFocus(snap.focus)
+        } else if (options.debug) {
+          console.warn('[page-agent-sdk][focus] 恢复的焦点 path 已失效(schema 变化/无 schema),丢弃:', snap.focus.path)
+        }
+      }
       // context-persist-resilience 功能B:加载兜底 GC —— 清历史孤儿(旧存档漏网 / 上轮 GC 漏的);新会话无孤儿则空操作
       gcVfsOrphans()
       // 注:用户创建的 skill 不再随 SessionSnapshot 持久化,由独立 SkillStore 管理(见 loadUserSkillsFromStore)
@@ -1332,6 +1344,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (core.sessionId && store) {
         if (useMission) { const m = missionMw.getMission(); if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>) }
         if (useWorkingMemory) { const wm = workingMemoryMw.getWorkingMemory(); if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>) }
+        // focus-auto-switch:切走前 persist focus(有值存值;clearFocus 后存 null 覆盖清除)
+        if (useFocus) { const f = focusMw.getFocus(); void store.save(agentId, core.sessionId, { focus: f ?? null } as Partial<SessionSnapshot>) }
       }
       vfsStore.flush?.()
       await store.flush()
@@ -1751,6 +1765,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     if (useWorkingMemory) {
       const wm = workingMemoryMw.getWorkingMemory()
       if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>)
+    }
+    // focus-auto-switch:持久化 focus(有值存值;clearFocus 后存 null 覆盖清除,防旧值残留被下次 restore)
+    if (useFocus) {
+      const f = focusMw.getFocus()
+      void store.save(agentId, core.sessionId, { focus: f ?? null } as Partial<SessionSnapshot>)
     }
     // automation 断点续跑:持久化 checkpoint 栈 + 累计 usage(刷新/崩溃后恢复,长任务可续跑;仅 automation 开启时写,省空间)
     if (useAutomation && checkpointMgr) {

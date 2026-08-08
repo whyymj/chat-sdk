@@ -73,10 +73,12 @@ export interface FocusController {
 export interface FocusMiddlewareOptions {
   /** 取当前主数据 schema 的 getter(适配 sdk.setData 运行时替换;取子树视野用;path 校验在 createChatSdk 层) */
   getSchema: () => ZodType | null | undefined
+  /** 构造时初始焦点(子 agent 继承主 agent 焦点用;主 agent 不传,靠 set_focus 工具/sdk.setFocus 后续设) */
+  initialFocus?: Focus
 }
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
-  let focus: Focus | undefined
+  let focus: Focus | undefined = opts.initialFocus
 
   const mw: Middleware & FocusController = {
     name: 'focus',

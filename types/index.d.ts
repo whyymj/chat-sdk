@@ -477,6 +477,8 @@ export interface SessionSnapshot {
   mission?: Mission;
   /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
   workingMemory?: WorkingMemory;
+  /** 上下文聚焦焦点(focus-auto-switch:刷新/切会话后聚焦状态保留;capabilities.focus 开启时写入;null=清除标记) */
+  focus?: Focus | null;
 }
 export type StorageEvent =
   | { type: 'degraded'; reason: string }

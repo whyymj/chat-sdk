@@ -23,6 +23,9 @@ import { runPool } from '../utils/pool'
 import type { StreamEvent } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
+import { createFocusMiddleware } from './focus'
+import type { Focus } from './state'
+import type { ZodType } from 'zod'
 
 /** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
 type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' }>
@@ -63,6 +66,10 @@ export interface SubagentOptions {
   debug?: boolean
   /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
   writablePaths?: string[]
+  /** 读主 agent 当前焦点(focus-auto-switch:子 agent 继承主焦点 → 构造 initialFocus) */
+  getFocus?: () => Focus | undefined
+  /** 取主数据 schema getter(focus-auto-switch:子 focus 中间件做视野收敛 + path 校验用;透传主 liveData schema) */
+  getSchema?: () => ZodType | null | undefined
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -159,6 +166,11 @@ async function runSubagent(
   }
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
+  // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同一焦点,三层收敛;主未聚焦 → undefined 不装,零回归)
+  const inheritedFocus = opts.getFocus?.()
+  const childFocusMw = inheritedFocus
+    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), initialFocus: inheritedFocus })
+    : undefined
   // harden-context-resilience M3:从 llm 提取 model 名查表得 contextWindow/maxOutputTokens
   // (BaseChatModel 实例无 contextWindow 字段;不传则 createAgent 把实例 model 误判默认 gpt-3.5→16K,offload/压缩阈值全错算)
   const subModel = isChatModel(opts.llm)
@@ -199,6 +211,7 @@ async function runSubagent(
     middleware: [
       ...(opts.skills?.length ? [createSkillsMiddleware(opts.skills)] : []),
       ...childMiddleware,
+      ...(childFocusMw ? [childFocusMw] : []),
     ],
     maxToolRounds: opts.maxToolRounds ?? DEFAULT_CHILD_ROUNDS,
     onLog, // 子 agent 日志下沉 → spawn 工具转发到主 debugLogs(带 source 标签)
@@ -331,6 +344,10 @@ export interface SubagentsMiddlewareOptions {
   llm: SubagentLlmConfig | BaseChatModel
   /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
+  /** 读主 agent 当前焦点(focus-auto-switch:预声明子 agent 同样继承主焦点) */
+  getFocus?: () => Focus | undefined
+  /** 取主数据 schema getter(focus-auto-switch:透传给子 focus 中间件) */
+  getSchema?: () => ZodType | null | undefined
   debug?: boolean
 }
 
@@ -351,6 +368,9 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     maxToolRounds: config.maxToolRounds,
     debug: main.debug,
     ...(config.writablePaths?.length ? { writablePaths: config.writablePaths } : {}),
+    // focus-auto-switch:预声明子 agent 同样继承主焦点 + schema
+    ...(main.getFocus ? { getFocus: main.getFocus } : {}),
+    ...(main.getSchema ? { getSchema: main.getSchema } : {}),
   }
 }
 

@@ -15,6 +15,12 @@
 - **预防口径**:H1 `trimContextIfNeeded` 改 token 口径 + 单轮 ≤60% 窗口复查;H2 `compress` 组装后算 totalTokens 仍超 warn。
 - 新增导出 `isContextLengthError` / `MIN_CONTEXT_WINDOW`;selftest 1295→1342 / e2e 349→353。
 
+### Added(focus 自动切换 · focus-auto-switch)
+- **usageHints focus 引导(模块1)**:advanced + capabilities.focus 开 → 注入「上下文聚焦」段(局部任务→`set_focus` / 全局任务→不聚焦 / 完成→`clear_focus` / 先 read 定位 path),门控 `rc.focus && !simple`(同 set_focus 工具暴露)。`HintCapabilityFlags` 补 `focus?`。
+- **focus 持久化(模块2)**:`SnapshotKind` 加 `'focus'`(照抄 mission,泛 kind 迭代自动覆盖);createChatSdk `applySnapshot`(经 `getSchemaAtPath` 校验 path 失效丢弃=决策A,与 `sdk.setFocus` 单一真相)/ `persistRuntime`(`f ?? null` 覆盖清除)/ `switchSession` 切走前补存 三处;`SessionSnapshot.focus` 允许 `null`(清除标记,防 clearFocus 后旧值残留)。
+- **子 agent 继承(模块3)**:主 agent 聚焦 → `spawn_agent`/`spawn_agents`/预声明 `use_<id>` 子 agent 默认继承同一焦点(`createFocusMiddleware` `initialFocus` 构造参数,三层收敛);主未聚焦 → 子 agent 无 focus 中间件(零回归);`SubagentOptions.getFocus`/`getSchema` 透传主 `liveData` schema。
+- selftest 1342→1358(sec-56 usageHints 9 + sec-57 storage 4 + sec-54 initialFocus 3)/ e2e 353→362(focus 持久化 6 + subagents 装配 3);spawn 端到端(子 systemPrompt 含焦点)manual/deferred。
+
 ### Added(上下文聚焦 · focus-context)
 - **上下文聚焦 Focus(指定组件精修)**:多组件页面精修其中一个时,聚焦后 agent 的**目标 / 视野 / 范围三层收敛**到单组件子树,避免改到别处。会话级焦点 `{ path, label? }`(path=jsonPath 锚点,如 `components.3`),opt-in(需 `setFocus` 才生效,默认不聚焦行为与现状完全一致,向后兼容)。
   - **三层收敛**:① 目标提示(augmentPrompt 注入「## 当前精修目标」);② 视野收敛(注入 `getSchemaAtPath(schema, path)` 子树 schema 描述,LLM 每轮只看该组件结构);③ 范围收紧 **strict**(wrapToolCall 对写工具拦截,`jsonPath` 不以 `focus.path` 为前缀 → `PATH_DENIED` 越界回灌自纠;读工具不限)。**pin 段天然跨压缩**(focus 在中间件 state 不在 messages,同 mission/workingMemory)。

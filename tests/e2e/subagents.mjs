@@ -1,5 +1,5 @@
 // 子 agent:预声明 subagents → middleware + 详细配置可传
-import { setupEnv, createAssert, FAKE_LLM, createChatSdk } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, createChatSdk, z } from './_helpers.mjs'
 
 export async function run() {
   setupEnv()
@@ -41,6 +41,27 @@ export async function run() {
     })
     await sdk.mount()
     assert(sdk.inspect().middleware.includes('subagents'), 'subagents 预声明含详细配置 → subagents 中间件装载')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:subagents] focus 继承装配(主 setFocus + getFocus/getSchema 透传链 + 中间件栈不破坏)')
+  {
+    // 主 setFocus 后,getFocus/getSchema 透传链注入子 agent 配置(spawn 时子 agent 经 initialFocus 继承;此处验装配层不报错)
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-sub-focus', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false },
+      data: {
+        schema: z.object({ components: z.array(z.object({ type: z.string(), props: z.object({ title: z.string() }) })) }),
+        bind: { components: [{ type: 'nav', props: { title: '导航' } }] },
+        description: '页面',
+      },
+      toolMode: 'advanced',
+      subagents: [{ id: 'worker', description: '工作者' }],
+    })
+    await sdk.mount()
+    assert(sdk.setFocus({ path: 'components.0' }).ok === true, 'subagent+focus: 主 setFocus → ok(getFocus/getSchema 透传链装配正确)')
+    assert(sdk.getFocus()?.path === 'components.0', 'subagent+focus: getFocus 反映主焦点')
+    assert(sdk.inspect().middleware.includes('subagents'), 'subagent+focus: 子 agent 中间件栈仍含 subagents(继承是运行态,装配不破坏)')
     sdk.unmount()
   }
 

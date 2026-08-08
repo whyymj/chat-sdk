@@ -14,7 +14,7 @@
  *   不同会话并行。debouncedSave 被同 kind 后续 save 取代时立即 resolve 旧 Promise(不挂起)。
  */
 import type { AgentMessage, TokenUsage } from '../types'
-import type { VfsFile, Todo, Mission, WorkingMemory } from '../harness/state'
+import type { VfsFile, Todo, Mission, WorkingMemory, Focus } from '../harness/state'
 import { makeId } from '../utils/id'
 
 // ===== 默认值 =====
@@ -28,8 +28,8 @@ const EVICT_DELAY_MS = 300
 const META_KIND = '__meta__'
 const KEY_PREFIX = 'v:1'
 
-type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage' | 'mission' | 'workingMemory'
-const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage', 'mission', 'workingMemory']
+type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage' | 'mission' | 'workingMemory' | 'focus'
+const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage', 'mission', 'workingMemory', 'focus']
 
 // ===== 数据结构 =====
 export interface SessionMeta {
@@ -56,6 +56,8 @@ export interface SessionSnapshot {
   mission?: Mission
   /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
   workingMemory?: WorkingMemory
+  /** 上下文聚焦焦点(focus-auto-switch:刷新/切会话后聚焦状态保留;capabilities.focus 开启时写入;null=清除标记,clearFocus 后 persist 覆盖防旧值残留) */
+  focus?: Focus | null
 }
 
 /** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)

@@ -133,4 +133,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(prompt.includes('当前精修目标'), 'focus 无 schema → 目标段仍注入')
     assert(!prompt.includes('焦点子树结构'), 'focus 无 schema → 跳过视野段(不渲染子树)')
   }
+
+  // ===== initialFocus 构造参数(focus-auto-switch Phase 3:子 agent 继承主焦点)=====
+  {
+    const schema = z.object({ components: z.array(z.object({ type: z.string() })) })
+    // 构造即带焦点(无需 setFocus)—— 子 agent 继承时用 initialFocus 一次到位
+    const mw = createFocusMiddleware({ getSchema: () => schema, initialFocus: { path: 'components.1', label: '导航' } })
+    assert(mw.getFocus()?.path === 'components.1', '✓ focus initialFocus → 构造即 getFocus 有值(无需 setFocus)')
+    const prompt = mw.augmentPrompt!({} as any)!
+    assert(prompt.includes('当前精修目标') && prompt.includes('components.1'), '✓ focus initialFocus → augmentPrompt 含目标段 + path(initialFocus 生效)')
+    // reset() 清空 initialFocus(切会话/清空)
+    mw.reset()
+    assert(mw.getFocus() === undefined, '✓ focus initialFocus → reset() 后清空')
+  }
 }
