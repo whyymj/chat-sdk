@@ -18,6 +18,37 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await page.waitForSelector('textarea') // 等 ChatDialog input 渲染就绪(异步)
   })
 
+  test('focus: 点组件拾取 → 聚焦 chip 显示 → ✕ 退出(指定组件精修)', async ({ page }) => {
+    // 点击第一个组件(components.0)→ setFocus → 焦点条 chip 出现
+    await page.click('[data-path="components.0"]')
+    const bar = page.locator('.focus-bar')
+    await expect(bar).toBeVisible()
+    await expect(bar).toContainText('components.0')
+    // ✕ 退出 → chip 消失(恢复全量可操作范围)
+    await page.click('[data-test="focus-clear"]')
+    await expect(bar).toHaveCount(0)
+  })
+
+  test('focus: 聚焦后写越界被拒(PATH_DENIED)→ 自纠写聚焦内放行', async ({ page }) => {
+    await page.click('[data-path="components.0"]') // 聚焦 components.0
+    await expect(page.locator('.focus-bar')).toBeVisible()
+    // mock:第 1 轮写 components.1(越界被拒回灌)→ 第 2 轮写 components.0(聚焦内放行)→ 完成
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.1.props.title', value: '越界' } } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: '聚焦内放行' } } }] },
+      { text: '已改。' },
+    ])
+    await fillInput(page, '把第二个组件标题改成「越界」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 越界写未生效(components.1 保留原值,focus 拦截 PATH_DENIED)
+    const c1 = await page.evaluate(() => (window as any).page.components[1].props.title)
+    expect(c1).not.toBe('越界')
+    // 聚焦内写生效(自纠后 components.0 放行)
+    const c0 = await page.evaluate(() => (window as any).page.components[0].props.title)
+    expect(c0).toBe('聚焦内放行')
+  })
+
   test('read 全量 → write patch 改 navbar title → read 子路径确认', async ({ page }) => {
     await mockLlm(page, [
       { tool_calls: [{ name: 'read', arguments: {} }] },

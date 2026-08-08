@@ -6,6 +6,13 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(上下文聚焦 · focus-context)
+- **上下文聚焦 Focus(指定组件精修)**:多组件页面精修其中一个时,聚焦后 agent 的**目标 / 视野 / 范围三层收敛**到单组件子树,避免改到别处。会话级焦点 `{ path, label? }`(path=jsonPath 锚点,如 `components.3`),opt-in(需 `setFocus` 才生效,默认不聚焦行为与现状完全一致,向后兼容)。
+  - **三层收敛**:① 目标提示(augmentPrompt 注入「## 当前精修目标」);② 视野收敛(注入 `getSchemaAtPath(schema, path)` 子树 schema 描述,LLM 每轮只看该组件结构);③ 范围收紧 **strict**(wrapToolCall 对写工具拦截,`jsonPath` 不以 `focus.path` 为前缀 → `PATH_DENIED` 越界回灌自纠;读工具不限)。**pin 段天然跨压缩**(focus 在中间件 state 不在 messages,同 mission/workingMemory)。
+  - **三种触发**:① `sdk.setFocus`/`getFocus`/`clearFocus` API(集成方/宿主点击拾取);② agent 工具 `set_focus`/`clear_focus`(`toolMode:'advanced'` 暴露;simple/minimal 经 UI/宿主 API);③ ChatDialog 焦点条 chip(✕ 退出 · ▾ 编辑路径切换)。
+  - `setFocus` 校验 path **类型合法**(`getSchemaAtPath` 命中;类型校验非数据存在性 —— 数组索引 `components.5` 类型合法可聚焦;前缀边界 `components.10` 不误匹配 `components.1`);`capabilities.focus` 默认开。新建 `harness/focus.ts`(`createFocusMiddleware`,mission 闭包工厂 + permissions wrapToolCall 拦截模式);`Focus` 类型导出。
+  - 示例:`examples/complex-demo` 组件绑 `data-path` 点击拾取 → 聚焦精修(越界被拒)。selftest 1270→1295(sec-54 focus 三层 + 越界 + 批量 patches + 控制器);e2e 322→349(focus:setFocus/getFocus/clearFocus + inspect + 工具 + capabilities);browser 31→33(complex-demo 点组件→chip→✕ + 聚焦越界 PATH_DENIED 自纠放行)。
+
 ### Added(Anthropic 开箱 · anthropic-provider)
 - **Anthropic provider 开箱支持**:`LLMConfig.provider:'anthropic'` + 动态 import `@langchain/anthropic`,走 Claude 原生协议(覆盖 Claude 用户场景,与 DeepSeek/OpenAI 协议并列)。缺省 provider → openai(向后兼容,现有 DeepSeek/OpenAI 集成零改动)。新建 `src/core/llm/constructLlm.ts`:`constructLlmFromConfig`(async,provider 分支收口 6 处 `new ChatOpenAI`)+ `constructOpenLlmSync`(同步 openai 分支,供 `setLlm` 同步契约)。
 - **async 下沉零契约破坏**:主 LLM 走 `initDone`(async IIFE)构造实例注入 createAgent(绕过同步兜底);`summaryLlm`/`titleLlm` lazy 构造(首次 invoke 时 await,保 `resolveLlm` 同步签名,Anthropic 动态 import 不阻塞 mount/send);`setLlm` 同步契约不变 —— 切 Anthropic 需传 `BaseChatModel` 实例(`isChatModel` 分支天然支持任意 provider),传 `LLMConfig` + `provider:'anthropic'` throw 清晰提示。

@@ -10,6 +10,7 @@ import type { AgentMessage, AgentInfo, StreamHandler, ToolStep } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 import type { SessionMeta } from '../backends/storage'
+import type { Focus } from '../harness/state'
 
 const props = withDefaults(defineProps<{
   fetchResponse?: (messages: AgentMessage[]) => Promise<string>
@@ -68,6 +69,12 @@ const props = withDefaults(defineProps<{
   onOpenSession?: (sessionId: string) => void
   /** 删除历史会话(→ sdk.deleteSession(id)) */
   onRemoveSession?: (sessionId: string) => void
+  /** 读取当前聚焦焦点(指定组件精修;sdk.setFocus/clearFocus 后 infoTick++ 触发刷新;未聚焦/未开启 → undefined) */
+  getFocus?: () => Focus | undefined
+  /** 设置聚焦焦点(→ sdk.setFocus;非法 path 返回 {ok:false},chip 内编辑用) */
+  onSetFocus?: (focus: Focus) => { ok: boolean; error?: string }
+  /** 清除聚焦焦点(→ sdk.clearFocus,退出精修模式) */
+  onClearFocus?: () => void
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -87,6 +94,30 @@ const { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, remov
   onPersist: props.onPersist,
   onClear: props.onClear,
 })
+
+// 上下文聚焦焦点(依赖 infoTick 响应式触发:sdk.setFocus/clearFocus 后 core.infoTick++ → 重算 → chip 显示/隐藏)
+const focusState = computed(() => {
+  void props.infoTick?.value
+  return props.getFocus?.()
+})
+const editingFocus = ref(false)
+const focusPathInput = ref('')
+const focusLabelInput = ref('')
+function submitFocus() {
+  const path = focusPathInput.value.trim()
+  if (!path || !props.onSetFocus) return
+  const label = focusLabelInput.value.trim()
+  const res = props.onSetFocus({ path, ...(label ? { label } : {}) })
+  if (res?.ok) {
+    editingFocus.value = false
+    focusPathInput.value = ''
+    focusLabelInput.value = ''
+  }
+}
+function clearFocusChip() {
+  props.onClearFocus?.()
+  editingFocus.value = false
+}
 
 /** 待确认工具调用的参数预览(截断长 JSON,便于用户判断) */
 const approvalArgsPreview = computed(() => {
@@ -357,6 +388,22 @@ const drawerWidthStyle = computed(() => {
       </div>
       <!-- 下拉遮罩(点外部关闭:更多菜单 / 历史面板)-->
       <div v-if="moreOpen || historyOpen" class="more-overlay" @click="moreOpen = false; historyOpen = false"></div>
+    </div>
+
+    <!-- 上下文聚焦条(指定组件精修;getFocus 返回焦点时显示 · ✕ 退出 · ▾ 切换/编辑路径)-->
+    <div v-if="focusState" class="focus-bar">
+      <span class="focus-bar-icon">🎯</span>
+      <span class="focus-bar-text">
+        <span v-if="focusState.label" class="focus-bar-label">{{ focusState.label }}</span>
+        <code class="focus-bar-path">{{ focusState.path }}</code>
+      </span>
+      <button class="focus-bar-btn" title="切换聚焦路径" @click="editingFocus = !editingFocus">▾</button>
+      <button class="focus-bar-btn" title="退出精修" data-test="focus-clear" @click="clearFocusChip">✕</button>
+      <div v-if="editingFocus" class="focus-edit-row">
+        <input v-model="focusPathInput" class="focus-edit-input" placeholder="jsonPath,如 components.3" data-test="focus-path-input" @keyup.enter="submitFocus" />
+        <input v-model="focusLabelInput" class="focus-edit-input focus-edit-label" placeholder="标签(可选)" @keyup.enter="submitFocus" />
+        <button class="focus-edit-go" data-test="focus-submit" @click="submitFocus">聚焦</button>
+      </div>
     </div>
 
     <!-- 消息列表 -->
@@ -685,6 +732,21 @@ const drawerWidthStyle = computed(() => {
 .header-left { display: flex; align-items: center; gap: 8px; }
 .header-icon { font-size: 20px; }
 .header-title { font-size: 15px; font-weight: 600; }
+/* 上下文聚焦条(focus-context:指定组件精修;深色紫主题,集成方 --cs-* 覆盖) */
+.focus-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; background: rgba(var(--cs-primary-rgb, 108, 92, 231), 0.12); border-bottom: 1px solid rgba(var(--cs-primary-rgb, 108, 92, 231), 0.2); font-size: 12px; }
+.focus-bar-icon { font-size: 14px; }
+.focus-bar-text { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+.focus-bar-label { color: var(--cs-primary, #6c5ce7); font-weight: 600; white-space: nowrap; }
+.focus-bar-path { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: var(--cs-bg-muted, #8888aa); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.focus-bar-btn { border: none; background: transparent; color: var(--cs-bg-muted, #8888aa); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; line-height: 1; }
+.focus-bar-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--cs-primary, #6c5ce7); }
+.focus-edit-row { display: flex; gap: 6px; padding: 6px 12px 8px; background: rgba(var(--cs-primary-rgb, 108, 92, 231), 0.06); border-bottom: 1px solid rgba(var(--cs-primary-rgb, 108, 92, 231), 0.15); width: 100%; box-sizing: border-box; }
+.focus-edit-input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 6px; background: var(--cs-bg, #222244); color: var(--cs-bg-text, #e5e7eb); font-size: 12px; font-family: inherit; }
+.focus-edit-input:focus { outline: none; border-color: var(--cs-primary, #6c5ce7); }
+.focus-edit-input::placeholder { color: var(--cs-bg-muted, #8888aa); opacity: 0.7; }
+.focus-edit-label { flex: 0 0 90px; }
+.focus-edit-go { padding: 5px 12px; border: none; border-radius: 6px; background: var(--cs-primary, #6c5ce7); color: #fff; font-size: 12px; cursor: pointer; flex-shrink: 0; }
+.focus-edit-go:hover { opacity: 0.9; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; }
 .status-dot.pulse { animation: pulse 1.5s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

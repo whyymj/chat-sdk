@@ -19,6 +19,14 @@ const page = w.page as PageData
 const RENDER_LIMIT = 100
 const truncated = computed(() => page.components.length > RENDER_LIMIT)
 const renderedComponents = computed(() => (truncated.value ? page.components.slice(0, RENDER_LIMIT) : page.components))
+
+// 点击拾取聚焦(focus-context):点击组件 → emit path 供 App.vue 调 sdk.setFocus 聚焦该组件精修
+const emit = defineEmits<{ (e: 'pick', path: string): void }>()
+function onBodyClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement)?.closest?.('[data-path]') as HTMLElement | null
+  const p = el?.getAttribute('data-path')
+  if (p) emit('pick', p)
+}
 </script>
 
 <template>
@@ -27,11 +35,12 @@ const renderedComponents = computed(() => (truncated.value ? page.components.sli
     <div v-if="truncated" class="pr-truncate">
       ⚠️ 大页面({{ page.components.length }} 组件):仅渲染前 {{ RENDER_LIMIT }} 个预览防卡死;agent 经 read/write 可操作全部 {{ page.components.length }} 个组件。
     </div>
-    <div class="pr-body">
+    <div class="pr-body" @click="onBodyClick">
       <CompRenderer
         v-for="(c, i) in renderedComponents"
         :key="(c.id ?? c.type) + '-' + i"
         :comp="c"
+        :path="`components.${i}`"
       />
     </div>
   </div>

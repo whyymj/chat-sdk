@@ -50,6 +50,16 @@ function resetPage(): void {
   pageObj.components.splice(0, pageObj.components.length, ...initialPage.components.map((c) => ({ ...c })))
 }
 
+/** 点击组件拾取聚焦(focus-context):点左侧组件 → agent 聚焦该子树精修(写越界被拒) */
+function onPickComponent(path: string): void {
+  if (!agent) return
+  const m = /^components\.(\d+)$/.exec(path)
+  const idx = m ? Number(m[1]) : -1
+  const comp = pageObj.components[idx]
+  const label = comp?.type ? `${comp.type} #${idx}` : path
+  agent.setFocus({ path, label })
+}
+
 const root = ref<HTMLElement>()
 const agentRef = ref<ChatSdk | null>(null)
 let agent: ChatSdk | null = null
@@ -127,7 +137,7 @@ onUnmounted(() => agent?.unmount())
       <DynamicReconfigPanel :agent="agentRef" />
       <PageConfigPanel :page="pageObj" :on-save="saveDraft" :on-publish="publish" :on-reset="resetPage" :publish-status="publishStatus" />
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
-        <PageRenderer />
+        <PageRenderer @pick="onPickComponent" />
       </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>

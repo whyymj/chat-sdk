@@ -84,7 +84,7 @@ const COMP_MAP: Record<string, Component> = {
   skeleton: SkeletonComp,
 }
 
-const props = defineProps<{ comp: any }>()
+const props = defineProps<{ comp: any; path?: string }>()
 /** baseProps 通用渲染:布局字段(margin/padding/width/height/maxWidth/cursor)合并到 style;动画/响应式/主题入 class(经 fallthrough 继承到各专用组件根) */
 const compStyle = computed<Record<string, string>>(() => {
   const c = props.comp || {}
@@ -120,5 +120,6 @@ const compClass = computed<string[]>(() => {
     :visible="comp.visible"
     :aria-label="comp.ariaLabel"
     :data-tooltip="comp.tooltip"
+    :data-path="path"
   />
 </template>

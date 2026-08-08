@@ -38,6 +38,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'planning', defaultOn: true },
   { name: 'missionAnchor', defaultOn: true },
   { name: 'workingMemory', defaultOn: true },
+  { name: 'focus', defaultOn: true }, // 上下文聚焦·指定组件精修(默认开;聚焦后目标/视野/范围三层收敛到单组件;focus-context)
   { name: 'skills', defaultOn: true },
   { name: 'vfs', defaultOn: true },
   { name: 'summarization', defaultOn: true },

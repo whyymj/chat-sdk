@@ -15,6 +15,7 @@ import { run as runCustomInjection } from './e2e/custom-injection.mjs'
 import { run as runConflict } from './e2e/conflict.mjs'
 import { run as runAutomation } from './e2e/automation.mjs'
 import { run as runLlmProvider } from './e2e/llm-provider.mjs'
+import { run as runFocus } from './e2e/focus.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -31,6 +32,7 @@ const modules = [
   ['conflict', runConflict],
   ['automation', runAutomation],
   ['llm-provider', runLlmProvider],
+  ['focus', runFocus],
 ]
 
 let totalPass = 0, totalFail = 0

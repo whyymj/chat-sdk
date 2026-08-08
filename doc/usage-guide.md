@@ -1446,6 +1446,50 @@ sdk.setLlm({
 })
 ```
 
+### 6.14 上下文聚焦 Focus(指定组件精修,focus-context)
+
+多组件页面想精修其中一个(如「导航栏」`components.3`)时,聚焦后 agent 的**目标 / 视野 / 范围三层收敛**到该子树,避免改到别处。会话级焦点 `{ path, label? }`,聚焦是 opt-in(需主动 `setFocus` 才生效,默认不聚焦行为与现状完全一致)。
+
+**SDK API**:
+
+```ts
+const res = sdk.setFocus({ path: 'components.3', label: '导航栏' })
+// res: { ok: true } 或 { ok: false, error }（path 不在 schema 内时拒绝,不抛错）
+sdk.getFocus()   // → { path, label? } | undefined
+sdk.clearFocus() // 退出精修,恢复全量可操作范围
+```
+
+聚焦后三层收敛:
+- **目标提示**:每轮 systemPrompt 注入「## 当前精修目标:components.3(导航栏)。仅操作该子树」
+- **视野收敛**:只看到该组件子树的 schema 描述(`getSchemaAtPath` 取子树,`extractSchemaHint` 渲染),不看其他组件
+- **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;读工具不限制(用户仍需看全量上下文)
+
+**三种触发方式**:
+
+| 方式 | 机制 |
+|---|---|
+| **API / 宿主点击拾取** | `sdk.setFocus(path,{label?})` —— 宿主组件点击时调用 |
+| **对话驱动** | agent 工具 `set_focus({path,label?})` / `clear_focus`(`toolMode:'advanced'` 暴露;simple/minimal 经 UI/宿主 API) |
+| **ChatDialog 焦点条** | 内置对话框头部「🎯 正在精修」chip(✕ 退出 · ▾ 编辑路径切换),`capabilities.focus:false` 时不显示 |
+
+**宿主点击拾取接入**(组件渲染绑 `data-path`,点击委托调 setFocus):
+
+```ts
+// 1) 组件根元素绑 data-path(以 Vue 为例,渲染时绑索引路径)
+//    <div :data-path="`components.${i}`"> ... </div>
+
+// 2) 在组件容器上做点击委托:点中带 data-path 的元素 → 聚焦它
+containerEl.addEventListener('click', (e) => {
+  const target = (e.target as HTMLElement).closest('[data-path]')
+  const path = target?.getAttribute('data-path')
+  if (path) sdk.setFocus({ path })  // 焦点条 chip 出现,后续对话只精修该组件
+})
+```
+
+完整可运行示例见 `examples/complex-demo`(`PageRenderer.vue` / `CompRenderer.vue` 绑 `data-path` + 点击拾取)。
+
+> **path 校验是「类型合法」非「数据存在」**:`setFocus` 用 `getSchemaAtPath` 校验路径的 schema 形状。数组索引 `components.5` 类型合法即可聚焦(即使数据不足 6 个);叶子字段下取子路径(如 `title.sub`)或顶层不存在字段(如 `nope`)被拒。`capabilities.focus` 默认开,`false` 关闭(中间件 + 工具 + chip 都不装)。
+
 ## 8. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。

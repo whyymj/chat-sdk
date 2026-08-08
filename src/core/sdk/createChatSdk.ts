@@ -22,8 +22,10 @@ import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { z } from 'zod'
+import { getSchemaAtPath } from '../tools/schemaUtils'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
+import { createFocusMiddleware } from '../harness/focus'
 import { createWorkingMemoryMiddleware } from '../harness/workingMemory'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
@@ -53,7 +55,7 @@ import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
 import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
-import type { VfsFile, HarnessState, Mission } from '../harness/state'
+import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools } from '../tools/domTool'
@@ -228,6 +230,7 @@ export interface ChatSdkOptions {
     planning?: boolean       // todos 任务规划
     missionAnchor?: boolean  // 任务目标锚定(默认 true;长任务防跑偏,revive-mission-anchor Phase 1)
     workingMemory?: boolean  // 跨压缩工作记忆(默认 true;pin 最近 path/hash,防压缩后丢定位;revive-cross-round-working-memory Phase 1)
+    focus?: boolean         // 上下文聚焦·指定组件精修(默认 true;聚焦后目标/视野/范围三层收敛到单组件;focus-context)
     skills?: boolean         // 渐进式披露技能
     vfs?: boolean            // 虚拟工作区(关 → 大结果外存退化为截断)
     summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
@@ -371,6 +374,12 @@ export interface ChatSdk {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
+  /** 读取当前聚焦焦点(指定组件精修;未聚焦 / capabilities.focus:false → undefined) */
+  getFocus(): Focus | undefined
+  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  setFocus(focus: Focus): { ok: boolean; error?: string }
+  /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+  clearFocus(): void
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
@@ -487,6 +496,7 @@ type TodosMw = ReturnType<typeof createTodosMiddleware>
 type MemoryMw = ReturnType<typeof createMemoryMiddleware>
 type MissionMw = ReturnType<typeof createMissionMiddleware>
 type WorkingMemoryMw = ReturnType<typeof createWorkingMemoryMiddleware>
+type FocusMw = ReturnType<typeof createFocusMiddleware>
 
 /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);resolve 由 resolveConflict 调用,清空后工具继续 */
 export interface PendingConflict {
@@ -513,6 +523,8 @@ interface AgentCore {
   missionMw: MissionMw
   /** workingMemory 中间件实例(switchSession/onClear 调 reset;capabilities.workingMemory 关闭仍创建但不装载) */
   workingMemoryMw: WorkingMemoryMw
+  /** focus 中间件实例(switchSession/onClear 调 reset;capabilities.focus 关闭仍创建但不装载) */
+  focusMw: FocusMw
   agent: AgentInstance | null
   initDone: Promise<void>
   /** 当前会话 id(可变;共享时多实例同步) */
@@ -570,6 +582,12 @@ interface AgentCore {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
+  /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
+  getFocus(): Focus | undefined
+  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  setFocus(focus: Focus): { ok: boolean; error?: string }
+  /** 清除聚焦焦点(退出精修模式) */
+  clearFocus(): void
   /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
   setTools(tools: StructuredToolInterface[]): void
   /** 运行时追加用户工具(去重 by name) */
@@ -702,6 +720,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const todosMw = createTodosMiddleware([], { maxPlanRevisions: options.maxPlanRevisions })
   const missionMw = createMissionMiddleware()
+  // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
+  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema })
   const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
@@ -808,6 +828,32 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ]
     : []
   checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
+  // 上下文聚焦工具 set_focus/clear_focus(focus-context;advanced 暴露,simple/minimal 经 UI/宿主 API 触发)。
+  // set_focus 校验 path 在 schema 内(getSchemaAtPath 命中)才聚焦,非法回灌错误让 LLM 自纠(同 sdk.setFocus 校验逻辑)
+  const useFocus = caps.focus
+  const setFocusTool = tool(
+    async ({ path, label }: { path: string; label?: string }) => {
+      const schema = liveData()?.schema
+      if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
+      if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
+      focusMw.setFocus({ path, ...(label ? { label } : {}) })
+      return `已聚焦到 ${path}${label ? `(${label})` : ''}。后续仅可写该子树(越界被拒),每轮只看到该组件结构。完成精修后调 clear_focus 退出。`
+    },
+    {
+      name: 'set_focus',
+      description: '聚焦到指定组件子树(如 components.3)精修。聚焦后:仅可写该子树(越界 PATH_DENIED)+ 每轮只看到该组件结构。多组件页面精修其中一个时用,避免改到别处。先 read 定位 path 再聚焦;完成调 clear_focus。',
+      schema: z.object({ path: z.string().describe('要聚焦的组件 jsonPath,如 components.3'), label: z.string().optional().describe('人类可读标签,如「导航栏」') }),
+    },
+  )
+  const clearFocusTool = tool(
+    async () => {
+      focusMw.clearFocus()
+      return '已清除聚焦,恢复全量可操作范围(可读写所有组件)。'
+    },
+    { name: 'clear_focus', description: '清除当前聚焦,退出精修模式,恢复对全部组件的读写权限。', schema: z.object({}).optional() },
+  )
+  const focusTools: StructuredToolInterface[] = useFocus && options.toolMode === 'advanced' ? [setFocusTool, clearFocusTool] : []
+  focusTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // skill 附带工具(load_skill 后动态注入;skill-external-scripts §5)。按 skill 名记录归属,便于 invalidate/setSkills 卸载
   let loadedSkillTools: StructuredToolInterface[] = []
   const skillToolOwner = new Map<string, string>()  // toolName → skillName(source 标 `skill:<skillName>`)
@@ -823,6 +869,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       { label: 'action', tools: actionTools },
       { label: 'humanConfirm', tools: humanConfirmTool ? [humanConfirmTool] : [] },
       { label: 'checkpoint', tools: checkpointTools },
+      { label: 'focus', tools: focusTools },
       { label: 'mcp', tools: mcpTools },
       { label: 'skill', tools: loadedSkillTools },
     ])
@@ -1048,6 +1095,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         ]
       : []),
     ...(useWorkingMemory ? [workingMemoryMw] : []), // summarization 后(augmentPrompt 段跨压缩保留;pin 最近 read/query/search 的 path/hash)
+    ...(useFocus ? [focusMw] : []), // workingMemory 后:上下文聚焦(目标/视野/范围三层收敛 pin 段;同 mission 跨压缩保留)
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
     // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
@@ -1091,6 +1139,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     memoryMw,
     missionMw,
     workingMemoryMw,
+    focusMw,
     agent: null,
     initDone: Promise.resolve(),
     sessionId: '',
@@ -1297,6 +1346,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // P1-5:切会话重置 mission/workingMemory,防旧会话 goal / 定位 path·hash 污染新会话(过期 hash 诱发乐观锁误冲突)
       missionMw.reset()
       workingMemoryMw.reset()
+      focusMw.reset()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
       if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
@@ -1323,6 +1373,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (!options.memory) memoryMw.reset('')
       missionMw.reset()
       workingMemoryMw.reset()
+      focusMw.reset()
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
       void store.createSession(core.agentId, options.session?.title, core.sessionId)
@@ -1478,6 +1529,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
+        focus: useFocus ? focusMw.getFocus() : undefined,
         trace: useTracing && core.agent?.spans ? { spans: core.agent.spans.value, metrics: getTraceMetrics(core.agent.spans.value) } : undefined,
         actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
@@ -1520,6 +1572,30 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         return
       }
       missionMw.setMission(m)
+      core.infoTick.value++ // 触发 DebugDrawer 刷新
+    },
+    /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
+    getFocus(): Focus | undefined {
+      return useFocus ? focusMw.getFocus() : undefined
+    },
+    /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法/无 schema 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+    setFocus(focus: Focus): { ok: boolean; error?: string } {
+      if (!useFocus) {
+        if (options.debug) console.warn('[page-agent-sdk][focus] capabilities.focus 关闭,setFocus 忽略')
+        return { ok: false, error: 'capabilities.focus 关闭' }
+      }
+      if (!focus || !focus.path) return { ok: false, error: 'path 必填且非空' }
+      const schema = liveData()?.schema
+      if (!schema) return { ok: false, error: '当前无主数据 schema,无法聚焦' }
+      if (!getSchemaAtPath(schema, focus.path)) return { ok: false, error: `path "${focus.path}" 不在 schema 内` }
+      focusMw.setFocus(focus)
+      core.infoTick.value++ // 触发 DebugDrawer 刷新
+      return { ok: true }
+    },
+    /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+    clearFocus(): void {
+      if (!useFocus) return
+      focusMw.clearFocus()
       core.infoTick.value++ // 触发 DebugDrawer 刷新
     },
   }
@@ -1841,6 +1917,10 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             drawerWidth: dialogCfg.drawerWidth,
             drawerHidden: dialogCfg.drawerHidden === true,
             inputRows: dialogCfg.inputRows,
+            // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
+            getFocus: () => core.getFocus(),
+            onSetFocus: (f: Focus) => core.setFocus(f),
+            onClearFocus: () => core.clearFocus(),
             onClose: dialogCfg.onClose ?? (dialogCfg.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
             // 内置会话管理(storage 开启 → ChatDialog 默认显示「新建/历史」按钮 + 历史面板;关 → 不传,隐藏,向后兼容)
             ...(core.store ? {
@@ -1961,6 +2041,12 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     getMission: core.getMission,
     /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
     setMission: core.setMission,
+    /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
+    getFocus: core.getFocus,
+    /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法返回 {ok:false,error} */
+    setFocus: core.setFocus,
+    /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+    clearFocus: core.clearFocus,
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,

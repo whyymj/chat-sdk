@@ -190,6 +190,8 @@ export interface AgentInfo {
   actions?: Record<string, { description: string; hasParams: boolean }>;
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: WorkingMemory;
+  /** 当前上下文聚焦焦点(focus 中间件;指定组件精修;未聚焦/未开启 → undefined) */
+  focus?: Focus;
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
@@ -604,7 +606,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; skillHostScript?: boolean; contextInspector?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -675,6 +677,14 @@ export interface Mission {
   explicit: boolean;
 }
 
+/** 上下文聚焦焦点(focus 中间件;指定组件精修,path=jsonPath 锚点,聚焦后目标/视野/范围三层收敛) */
+export interface Focus {
+  /** jsonPath 锚点,如 `components.3`(setFocus 时经 getSchemaAtPath 校验在 schema 内才可聚焦) */
+  path: string;
+  /** 人类可读标签,如「导航栏」(注入目标提示 + ChatDialog chip 显示;可选) */
+  label?: string;
+}
+
 export interface ChatSdk {
   /** 渲染对话框到 container(异步:含持久化恢复);ui:false 时仅 init agent(headless)。
    *  可选传 overrideContainer(HTMLElement | 选择器字符串)覆盖创建时 options.container —— 异步绑定:创建时可省略 container,mount 时才指定 */
@@ -705,6 +715,12 @@ export interface ChatSdk {
   getMission(): Mission | undefined;
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void;
+  /** 读取当前聚焦焦点(指定组件精修;未聚焦 / capabilities.focus:false → undefined) */
+  getFocus(): Focus | undefined;
+  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  setFocus(focus: Focus): { ok: boolean; error?: string };
+  /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+  clearFocus(): void;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */

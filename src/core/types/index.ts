@@ -148,6 +148,8 @@ export interface AgentInfo {
   mission?: import('../harness/state').Mission
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
+  /** 当前上下文聚焦焦点(focus 中间件;指定组件精修;未聚焦/未开启 → undefined) */
+  focus?: import('../harness/state').Focus
   /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
   actions?: Record<string, { description: string; hasParams: boolean }>
   memory: string

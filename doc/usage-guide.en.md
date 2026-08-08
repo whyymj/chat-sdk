@@ -885,6 +885,40 @@ createChatSdk({
 })
 ```
 
+### 6.14 Context Focus (refine one component, focus-context)
+
+When a page has many components and you want to refine just one (e.g. the navbar `components.3`), focusing converges the agent's **goal / view / scope** onto that subtree so it won't drift to other components. The focus is opt-in (only active after `setFocus`; default behavior is unchanged).
+
+**SDK API**:
+
+```ts
+const res = sdk.setFocus({ path: 'components.3', label: 'Navbar' })
+// res: { ok: true } or { ok: false, error } (rejected if path not in schema; does not throw)
+sdk.getFocus()   // → { path, label? } | undefined
+sdk.clearFocus() // exit focus, restore full editable range
+```
+
+After focusing, three layers converge:
+- **Goal hint**: each turn injects "## Current refinement target: components.3 (Navbar)"
+- **View convergence**: only the focused component's subtree schema is shown (other components hidden)
+- **Scope tightening (strict)**: writing outside the subtree (e.g. `components.0`) → `PATH_DENIED` error fed back for self-correction; reads are not limited
+
+**Three trigger methods**: ① `sdk.setFocus(path,{label?})` API (host click-pick or programmatic); ② agent tools `set_focus`/`clear_focus` (`toolMode:'advanced'` exposes them; simple/minimal use UI/host API); ③ built-in ChatDialog focus chip (✕ exit · ▾ edit path); hidden when `capabilities.focus:false`.
+
+**Host click-pick** (bind `data-path` on component roots, delegate clicks to `setFocus`):
+
+```ts
+containerEl.addEventListener('click', (e) => {
+  const target = (e.target as HTMLElement).closest('[data-path]')
+  const path = target?.getAttribute('data-path')
+  if (path) sdk.setFocus({ path }) // focus chip appears; subsequent turns refine only this component
+})
+```
+
+Full runnable example: `examples/complex-demo` (`PageRenderer.vue` / `CompRenderer.vue` bind `data-path` + click-pick).
+
+> Path validation is "type-valid", not "data-exists": `setFocus` checks the schema shape via `getSchemaAtPath`. An array index like `components.5` is type-valid and focusable even if fewer than 6 exist; a sub-path under a leaf (e.g. `title.sub`) or a non-existent top-level field is rejected. `capabilities.focus` defaults on.
+
 ## 7. Custom middleware
 
 ```ts

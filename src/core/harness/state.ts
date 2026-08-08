@@ -39,6 +39,14 @@ export interface Mission {
   explicit: boolean
 }
 
+/** 上下文聚焦焦点(focus 中间件;指定组件精修,path=jsonPath 锚点,聚焦后三层收敛:目标提示/视野/写范围) */
+export interface Focus {
+  /** jsonPath 锚点,如 `components.3`(setFocus 时经 getSchemaAtPath 校验在 schema 内才可聚焦) */
+  path: string
+  /** 人类可读标签,如「导航栏」(注入目标提示 + ChatDialog chip 显示;可选) */
+  label?: string
+}
+
 /** 跨压缩工作记忆(workingMemory 中间件;pin 最近定位 path + read hash,≤10 LRU,防压缩后丢定位/误冲突) */
 export interface WorkingMemory {
   /** 最近定位的 jsonPath(read/query/search 结果,LRU 去重 ≤10) */
@@ -90,6 +98,8 @@ export interface HarnessState {
   mission?: Mission
   /** 跨压缩工作记忆(workingMemory 中间件;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
   workingMemory?: WorkingMemory
+  /** 上下文聚焦焦点(focus 中间件;经 augmentPrompt 注入目标+子树 schema,wrapToolCall 拦写越界;天然跨压缩保留) */
+  focus?: Focus
 }
 
 export function createInitialState(): HarnessState {
