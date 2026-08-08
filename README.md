@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1295%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-1342%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -141,6 +141,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🧩 schema tiered disclosure (2.20+) | Large schema → systemPrompt injects top-level overview only (no constraints/no recursion); deep constraints via `schema_data` on demand; small schema unaffected (full) | `schemaHint` |
 | 📌 cross-compress working memory (2.20+) | Pin recent read/query paths + hashes across compression; no re-fetch, correct optimistic-lock hash | `capabilities.workingMemory` |
 | 🤖 unattended automation (2.20+) | Resource budget guard (`tokenBudget`/`timeBudgetMs`) + fatal-error auto-recovery (`maxAutoRetries`: restore checkpoint + retry) + cross-refresh resume + `sdk.batch(tasks)` batch processing | `capabilities.automation` |
+| 📐 context resilience (2.30+) | Hard floor `contextWindow ≥200K` (rejects <200K models like legacy `deepseek`/`gpt-4o`/`glm-4.5` at startup); three gates (compress/trim/offload) thresholds follow the live window after `setLlm`; reactive retry on `context_length_exceeded` (aggressive trim → single retry, never fails raw); vfs large-result refs protected from LRU eviction + OOM 1.5× fallback; system-prompt budget (25% window, drops non-pinned segments, keeps base/mission/workingMemory) | built-in |
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
 
@@ -187,7 +188,7 @@ createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
 createHumanConfirmMiddleware, createHumanConfirmTool, createCheckpointMiddleware, createCheckpointManager,
 createUsageHintsMiddleware, createDataOps, createVfs, connectMcp
 // context & model
-resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
+resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens, isContextLengthError, MIN_CONTEXT_WINDOW
 // storage
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI (reuse when headless)
@@ -409,6 +410,8 @@ VITE_AI_TEMPERATURE=0.3        # low temp recommended for structured ops
 # VITE_AI_MAX_TOKENS=           # omit → model default
 ```
 
+> ⚠️ **Minimum context window 200K (2.30+)**: the SDK rejects models with `contextWindow < 200000` at startup (`setLlm`/subagent too) — excludes legacy `deepseek`/`deepseek-reasoner`/`glm-4.5`/`gpt-4o`/`qwen-max` etc. Use a ≥200K model (`deepseek-v4`/`glm-5.2`/`claude-3-*`/`kimi-k3`/`qwen-1m`) or declare `llm: { contextWindow: 500000 }` to override the table lookup.
+
 ```ts
 createChatSdk({
   container: '#root',
@@ -520,8 +523,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 1295 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 349 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 1342 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 353 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

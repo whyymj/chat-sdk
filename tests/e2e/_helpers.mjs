@@ -3,7 +3,8 @@ import { createChatSdk, z, defineTool, defineSkill, presets, systemPromptHelpers
 
 export { createChatSdk, z, defineTool, defineSkill, presets, systemPromptHelpers, createMemoryBackend }
 
-export const FAKE_LLM = { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake' }
+// contextWindow:200000 声明(harden-context-resilience ≥200K 硬约束;声明优先于查表,model:'fake' 不命中表原本 32K 会被拦)
+export const FAKE_LLM = { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake', contextWindow: 200000 }
 export const MIN_CAPS = { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false }
 
 // node 环境构造 window/document stub(mount 的 pagehide/visibility guard 需 addEventListener;data 单对象不再依赖 window,但保留无害)

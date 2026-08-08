@@ -59,5 +59,40 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:boundary] harden-context-resilience:小窗口模型(<200K)启动 → throw')
+  {
+    let threw = false
+    try {
+      createChatSdk({ ui: false, id: 'e2e-smallwin', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'deepseek' }, capabilities: MIN_CAPS })
+    } catch { threw = true }
+    assert(threw, 'createChatSdk({model:deepseek 128K}) → throw(<200K 硬约束)')
+    // 声明 contextWindow ≥200K 则放行(声明优先于查表)
+    let threw2 = false
+    try {
+      const ok = createChatSdk({ ui: false, id: 'e2e-smallwin-ok', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'deepseek', contextWindow: 200000 }, capabilities: MIN_CAPS })
+      ok.unmount()
+    } catch { threw2 = true }
+    assert(!threw2, 'createChatSdk({model:deepseek + contextWindow:200000 声明}) → 放行(声明优先)')
+  }
+
+  console.log('[e2e:boundary] harden-context-resilience:setLlm 切小窗口模型(<200K)→ throw')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm-small', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    let threw = false
+    try { sdk.setLlm({ apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o' }) } catch { threw = true }
+    assert(threw, 'setLlm({model:gpt-4o 128K 无声明}) → throw(<200K 硬约束)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:boundary] harden-context-resilience:setLlm 声明 ≥200K 窗口 → 放行(声明优先于查表)')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm-ok', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    let threw = false
+    try { sdk.setLlm({ apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'deepseek', contextWindow: 500000 }) } catch { threw = true }
+    assert(!threw, 'setLlm({model:deepseek + contextWindow:500000 声明}) → 放行(声明优先,不 throw)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

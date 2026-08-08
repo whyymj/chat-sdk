@@ -28,6 +28,8 @@ export class StubChatModel extends BaseChatModel {
     this.index = 0
     /** model 调用次数(断言用,如 budget 超限后应停止再调) */
     this.calls = 0
+    // harden-context-resilience:stub 默认声明 ≥200K 窗口(resolveLlm 实例路径读 .contextWindow),过最小窗口校验
+    this.contextWindow = opts.contextWindow ?? 200000
   }
   _llmType() { return 'stub' }
 

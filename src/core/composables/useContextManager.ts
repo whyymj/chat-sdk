@@ -15,6 +15,7 @@
 import type { AgentMessage } from '../types'
 import { groupRounds, plainSummary, parseSummarySegment, type Round } from '../utils/rounds'
 import { estimateRoundTokens, indexSummarize, recallRounds } from './contextIndex'
+import { estimateTokens } from '../utils/modelCaps'
 
 export interface ContextManagerOptions {
   /** 滑动窗口：保留最近几轮完整对话（轮数模式用） */
@@ -214,6 +215,16 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     }
 
     const compressed = [summaryMsg, ...recentMessages]
+
+    // H2(harden-context-resilience):压缩后 over-window 复查(单条大 user + summary 仍超窗口)
+    const compressedTokens = compressed.reduce(
+      (s, m) => s + estimateTokens(typeof m.content === 'string' ? (m.content as string) : JSON.stringify(m.content)),
+      0,
+    )
+    if (config.contextWindow && compressedTokens > config.contextWindow) {
+      // 压缩后仍超(单条 user/system 超窗口,compress 无法进一步压)→ observable warn(P3 反应性重试 / Phase 5 系统段兜底)
+      console.warn(`[page-agent-sdk] compress 后仍超窗口:${compressedTokens} > ${config.contextWindow} tokens(单条消息超窗口,compress 无法压)`)
+    }
 
     return {
       messages: compressed,

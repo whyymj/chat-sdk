@@ -57,6 +57,8 @@ export interface VfsStore {
   isDirty?: () => boolean
   /** 读后清脏标记,返回是否脏;checkpoint save 消费(脏→clone 新基线,不脏→复用上次 clone 省 8MB 深拷贝) */
   consumeDirty?: () => boolean
+  /** 设置被引用保护集(harden-context-resilience P4:LRU 淘汰时跳过被消息引用的 large_results,防 vfs_read 404) */
+  setProtectedRefs?: (refs: Set<string>) => void
 }
 
 /**
@@ -108,10 +110,16 @@ export function createVfs(
       const limit = poolMaxBytes[pool]
       if (poolBytesOf(pool) <= limit) continue
       const target = limit * DEFAULT_VFS_WATERMARK
+      const isLarge = pool === 'largeResults'
+      // P4 OOM 硬兜底:large_results 被引用撑爆 1.5x → 无视 protectedRefs 强制 LRU 删(防全池被保护不收敛 OOM)
+      const oomForce = isLarge && poolBytesOf(pool) > limit * 1.5
+      if (oomForce) console.warn(`[page-agent-sdk] vfs large_results 池 ${poolBytesOf(pool)} > ${Math.round(limit * 1.5)}(被引用撑爆)→ 无视 protectedRefs 强制删`)
       const ordered = Object.entries(files)
         .filter(([k]) => poolOf(k) === pool)
         .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
       for (const [k] of ordered) {
+        // P4:被引用的 large_results 跳过(防 vfs_read 404);OOM 硬兜底时无视保护
+        if (isLarge && !oomForce && _protectedRefs.has(k)) continue
         delete files[k]
         if (poolBytesOf(pool) <= target) break
       }
@@ -119,8 +127,10 @@ export function createVfs(
     // 总上限兜底(默认 = 三池之和)
     if (estimateFileBytes(files) > maxBytes) {
       const target = maxBytes * DEFAULT_VFS_WATERMARK
+      const totalOomForce = estimateFileBytes(files) > maxBytes * 1.5
       const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
       for (const [k] of ordered) {
+        if (poolOf(k) === 'largeResults' && !totalOomForce && _protectedRefs.has(k)) continue
         delete files[k]
         if (estimateFileBytes(files) <= target) break
       }
@@ -130,6 +140,8 @@ export function createVfs(
   // 脏标记:任何写(files[k]=/delete)置 true;checkpoint save 经 consumeDirty 检查,
   //   未脏则复用上次 vfs clone(省 8MB 深拷贝,长任务每轮省),脏则 clone 新基线。初始 true=首次 save 必 clone 建立基线。
   let _dirty = true
+  // P4:被消息引用的 large_results path 集(enforceLimit 淘汰时跳过,防 vfs_read 404);由 createChatSdk stream 入口注入
+  let _protectedRefs: Set<string> = new Set()
   let saveTimer: ReturnType<typeof setTimeout> | null = null
 
   function doSave(): void {
@@ -175,6 +187,7 @@ export function createVfs(
     files: proxy,
     isDirty: () => _dirty,
     consumeDirty: () => { const d = _dirty; _dirty = false; return d },
+    setProtectedRefs: (refs: Set<string>) => { _protectedRefs = refs },
   }
   if (persist) {
     store.hydrate = (incoming) => {

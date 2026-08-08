@@ -8,21 +8,37 @@
  *
  * 注:单轮 ReAct 内的工具结果裁剪(trimToolResults)仍由 createAgent 侧处理,
  * 这里聚焦跨轮历史压缩。
+ *
+ * controller(harden-context-resilience):setContextWindow 供 createChatSdk setLlm 后集中回灌新窗口,
+ * compress 读 ctxManager.config 共享引用,下轮即按新阈值触发(无需重建中间件)。
  */
 import type { AgentMessage } from '../types'
 import { useContextManager, type ContextManagerOptions } from '../composables/useContextManager'
 import type { Middleware } from './middleware'
 
+/** summarization 中间件 + controller(setLlm 后回灌 contextWindow) */
+export type SummarizationMiddleware = Middleware & {
+  /** 更新 contextWindow(下轮 compress 即用新阈值);config 共享引用,compress 读取即生效 */
+  setContextWindow(cw: number): void
+}
+
 export function createSummarizationMiddleware(
   opts: Partial<ContextManagerOptions> = {},
-): Middleware {
+): SummarizationMiddleware {
   const ctxManager = useContextManager(opts)
 
-  return {
+  const middleware: Middleware = {
     name: 'summarization',
     compressInput: async (messages: AgentMessage[]) => {
       const { messages: compressed, stats } = await ctxManager.compress(messages)
       return { messages: compressed, stats }
     },
   }
+
+  // controller:setLlm 后由 createChatSdk 集中回灌新 contextWindow(compress 读 config 共享引用即生效)
+  return Object.assign(middleware, {
+    setContextWindow(cw: number) {
+      ctxManager.config.contextWindow = cw
+    },
+  })
 }

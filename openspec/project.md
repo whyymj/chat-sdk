@@ -28,7 +28,7 @@
 
 **2026-08-08 发布 2.27.0**:`recall-and-trim-llm`(P1 召回纳入 steps + trim LLM 增强)+ `context-persist-resilience`(mission/workingMemory 跨刷新持久化 + trim 收口:`context_trimmed` 归档事件带 vfs 大结果 + vfs 孤儿可达性 GC)实施完成并发布;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。**活跃 5 个均 deferred/暂缓**(等痛点驱动,见 [`changes/README.md`](./changes/README.md) + [`deferred.md`](./deferred.md))。
 
-**其余活跃(评估暂缓,见 [`deferred.md`](./deferred.md) 2026-08-08 块)**:`placeholder-protected-read-write`(精确值保护诉求未现)/ `agent-driven-compression`(压缩未成痛点,前置 context-inspector 已就绪)/ `chatdialog-component-split`(纯 UI 重构无功能价值)/ `focus-context`(越界痛点未现)/ `context-history-resilience` umbrella(P2-P3 + 6 待决策点继续讨论);`harden-large-json-write` **主体完成**(A1 安全 + A5 提示已发布,剩 7 项性能/协同设计推后进 deferred)。
+**其余活跃(评估暂缓,见 [`deferred.md`](./deferred.md) 2026-08-08 块)**:`placeholder-protected-read-write`(精确值保护诉求未现)/ `agent-driven-compression`(压缩未成痛点,前置 context-inspector 已就绪)/ `chatdialog-component-split`(纯 UI 重构无功能价值)/ `context-history-resilience` umbrella(P2-P3 + 6 待决策点继续讨论)(`focus-context` + `harden-large-json-write` 已完成发布归档)。
 
 **推进顺序(2026-08-08 评审)**:写链三件套剩余(harden A4 子路径 hash → placeholder freeze/verbatim)仍需串行,但 placeholder 暂缓 → 写链无急迫推进;其余均「等痛点驱动」。详见 [`changes/README.md`](./changes/README.md) 索引 + [`deferred.md`](./deferred.md) 暂缓清单。umbrella 定位升级决策记录见 [`doc/archive/complex-agent-roadmap.md`](../doc/archive/complex-agent-roadmap.md)(已归档)。
 

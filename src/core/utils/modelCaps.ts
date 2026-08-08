@@ -48,6 +48,14 @@ const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
 /** 保守缺省(未知模型按 32K 上下文 / 4K 输出,避免大模型假设导致 OOM) */
 export const DEFAULT_CAPS: ModelCaps = { contextWindow: 32768, maxOutputTokens: 4096 }
 
+/**
+ * 最小支持上下文窗口(harden-context-resilience):contextWindow < 此值 → throw。
+ * 排除小窗口模型(128K 档主流如 DeepSeek/GPT-4o/GLM-4.6 亦不满足),强制用 ≥200K 大窗口模型
+ * (GLM-5.2 1M / Claude 200K / Kimi 256K+ / Qwen-1M / DeepSeek-v4 1M)。
+ * 设计假设窗口 ≥ 此值:全局预算宽松、单条超窗口几乎不可能、压缩/offload 阈值有余量。
+ */
+export const MIN_CONTEXT_WINDOW = 200000
+
 export interface ResolveCapsOptions {
   /** 模型名(查表用) */
   model?: string
@@ -107,7 +115,7 @@ export function offloadThresholdChars(contextWindow: number): number {
 }
 
 /**
- * vfs 不可用时的放行上限(字符数):按上下文 20% 推导(token→字符 ×3.5),clamp [offloadThreshold, 200000]。
+ * vfs 不可用时的放行上限(字符数):等价于 token 窗口的 20%(1 token≈3.5 字符 → 代码用 0.7 字符倍率实现),clamp [offloadThreshold, 200000]。
  * - vfs 不可用时不再固定截断:结果 ≤ 此上限则完整进上下文(信任大模型容量,避免丢信息),
  *   超过才截断兜底。
  * - 1M 上下文 → 200000(上限,~57K token,占 5.7%)

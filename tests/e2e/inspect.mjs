@@ -232,7 +232,7 @@ export async function run() {
   console.log('[e2e:inspect] inspect().id / model 反映配置')
   {
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-idmodel', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o' }, capabilities: MIN_CAPS,
+      ui: false, id: 'e2e-idmodel', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o', contextWindow: 200000 }, capabilities: MIN_CAPS,
     })
     await sdk.mount()
     const info = sdk.inspect()
@@ -397,10 +397,10 @@ export async function run() {
 
   console.log('[e2e:inspect] setLlm → inspect().model 反映新模型')
   {
-    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-3.5-turbo' }, capabilities: MIN_CAPS })
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-3.5-turbo', contextWindow: 200000 }, capabilities: MIN_CAPS })
     await sdk.mount()
     assert(sdk.inspect().model === 'gpt-3.5-turbo', '初始 inspect().model === gpt-3.5-turbo')
-    sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake2', model: 'gpt-4o' })
+    sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake2', model: 'gpt-4o', contextWindow: 200000 })
     assert(sdk.inspect().model === 'gpt-4o', 'setLlm 后 inspect().model === gpt-4o')
     sdk.unmount()
   }

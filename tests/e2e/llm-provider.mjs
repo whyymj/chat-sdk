@@ -9,7 +9,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-anthropic', storage: 'memory',
-      llm: { provider: 'anthropic', apiKey: 'sk-ant-fake', model: 'claude-sonnet-4-5-20250929' },
+      llm: { provider: 'anthropic', apiKey: 'sk-ant-fake', model: 'claude-sonnet-4-5-20250929', contextWindow: 200000 },
       capabilities: MIN_CAPS,
     })
     await sdk.mount()
@@ -21,7 +21,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-openai-default', storage: 'memory',
-      llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o' },
+      llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o', contextWindow: 200000 },
       capabilities: MIN_CAPS,
     })
     await sdk.mount()
@@ -33,7 +33,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-openai-explicit', storage: 'memory',
-      llm: { provider: 'openai', apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o' },
+      llm: { provider: 'openai', apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-4o', contextWindow: 200000 },
       capabilities: MIN_CAPS,
     })
     await sdk.mount()
@@ -47,7 +47,7 @@ export async function run() {
     await sdk.mount()
     let threw = false
     try {
-      sdk.setLlm({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-sonnet-4-5-20250929' })
+      sdk.setLlm({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-sonnet-4-5-20250929', contextWindow: 200000 })
     } catch { threw = true }
     assert(threw, 'setLlm({ provider:anthropic }) → throw(同步契约保护,提示传 BaseChatModel 实例)')
     sdk.unmount()
@@ -59,7 +59,7 @@ export async function run() {
     await sdk.mount()
     let threw = false
     try {
-      sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake', model: 'gpt-4o-mini' })
+      sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake', model: 'gpt-4o-mini', contextWindow: 200000 })
     } catch { threw = true }
     assert(!threw, 'setLlm openai(缺省 provider)→ 同步 constructOpenLlmSync 不 throw')
     assert(sdk.inspect().model === 'gpt-4o-mini', 'setLlm openai → inspect().model 更新')

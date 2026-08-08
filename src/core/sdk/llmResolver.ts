@@ -135,11 +135,13 @@ export function resolveLlm(options: ChatSdkOptions): {
   summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined
   titleLlmInvoke: ((messages: AgentMessage[]) => Promise<string>) | undefined
 } {
+  const llm = options.llm as any
   const llmCfg = isChatModel(options.llm) ? undefined : (options.llm as LLMConfig)
   const modelCaps = resolveModelCaps({
-    model: llmCfg?.model,
-    contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
-    maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
+    // 实例路径也读 .model/.contextWindow(BaseChatModel 实例可能带;stubModel 挂 contextWindow 过校验)
+    model: llmCfg?.model ?? llm?.model ?? llm?.modelName,
+    contextWindow: options.contextWindow ?? llmCfg?.contextWindow ?? llm?.contextWindow,
+    maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens ?? llm?.maxOutputTokens,
   })
   const summaryLlmInvoke = buildSummaryLlmInvoke(options)
   const titleLlmInvoke = buildTitleLlmInvoke(options)

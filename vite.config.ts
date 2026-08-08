@@ -21,6 +21,7 @@ export default defineConfig({
           '@langchain/openai': 'LangchainOpenAI',
           '@langchain/core/messages': 'LangchainCoreMessages',
           '@langchain/core/tools': 'LangchainCoreTools',
+          '@langchain/core/errors': 'LangchainCoreErrors',
           '@langchain/textsplitters': 'LangchainTextsplitters',
           '@langchain/anthropic': 'LangchainAnthropic',
         },

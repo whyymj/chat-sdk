@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1295%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1342%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -136,6 +136,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🛡️ 压缩不丢信息 | 摘要内嵌当前 data 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 | 🤖 无人值守自动化 (2.20+) | 资源预算闸（`tokenBudget`/`timeBudgetMs`）+ 致命错误自动恢复（`maxAutoRetries`：回退 checkpoint + 重试）+ 刷新续跑 + `sdk.batch(tasks)` 批处理 | `capabilities.automation` |
+| 📐 上下文健壮性 (2.30+) | 硬地板 `contextWindow ≥200K`(启动拒绝 <200K 模型如老款 `deepseek`/`gpt-4o`/`glm-4.5`);三道闸(压缩/trim/offload)阈值在 `setLlm` 后跟随实时窗口;遇 `context_length_exceeded` 反应性重试(激进 trim → 重试一次,不裸失败);vfs 大结果引用受保护免 LRU 淘汰 + OOM 1.5× 兜底;系统段预算(25% 窗口,丢弃非 pin 段保 base/mission/workingMemory) | 内置 |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
@@ -182,7 +183,7 @@ createVerifyMiddleware, createWriteBackCheck, createApprovalMiddleware,
 createHumanConfirmMiddleware, createHumanConfirmTool, createCheckpointMiddleware, createCheckpointManager,
 createUsageHintsMiddleware, createDataOps, createVfs, connectMcp
 // 上下文/模型
-resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens
+resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens, isContextLengthError, MIN_CONTEXT_WINDOW
 // 存储
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI(headless 自建 UI 复用)
@@ -354,6 +355,8 @@ VITE_AI_TEMPERATURE=0.3        # 结构化操作建议低温
 # VITE_AI_MAX_TOKENS=           # 不配则按模型自动取值
 ```
 
+> ⚠️ **最小上下文窗口 200K(2.30+)**:SDK 启动(`setLlm`/子 agent 同样)拒绝 `contextWindow < 200000` 的模型 —— 排除老款 `deepseek`/`deepseek-reasoner`/`glm-4.5`/`gpt-4o`/`qwen-max` 等。用 ≥200K 模型(`deepseek-v4`/`glm-5.2`/`claude-3-*`/`kimi-k3`/`qwen-1m`)或声明 `llm: { contextWindow: 500000 }` 覆盖查表。
+
 ```ts
 createChatSdk({
   container: '#root',
@@ -465,8 +468,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1295 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 349 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1342 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 353 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

@@ -22,6 +22,7 @@ import type { Middleware } from './middleware'
 import { runPool } from '../utils/pool'
 import type { StreamEvent } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 
 /** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
 type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' }>
@@ -158,7 +159,26 @@ async function runSubagent(
   }
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
+  // harden-context-resilience M3:从 llm 提取 model 名查表得 contextWindow/maxOutputTokens
+  // (BaseChatModel 实例无 contextWindow 字段;不传则 createAgent 把实例 model 误判默认 gpt-3.5→16K,offload/压缩阈值全错算)
+  const subModel = isChatModel(opts.llm)
+    ? ((opts.llm as any).model ?? (opts.llm as any).modelName)
+    : (task.model ?? opts.llm.model)
+  const subCaps = resolveModelCaps({
+    model: subModel,
+    // 实例路径读 .contextWindow(stubModel 挂;真实 BaseChatModel 可能无 → 查表兜底);LLMConfig 自带
+    contextWindow: (opts.llm as any).contextWindow,
+    maxOutputTokens: (opts.llm as any).maxOutputTokens,
+  })
+  if (subCaps.contextWindow < MIN_CONTEXT_WINDOW) {
+    throw new Error(
+      `[page-agent-sdk][subagent] 子 agent 模型上下文窗口 ${subCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型)`,
+    )
+  }
   const child = createAgent({
+    // 模型能力透传(显式声明优先,驱动子 agent offload 阈值/压缩触发,修原 16K 误算 silent bug)
+    contextWindow: subCaps.contextWindow,
+    maxOutputTokens: subCaps.maxOutputTokens,
     // provider 抽离:llm 实例则注入(温度/maxTokens 已在实例上定,忽略 opts.temperature/maxTokens),否则按配置构造(子 agent 配置优先于主 llm)
     ...(isChatModel(opts.llm)
       ? { llm: opts.llm }

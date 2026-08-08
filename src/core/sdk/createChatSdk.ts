@@ -69,7 +69,7 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
-import { resolveModelCaps } from '../utils/modelCaps'
+import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
 import { indexSummarize } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
@@ -693,6 +693,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const { modelCaps: initialModelCaps, summaryLlmInvoke, titleLlmInvoke } = resolveLlm(options)
   let modelCaps = initialModelCaps
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
+  // harden-context-resilience:最小窗口校验(<200K throw,排除小窗口模型;设计假设 ≥200K)
+  if (modelCaps.contextWindow < MIN_CONTEXT_WINDOW) {
+    throw new Error(
+      `[page-agent-sdk] 模型上下文窗口 ${modelCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型,如 GLM-5.2/Claude/Kimi/Qwen-1M/DeepSeek-v4)`,
+    )
+  }
   // recall-and-trim-llm 方向2:trim 异步 LLM 增强的配置门 + preserveSet(复用于 summarization 装配,消除重复 resolveContextOptions 调用)
   const resolvedCtxOpts = resolveContextOptions(options, modelCaps.contextWindow)
   const enableTrimLlm = resolvedCtxOpts.enableLLMSummary !== false
@@ -1048,6 +1054,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       /* skillStore 读取失败静默(降级内存,当前会话仍可用) */
     }
   }
+  // harden-context-resilience:summarization 提取为变量(setLlm 后 onLlmChange 经 setContextWindow 回灌新 contextWindow)
+  const summarizationMw = useSummarization
+    ? createSummarizationMiddleware({
+        // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底;复用 buildCore 顶部 resolvedCtxOpts
+        ...resolvedCtxOpts,
+        llmInvoke: summaryLlmInvoke,
+        // A:压缩时注入当前主数据说明(防 LLM 基于过时记忆操作;dataOps 关闭时 liveData() 返回 undefined,无影响)
+        getRegisteredData: () => liveData() ? [{ description: liveData()!.description ?? '主数据对象' }] : [],
+        // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);复用 buildCore 顶部 trimPreserveArr
+        preserveLastToolResults: trimPreserveArr,
+      })
+    : undefined
   // 中间件按声明式 priority 排序(替代数组字面量位置硬编码);条件构造顺序无关,末尾统一排序保证约束(declarative-middleware-ordering)
   const middlewares = composeMiddlewareStack([
     // dataHint 插最前:数据段紧跟 base(与现状等价);每轮从 liveData() 动态重算
@@ -1081,19 +1099,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         ]
       : []),
     ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
-    ...(useSummarization
-      ? [
-          createSummarizationMiddleware({
-            // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底;复用 buildCore 顶部 resolvedCtxOpts(消除重复 resolveContextOptions 调用)
-            ...resolvedCtxOpts,
-            llmInvoke: summaryLlmInvoke,
-            // A:压缩时注入当前主数据说明(防 LLM 基于过时记忆操作;dataOps 关闭时 liveData() 返回 undefined,无影响)
-            getRegisteredData: () => liveData() ? [{ description: liveData()!.description ?? '主数据对象' }] : [],
-            // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);复用 buildCore 顶部 trimPreserveArr
-            preserveLastToolResults: trimPreserveArr,
-          }),
-        ]
-      : []),
+    ...(summarizationMw ? [summarizationMw] : []), // summarization:跨轮历史压缩(setLlm 后 setContextWindow 回灌新窗口)
     ...(useWorkingMemory ? [workingMemoryMw] : []), // summarization 后(augmentPrompt 段跨压缩保留;pin 最近 read/query/search 的 path/hash)
     ...(useFocus ? [focusMw] : []), // workingMemory 后:上下文聚焦(目标/视野/范围三层收敛 pin 段;同 mission 跨压缩保留)
     ...(useMemory ? [memoryMw] : []),
@@ -1384,6 +1390,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     stream: (msgs, onEvent, signal) => {
       if (!core.agent) throw new Error('page-agent-sdk: agent 尚未初始化完成,请先 await mount()')
+      // P4(harden-context-resilience):注入被引用集 → vfs LRU 淘汰时跳过被消息引用的 large_results(防 vfs_read 404)
+      vfsStore?.setProtectedRefs?.(extractVfsRefs(msgs))
       // 包装:把 stream 事件同时转发给集成方 onEvent(approval_request 已由 emit 过滤)
       const wrappedHandler: StreamHandler = userOnEvent
         ? (event) => { onEvent?.(event); emit(event as SdkEvent) }
@@ -1463,8 +1471,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         console.warn('[page-agent-sdk][setLlm] 新模型不支持 bindTools(tool calling 会失效)')
       }
       currentLlm = llmOpt
-      if (core.agent) core.agent.setLlm(newLlm)
+      // harden-context-resilience:权威重算 modelCaps(用原 llmOpt,保留 LLMConfig.contextWindow 声明)+ 最小窗口校验 + 集中回灌
+      // (setLlm 把 LLMConfig 构造成 BaseChatModel 实例后 contextWindow 声明丢失;onLlmChange 拿不到 → 在此用 llmOpt 重算)
+      const llmCfg = isChatModel(llmOpt) ? undefined : (llmOpt as LLMConfig)
+      modelCaps = resolveModelCaps({
+        model: llmCfg?.model ?? (llmOpt as any).model ?? (llmOpt as any).modelName,
+        contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
+        maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
+      })
+      if (modelCaps.contextWindow < MIN_CONTEXT_WINDOW) {
+        throw new Error(`[page-agent-sdk][setLlm] 新模型上下文窗口 ${modelCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型)`)
+      }
+      if (core.agent) {
+        core.agent.setLlm(newLlm) // → onLlmChange(仅更新 currentLlm 实例)
+        core.agent.setModelCaps?.(modelCaps) // offload 阈值跟随新窗口(修原固化)
+      }
+      summarizationMw?.setContextWindow?.(modelCaps.contextWindow)
+      contextInspectorMw?.setContextWindow?.(modelCaps.contextWindow)
       core.infoTick.value++
+      if (options.debug) console.log('[page-agent-sdk][setLlm] 重解析 modelCaps + 回灌:', modelCaps)
     },
     /** 运行时更新 memory;支持 string 与同步/异步函数(异步函数后台求值,下一轮 beforeAgent 前就绪)*/
     setMemory(source: string | (() => string | Promise<string>)): void {
@@ -1794,14 +1819,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       // setLlm 后回调:重解析模型能力(contextWindow/maxOutputTokens 影响 offload 阈值/压缩)
       onLlmChange: (newLlm: BaseChatModel) => {
-        const cfg = isChatModel(newLlm) ? undefined : (newLlm as unknown as LLMConfig)
-        modelCaps = resolveModelCaps({
-          model: cfg?.model ?? (newLlm as any).model ?? (newLlm as any).modelName,
-          contextWindow: options.contextWindow ?? cfg?.contextWindow,
-          maxOutputTokens: options.maxOutputTokens ?? cfg?.maxOutputTokens,
-        })
+        // 仅更新实例引用;modelCaps 重算 + 最小窗口校验 + 集中回灌由 createChatSdk.setLlm 权威处理
+        // (createChatSdk.setLlm 把 LLMConfig 构造成 BaseChatModel 实例后 contextWindow 声明丢失,
+        //  onLlmChange 拿不到原 cfg.contextWindow → 在 setLlm 用原 llmOpt 重算更准)
         currentLlm = newLlm
-        if (options.debug) console.log('[page-agent-sdk][setLlm] 重解析 modelCaps:', modelCaps)
       },
       // trace:createAgent finally 调 onTrace(spans, metrics) → emit('trace')(capabilities.tracing 开时注入,关时 undefined → createAgent 不采集,零开销)
       onTrace: useTracing ? (spans, metrics) => { try { emit({ type: 'trace', spans, metrics }) } catch { /* emit 抛错忽略 */ } } : undefined,

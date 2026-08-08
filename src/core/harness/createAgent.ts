@@ -23,11 +23,12 @@ import type { AgentMessage, StreamHandler } from '../types'
 import { asAgentError } from '../tools/toolError'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
-import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
+import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, type ModelCaps } from '../utils/modelCaps'
 import { getTraceMetrics } from '../utils/traceMetrics'
 import { extractTextDelta, extractReasoningDelta, extractUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
+import { isContextLengthError } from './errors'
 import {
   type Middleware,
   type ModelRequest,
@@ -208,25 +209,31 @@ const MAX_LOG_CONTENT_CHARS = 6000
  * 当总字符超过放行上限(maxChars)时,从最早的 ToolMessage 起截断为占位摘要,
  * 保留 tool_call_id(结构完整,模型仍能对应),不动对话/system/ai 消息。大模型阈值高几乎不触发。
  */
-export function trimContextIfNeededImpl(messages: BaseMessage[], maxChars: number): BaseMessage[] {
-  const total = messages.reduce(
-    (s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length),
-    0,
-  )
-  if (total <= maxChars) return messages
+export function trimContextIfNeededImpl(messages: BaseMessage[], maxTokens: number): BaseMessage[] {
+  // H1(harden-context-resilience):token 口径(原字符数,中文 1 字符≈1.5token 致 CJK+小窗口 trim 完仍超窗口)
+  const msgTokens = (m: BaseMessage) =>
+    estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify((m as any).content))
+  const total = messages.reduce((s, m) => s + msgTokens(m), 0)
+  if (total <= maxTokens) return messages
   let trimmed = 0
-  const need = total - maxChars
-  // 保留首段长度按放行上限自适应:大模型(20万)→400,小模型(6400)→100;clamp [100,400]
-  const keep = Math.max(100, Math.min(400, Math.round(maxChars / 500)))
-  return messages.map((m) => {
+  const need = total - maxTokens
+  // 保留首段字符数按 token 预算自适应:大预算→400,小预算→100;clamp [100,400](预览长度,非计量)
+  const keep = Math.max(100, Math.min(400, Math.round(maxTokens / 500)))
+  const result = messages.map((m) => {
     if (trimmed >= need) return m
     if (!(m instanceof ToolMessage)) return m
-    const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+    const c = typeof m.content === 'string' ? m.content : JSON.stringify((m as any).content)
     if (c.length <= 400) return m // 太短不值得压
     const summary = `…[已自动压缩 ${c.length} 字符,保留首 ${keep}]\n` + c.slice(0, keep)
-    trimmed += c.length - summary.length
+    trimmed += estimateTokens(c) - estimateTokens(summary) // token 口径计量裁剪量
     return new ToolMessage({ tool_call_id: (m as any).tool_call_id, content: summary })
   })
+  // H1 over-window 复查:裁完仍超(system/history/不可裁部分超预算)→ observable warn(Phase 5 系统段截断 / P3 反应性重试兜底)
+  const afterTotal = result.reduce((s, m) => s + msgTokens(m), 0)
+  if (afterTotal > maxTokens) {
+    console.warn(`[page-agent-sdk] trim 后仍超窗口:${afterTotal} > ${maxTokens} tokens(系统段/历史超预算,见 Phase 5/P3)`)
+  }
+  return result
 }
 
 /**
@@ -267,15 +274,25 @@ export function createAgent(options: CreateAgentOptions) {
   // 模型能力:声明优先 > model 名查表 > 缺省。
   // maxTokens 缺省 = maxOutputTokens(DeepSeek 8192 等,避免固定 16384 被截断);
   // offload 外存阈值按上下文窗口自适应(1M→20000,32K→2000)
-  const caps = resolveModelCaps({
+  let caps = resolveModelCaps({
     model,
     contextWindow: options.contextWindow,
     maxOutputTokens: options.maxOutputTokens,
   })
   const resolvedMaxTokens = maxTokens ?? caps.maxOutputTokens
-  const offloadThreshold = offloadThresholdChars(caps.contextWindow)
+  let offloadThreshold = offloadThresholdChars(caps.contextWindow)
   // vfs 不可用时的放行上限:大模型(1M)→ 200000 几乎不截断,小模型按上下文 20% 推导
-  const offloadPassThrough = offloadPassThroughChars(caps.contextWindow)
+  let offloadPassThrough = offloadPassThroughChars(caps.contextWindow)
+
+  /**
+   * 运行时更新模型能力(setLlm 后由 createChatSdk onLlmChange 集中回灌)。
+   * 重算 offload 阈值(随新 contextWindow 自适应);maxTokens 缺省随新 maxOutputTokens(见 setLlm 链)。
+   */
+  function setModelCaps(newCaps: ModelCaps): void {
+    caps = newCaps
+    offloadThreshold = offloadThresholdChars(caps.contextWindow)
+    offloadPassThrough = offloadPassThroughChars(caps.contextWindow)
+  }
 
   // shallowRef:浅响应式,不深度代理 push 进来的 data 对象,避免与 currentMessages 共享引用污染日志快照
   const debugLogs = shallowRef<DebugLog[]>([])
@@ -347,16 +364,39 @@ export function createAgent(options: CreateAgentOptions) {
 
   let state: HarnessState = createInitialState()
 
-  /** 组装 system prompt:base + 各中间件 augmentPrompt 段 */
+  /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
+  const SYSTEM_BUDGET_RATIO = 0.25
+  /** 跨压缩锚定段:系统段超预算时永不 drop(目标/工作记忆丢了 agent 跑偏) */
+  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory'])
+
+  /** 组装 system prompt:base + 各中间件 augmentPrompt 段。
+   *  超系统段预算时按「非 pin 段从大到小 drop」收敛(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢),
+   *  保 base + pin 段(mission/workingMemory)。base 本身超预算由 stream 入口 fatal 拦截(此处截不掉 base)。 */
   function buildSystemPrompt(): string {
-    const parts: string[] = [systemPrompt || '你是一个智能助手。']
+    const base = systemPrompt || '你是一个智能助手。'
+    const segs: Array<{ name: string; text: string; tokens: number; pin: boolean }> = []
     for (const m of middlewares) {
       if (m.augmentPrompt) {
-        const seg = m.augmentPrompt(state)
-        if (seg) parts.push(seg)
+        const text = m.augmentPrompt(state)
+        if (text) segs.push({ name: m.name, text, tokens: estimateTokens(text), pin: PIN_SEGMENT_NAMES.has(m.name) })
       }
     }
-    return parts.join('\n\n')
+    const budget = Math.max(2000, Math.round(caps.contextWindow * SYSTEM_BUDGET_RATIO))
+    const baseTokens = estimateTokens(base)
+    let total = baseTokens + segs.reduce((s, x) => s + x.tokens, 0)
+    // 超预算:非 pin 段从大到小 drop(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢)
+    if (total > budget) {
+      const before = total
+      const dropped: string[] = []
+      for (const d of segs.filter((x) => !x.pin).sort((a, b) => b.tokens - a.tokens)) {
+        if (total <= budget) break
+        dropped.push(`${d.name}(${d.tokens})`)
+        total -= d.tokens
+        d.text = ''
+      }
+      if (dropped.length) console.warn(`[page-agent-sdk] 系统段超预算(${before} > ${budget} tokens,窗口 ${caps.contextWindow} 的 ${SYSTEM_BUDGET_RATIO * 100}%),drop 非核心段:${dropped.join(', ')}(保 base/mission/workingMemory)`)
+    }
+    return [base, ...segs.filter((x) => x.text).map((x) => x.text)].join('\n\n')
   }
 
   /** AgentMessage[] → BaseMessage[](注入 system prompt) */
@@ -406,6 +446,17 @@ export function createAgent(options: CreateAgentOptions) {
     } catch (err) {
       // 启动阶段 abort:带空 partial(等同未开始);其他错误透传(withRetry 已对可重试类重试过)
       if (isAbort(err, signal)) return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
+      // P2(harden-context-resilience):启动阶段超限(BaseChatModel.stream/_streamIterator 同步抛,未 emit)→ 激进 trim 重试一次
+      if (isContextLengthError(err) && !(req as any)._ctxRetry) {
+        ;(req as any)._ctxRetry = true // 单次防死循环
+        const tokOf = (m: BaseMessage) => estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify((m as any).content))
+        const beforeTokens = req.messages.reduce((s, m) => s + tokOf(m), 0)
+        const trimmed = trimContextIfNeeded(req.messages, Math.round(caps.contextWindow * 0.3))
+        const afterTokens = trimmed.reduce((s, m) => s + tokOf(m), 0)
+        log('error', { stage: 'context_overflow_retry', at: 'launch', beforeTokens, afterTokens, window: caps.contextWindow })
+        console.warn(`[page-agent-sdk] 上下文超限(启动)→ 激进 trim 重试:${beforeTokens} → ${afterTokens} tokens`)
+        return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
+      }
       throw err
     }
     // catch 已 return/throw,此处 stream 必已赋值;narrow 防 TS 报 possibly undefined
@@ -429,6 +480,18 @@ export function createAgent(options: CreateAgentOptions) {
       if (isAbort(err, signal)) {
         const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
         return { message, toolCalls: [], content, aborted: true }
+      }
+      // P2(harden-context-resilience):上下文超限 + 未 emit(首个 chunk 抛,provider 校验输入后即报)→ 激进 trim 重试一次
+      // 红队核实:ContextOverflowError 落在此迭代 catch(非 withRetry 启动处);首个 chunk 时 aggregated===null && content==='' 未 emit,重试安全(不重复 emit)
+      if (isContextLengthError(err) && aggregated === null && content === '' && !(req as any)._ctxRetry) {
+        ;(req as any)._ctxRetry = true // 单次防死循环
+        const tokOf = (m: BaseMessage) => estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify((m as any).content))
+        const beforeTokens = req.messages.reduce((s, m) => s + tokOf(m), 0)
+        const trimmed = trimContextIfNeeded(req.messages, Math.round(caps.contextWindow * 0.3)) // 更激进(0.3 vs 默认 0.6)
+        const afterTokens = trimmed.reduce((s, m) => s + tokOf(m), 0)
+        log('error', { stage: 'context_overflow_retry', beforeTokens, afterTokens, window: caps.contextWindow })
+        console.warn(`[page-agent-sdk] 上下文超限 → 激进 trim 重试:${beforeTokens} → ${afterTokens} tokens(窗口 ${caps.contextWindow})`)
+        return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
       }
       throw err
     }
@@ -471,8 +534,8 @@ export function createAgent(options: CreateAgentOptions) {
   /**
    * 逐轮上下文保底压缩(模块级纯函数 trimContextIfNeeded 的薄封装,复用其 typeOf)
    */
-  function trimContextIfNeeded(messages: BaseMessage[], maxChars: number): BaseMessage[] {
-    return trimContextIfNeededImpl(messages, maxChars)
+  function trimContextIfNeeded(messages: BaseMessage[], maxTokens: number): BaseMessage[] {
+    return trimContextIfNeededImpl(messages, maxTokens)
   }
 
   /** 格式化消息为接近实际请求体的结构(role 用接口名 user/assistant/tool/system,含 tool_calls/tool_call_id),按发送顺序 */
@@ -535,6 +598,19 @@ export function createAgent(options: CreateAgentOptions) {
       }
     }
 
+    // Phase 5(harden-context-resilience):systemPrompt(base)本身超系统段预算 → fatal 早退
+    // buildSystemPrompt 截断只 drop 非 pin 段,base 截不掉;base 超窗 = 集成方传了过大 systemPrompt,无解
+    {
+      const baseTokens = estimateTokens(systemPrompt || '你是一个智能助手。')
+      const sysBudget = Math.max(2000, Math.round(caps.contextWindow * SYSTEM_BUDGET_RATIO))
+      if (baseTokens > sysBudget) {
+        const errMsg = `[page-agent-sdk] systemPrompt 本身(${baseTokens} tokens)超过系统段预算(${sysBudget} tokens,窗口 ${caps.contextWindow} 的 ${SYSTEM_BUDGET_RATIO * 100}%);请缩减 systemPrompt 或换更大窗口模型`
+        console.error(errMsg)
+        onEvent({ type: 'error', message: errMsg, severity: 'fatal', code: 'SYSTEM_PROMPT_OVER_BUDGET' } as any)
+        onEvent({ type: 'done', content: '' })
+        return ''
+      }
+    }
     let currentMessages = toLC(input)
     log('context', { model, tools: allTools.map((t) => t.name), middleware: middlewares.map((m) => m.name) })
 
@@ -560,7 +636,7 @@ export function createAgent(options: CreateAgentOptions) {
         state = runBeforeModel(middlewares, { messages: currentMessages, state })
         currentMessages = replaceSystem(currentMessages)
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
-        currentMessages = trimContextIfNeeded(currentMessages, offloadPassThrough)
+        currentMessages = trimContextIfNeeded(currentMessages, Math.round(caps.contextWindow * 0.6)) // H1:token 口径,单轮 currentMessages ≤60% 窗口(留输出+schema)
 
         const modelSpan = startSpan(roundSpanId, 'model', model, { round: rounds + 1, tools: allTools.map((t) => t.name) })
         log('llm_request', {
@@ -773,6 +849,7 @@ export function createAgent(options: CreateAgentOptions) {
     get allTools() { return allTools },
     setTools,
     setLlm,
+    setModelCaps,
     debugLogs,
     spans,
     // 复用内部权威拼装(base + Σ augmentPrompt),供 getInfo/inspect 收敛为单一真相源(fix-introspection-consistency)

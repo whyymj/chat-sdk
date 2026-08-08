@@ -72,7 +72,7 @@ export async function run() {
   {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-llm-cfg', storage: 'memory',
-      llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake', temperature: 0.3, maxTokens: 8192 },
+      llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'fake', contextWindow: 200000, temperature: 0.3, maxTokens: 8192 },
       capabilities: MIN_CAPS,
     })
     await sdk.mount()

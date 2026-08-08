@@ -163,6 +163,7 @@ export interface SubagentConfig {
   skills?: SkillSpec[];
   temperature?: number;
   maxTokens?: number;
+  /** 子 agent 工具调用轮次上限(默认 10);大 JSON 子任务可调大 */
   maxToolRounds?: number;
   /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
   writablePaths?: string[];
@@ -588,6 +589,7 @@ export interface ChatSdkOptions {
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
+  /** agent 工具调用轮次上限(默认 10);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
   maxToolRounds?: number;
   /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌,防"光规划不执行"死循环。与 maxIterations 正交 */
   maxPlanRevisions?: number;
@@ -1158,6 +1160,9 @@ export interface ContextManagerOptions { [k: string]: any }
 export interface CompressionStats { [k: string]: any }
 
 // 模型能力 / token 估算 / offload 阈值
+export declare const MIN_CONTEXT_WINDOW: number;
+/** 判定错误是否为上下文超限(模型输入超 contextWindow);复用 langchain ContextOverflowError + 兜底正则。harden-context-resilience */
+export declare function isContextLengthError(err: unknown): boolean;
 export declare function resolveModelCaps(model: string): any;
 export declare function estimateTokens(text: string): number;
 export declare function offloadThresholdChars(contextWindow: number): number;

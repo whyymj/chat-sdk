@@ -33,6 +33,7 @@ import { useContextManager } from '../../composables/useContextManager'
 import { resolveContextOptions } from '../../sdk/contextPreset'
 import { jpEval, searchJson } from '../../tools/dataSlotQuery'
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
+import { estimateTokens } from '../../utils/modelCaps'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -220,25 +221,74 @@ export async function run(ctx: TestCtx): Promise<void> {
       assert(streamCallCount === 1, 'P1-d 迭代中途失败不重试:_streamResponseChunks 只执行 1 次(未重跑重发致文本重复;旧实现 withRetry 包整体会重跑 maxRetries+1 次)')
     }
 
-    // ③ 逐轮 trim 纯函数:tool 结果累积超放行上限 → 最早 ToolMessage 压缩为占位摘要(保留 tool_call_id)
+    // P2(harden-context-resilience):上下文超限 → coreModelCall 迭代 catch 激进 trim 重试一次(单次防死循环)
+    {
+      let ctxCalls = 0
+      class CtxOverflowLLM extends BaseChatModel {
+        constructor() { super({}) }
+        _llmType(): string { return 'ctx-overflow' }
+        bindTools() { return this }
+        async *_streamResponseChunks(): AsyncGenerator<any> {
+          ctxCalls++
+          if (ctxCalls === 1) {
+            // 首次:抛上下文超限(isContextLengthError 认 lc_error_code='CONTEXT_OVERFLOW');首个 chunk 即抛 → 未 emit
+            const e = new Error('maximum context length exceeded') as any
+            e.lc_error_code = 'CONTEXT_OVERFLOW'
+            e.status = 400
+            throw e
+          }
+          yield { text: '已恢复', message: new AIMessageChunk({ content: '已恢复' }), generationInfo: {} } // 重试:正常返回
+        }
+      }
+      const agentP2 = createAgent({ llm: new CtxOverflowLLM() as any, maxToolRounds: 1, maxRetries: 0, contextWindow: 200000 })
+      let p2Done = ''
+      await agentP2.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], (e: any) => { if (e.type === 'done') p2Done = e.content }, undefined)
+      assert(p2Done === '已恢复', 'P2:上下文超限 → 激进 trim 重试成功(第 2 轮恢复)')
+      assert(ctxCalls === 2, 'P2:超限后重试(_streamResponseChunks 执行 2 次:首超限 + 重试)')
+    }
+    // P2 单次重试上限:连续超限 → 第 2 次仍超限 → 抛(不无限重试)
+    {
+      let ctxCalls2 = 0
+      class CtxOverflowTwiceLLM extends BaseChatModel {
+        constructor() { super({}) }
+        _llmType(): string { return 'ctx-overflow-2' }
+        bindTools() { return this }
+        async *_streamResponseChunks(): AsyncGenerator<any> {
+          ctxCalls2++
+          const e = new Error('maximum context length') as any
+          e.lc_error_code = 'CONTEXT_OVERFLOW'
+          e.status = 400
+          throw e
+        }
+      }
+      const agentP2b = createAgent({ llm: new CtxOverflowTwiceLLM() as any, maxToolRounds: 1, maxRetries: 0, contextWindow: 200000 })
+      let p2bErr = false
+      await agentP2b.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined).catch(() => { p2bErr = true })
+      assert(p2bErr, 'P2:连续超限 → 单次重试后抛(不无限重试)')
+      assert(ctxCalls2 === 2, 'P2:连续超限 _streamResponseChunks 执行 2 次(首 + 1 次重试,不第 3 次)')
+    }
+
+    // ③ 逐轮 trim 纯函数(H1 token 口径):tool 结果累积超 token 阈值 → 最早 ToolMessage 压缩为占位摘要
+    // estimateTokens:英文 'x' 1 字符 ≈ 0.25 token → 1000 字符 ≈ 250 token
     const big = 'x'.repeat(1000)
     const msgs = [new SystemMessage('sys'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: big }), new ToolMessage({ tool_call_id: '2', content: big })]
-    const out = trimContextIfNeededImpl(msgs, 1500)
+    // msgs ≈ 3 + 0.25 + 250 + 250 ≈ 503 token;阈值 300 < 503 → 触发 trim
+    const out = trimContextIfNeededImpl(msgs, 300)
     assert(out.length === 4, 'trim: 消息数不变(只压内容不删消息)')
-    const total = out.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : 0), 0)
-    assert(total < 2000, 'trim: 总字符从 ~2004 降到阈值附近(<2000)')
+    const totalTok = out.reduce((s, m) => s + (typeof m.content === 'string' ? estimateTokens(m.content) : 0), 0)
+    assert(totalTok < 503, 'trim: token 从 ~503 降到阈值附近(<503;H1 token 口径)')
     assert(out[0].content === 'sys' && out[1].content === 'q', 'trim: system/human 原样保留')
     assert(/已自动压缩/.test(out[2].content as string), 'trim: 最早 ToolMessage 压缩为占位摘要')
     assert((out[2] as any).tool_call_id === '1', 'trim: 保留 tool_call_id(结构完整,模型仍能对应)')
     const out2 = trimContextIfNeededImpl(msgs, 5000)
     assert(out2 === msgs, 'trim: 未超阈值原样返回同引用')
 
-    // keep 自适应:小阈值保留首 100,大阈值保留首 400(clamp)
-    const smallKeep = trimContextIfNeededImpl(msgs, 1500)
-    assert(/保留首 100/.test(smallKeep[2].content as string), 'trim: keep 自适应(小阈值→100)')
-    const bigMsgs = [new SystemMessage('s'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: 'x'.repeat(300000) })]
-    const bigKeep = trimContextIfNeededImpl(bigMsgs, 200000)
-    assert(/保留首 400/.test(bigKeep[2].content as string), 'trim: keep 自适应(大阈值→400)')
+    // keep 自适应:小 token 阈值保留首 100,大 token 阈值保留首 400(clamp;keep = max(100,min(400, round(maxTokens/500))))
+    const smallKeep = trimContextIfNeededImpl(msgs, 300) // round(300/500)=1 → clamp 100
+    assert(/保留首 100/.test(smallKeep[2].content as string), 'trim: keep 自适应(小 token 阈值→100)')
+    const bigMsgs = [new SystemMessage('s'), new HumanMessage('q'), new ToolMessage({ tool_call_id: '1', content: 'x'.repeat(1000000) })] // 1000000 'x' ≈ 250000 token > 200000 → 触发 trim
+    const bigKeep = trimContextIfNeededImpl(bigMsgs, 200000) // round(200000/500)=400
+    assert(/保留首 400/.test(bigKeep[2].content as string), 'trim: keep 自适应(大 token 阈值→400)')
 
     // ④ tool_result 事件带耗时(durationMs):工具执行后回填,UI 步骤行展示;独立计时,不依赖 tracing 开关
     const collected: any[] = []
@@ -247,5 +297,35 @@ export async function run(ctx: TestCtx): Promise<void> {
     const toolResults = collected.filter((e) => e.type === 'tool_result')
     assert(toolResults.length > 0, 'tool_result 事件发出(工具被调用)')
     assert(toolResults.every((e) => typeof e.durationMs === 'number' && e.durationMs >= 0), 'tool_result 带 durationMs(非负 number,供步骤行展示耗时)')
+
+    // ============ Phase 5(harden-context-resilience):系统段预算截断 + base 超窗 fatal ============
+    console.log('\n[harness: 系统段预算截断 + systemPrompt 超窗 fatal]')
+    {
+      // buildSystemPrompt 超预算 → drop 非 pin 段(保 base + mission/workingMemory pin)
+      const bigDataHint: Middleware = { name: 'dataHint', augmentPrompt: () => 'D'.repeat(400000) } // ~100K token(最大,先 drop)
+      const missionPin: Middleware = { name: 'mission', augmentPrompt: () => '## 当前主线目标\n完成 X' }
+      const memMw: Middleware = { name: 'memory', augmentPrompt: () => 'M'.repeat(100000) } // ~25K token(drop dataHint 后达标,保留)
+      const agentP5 = createAgent({ llm: new MockLLM([{ content: 'ok' }]) as any, contextWindow: 200000, middleware: [bigDataHint, missionPin, memMw] })
+      const eff = (agentP5 as any).getEffectiveSystemPrompt()
+      const effTokens = estimateTokens(eff)
+      assert(effTokens < 50000, 'Phase 5:系统段超预算 → drop 非 pin 段收敛到 < budget(200K 窗口 × 25% = 50K)')
+      assert(/当前主线目标/.test(eff), 'Phase 5:mission pin 段保留(跨压缩锚定不丢)')
+      assert(!/D{1000}/.test(eff), 'Phase 5:dataHint(最大非 pin 段)被优先 drop')
+      assert(/M{1000}/.test(eff), 'Phase 5:memory(drop dataHint 后达标,保留;非一刀切全 drop)')
+
+      // systemPrompt(base)本身超预算 → stream fatal(emit error + done,不进 ReAct)
+      const hugePrompt = 'Z'.repeat(2000000) // ~500K token >> 50K budget
+      const agentP5b = createAgent({ llm: new MockLLM([{ content: 'ok' }]) as any, contextWindow: 200000, systemPrompt: hugePrompt })
+      let p5Err = false
+      await agentP5b.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], (e: any) => { if (e.type === 'error') p5Err = true }, undefined)
+      assert(p5Err, 'Phase 5:systemPrompt 超 system 段预算 → stream emit error(fatal 早退,不进 ReAct 循环)')
+
+      // 对照:正常 systemPrompt(不超预算)→ 不 fatal,正常跑完
+      const agentP5c = createAgent({ llm: new MockLLM([{ content: '正常回复' }]) as any, contextWindow: 200000, systemPrompt: '你是助手。' })
+      let p5cDone = ''
+      let p5cErr = false
+      await agentP5c.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], (e: any) => { if (e.type === 'done') p5cDone = e.content; if (e.type === 'error') p5cErr = true }, undefined)
+      assert(!p5cErr && p5cDone === '正常回复', 'Phase 5:正常 systemPrompt(不超预算)→ 不 fatal,正常跑完(误伤守卫)')
+    }
   }
 }

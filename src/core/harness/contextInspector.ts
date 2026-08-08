@@ -22,6 +22,8 @@ export interface ContextInspectorOptions {
 export interface ContextInspectorMiddleware extends Middleware {
   /** 读最近一次 wrapModelCall 快照(供 inspectContext / inspect().context) */
   getSnapshot(): ContextSnapshot | undefined
+  /** 更新 contextWindow(setLlm 后回灌,下轮快照 occupancy 按新窗口算) */
+  setContextWindow(cw: number): void
 }
 
 /**
@@ -30,12 +32,17 @@ export interface ContextInspectorMiddleware extends Middleware {
  */
 export function createContextInspectorMiddleware(opts: ContextInspectorOptions = {}): ContextInspectorMiddleware {
   let snapshot: ContextSnapshot | undefined
+  // let:harden-context-resilience,setLlm 后经 setContextWindow 回灌新窗口(下轮 occupancy 按新窗口算)
+  let contextWindow = opts.contextWindow
   return {
     name: 'context-inspector',
     async wrapModelCall(req: ModelRequest, next: (req: ModelRequest) => Promise<ModelResponse>): Promise<ModelResponse> {
-      snapshot = analyzeContext(req.messages, opts)
+      snapshot = analyzeContext(req.messages, { contextWindow, thresholdRatio: opts.thresholdRatio })
       return next(req)
     },
     getSnapshot: () => snapshot,
+    setContextWindow: (cw: number) => {
+      contextWindow = cw
+    },
   }
 }

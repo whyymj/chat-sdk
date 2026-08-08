@@ -6,6 +6,15 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(上下文健壮性 · harden-context-resilience)
+- **硬地板:contextWindow ≥200K**:启动 / `setLlm` / 子 agent 解析后,`contextWindow < 200000` → throw(排除 128K 档主流如老款 `deepseek`/`gpt-4o`/`glm-4.5`/`qwen-max`,SDK 默认 `deepseek-v4`/`glm-5.2`/`claude-*`/`kimi`/`qwen-1m`)。集成方换 ≥200K 模型或 `llm:{contextWindow}` 声明覆盖。`MIN_CONTEXT_WINDOW` 导出可调。
+- **三道闸阈值跟随实时窗口**:offload / trim / compress 阈值此前创建时按 `contextWindow` 固化,`setLlm` 切模型后陈旧 → 切小窗口 + 恢复大历史可能裸失败。修复:`createAgent.setModelCaps` + summarization/contextInspector 中间件 `setContextWindow` controller,`setLlm` 集中回灌新窗口;子 agent 也从实例提取 model 名正确解析(兼修 gpt-3.5→16K silent bug)。
+- **P2 反应性重试(超限不裸失败)**:`coreModelCall` 双 catch(启动同步抛 + 迭代首 chunk 抛)识别 `isContextLengthError`(复用 langchain `ContextOverflowError` + 兜底正则,与 `isRetryable` 正交)→ 激进 trim(30% 窗口)→ 单次重试(`_ctxRetry` 防死循环)→ 仍超抛。迭代中已 emit 不重试(未 emit 守卫 `aggregated===null && content===''`)。
+- **vfs 引用保护 + OOM 兜底**:`VfsStore.setProtectedRefs(extractVfsRefs(msgs))` stream 入口注入;LRU 删前跳过被引用的 `large_results`(防 `vfs_read` 404);池 > `poolMax × 1.5` 强制 LRU 删到 watermark(防全池被保护不收敛)。
+- **系统段预算**:system 段超 `25% × contextWindow` → 非 pin 段从大到小 drop(保 base/mission/workingMemory,dataHint 巨型 schema 常最大先丢);systemPrompt 本身超预算 → stream 早退 `SYSTEM_PROMPT_OVER_BUDGET`(不进 ReAct)。
+- **预防口径**:H1 `trimContextIfNeeded` 改 token 口径 + 单轮 ≤60% 窗口复查;H2 `compress` 组装后算 totalTokens 仍超 warn。
+- 新增导出 `isContextLengthError` / `MIN_CONTEXT_WINDOW`;selftest 1295→1342 / e2e 349→353。
+
 ### Added(上下文聚焦 · focus-context)
 - **上下文聚焦 Focus(指定组件精修)**:多组件页面精修其中一个时,聚焦后 agent 的**目标 / 视野 / 范围三层收敛**到单组件子树,避免改到别处。会话级焦点 `{ path, label? }`(path=jsonPath 锚点,如 `components.3`),opt-in(需 `setFocus` 才生效,默认不聚焦行为与现状完全一致,向后兼容)。
   - **三层收敛**:① 目标提示(augmentPrompt 注入「## 当前精修目标」);② 视野收敛(注入 `getSchemaAtPath(schema, path)` 子树 schema 描述,LLM 每轮只看该组件结构);③ 范围收紧 **strict**(wrapToolCall 对写工具拦截,`jsonPath` 不以 `focus.path` 为前缀 → `PATH_DENIED` 越界回灌自纠;读工具不限)。**pin 段天然跨压缩**(focus 在中间件 state 不在 messages,同 mission/workingMemory)。
