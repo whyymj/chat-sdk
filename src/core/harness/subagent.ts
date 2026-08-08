@@ -141,7 +141,8 @@ async function runSubagent(
   // 子 agent 工具子集:只读白名单 + 用户 allowedTools;排除 spawn(防递归)
   const allow = new Set([...DEFAULT_READONLY_TOOLS, ...(opts.allowedTools ?? [])])
   // P1-4:allTools 支持 getter —— 子 agent spawn 时取主 agent 最新工具集(运行时 setTools/addTool 动态加的工具对子 agent 可见,不再用装配期快照)
-  const getAllTools = typeof opts.allTools === 'function' ? opts.allTools : () => opts.allTools
+  const getAllTools: () => StructuredToolInterface[] = () =>
+    typeof opts.allTools === 'function' ? opts.allTools() : opts.allTools
   // 子 agent 工具:主 allTools 按白名单筛只读子集 + extraTools(预声明子 agent 的专属工具,不经筛选)
   let childTools = [
     ...getAllTools().filter((t) => allow.has(t.name) && !SPAWN_TOOL_NAMES.includes(t.name)),

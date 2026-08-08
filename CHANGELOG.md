@@ -6,6 +6,18 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(Anthropic 开箱 · anthropic-provider)
+- **Anthropic provider 开箱支持**:`LLMConfig.provider:'anthropic'` + 动态 import `@langchain/anthropic`,走 Claude 原生协议(覆盖 Claude 用户场景,与 DeepSeek/OpenAI 协议并列)。缺省 provider → openai(向后兼容,现有 DeepSeek/OpenAI 集成零改动)。新建 `src/core/llm/constructLlm.ts`:`constructLlmFromConfig`(async,provider 分支收口 6 处 `new ChatOpenAI`)+ `constructOpenLlmSync`(同步 openai 分支,供 `setLlm` 同步契约)。
+- **async 下沉零契约破坏**:主 LLM 走 `initDone`(async IIFE)构造实例注入 createAgent(绕过同步兜底);`summaryLlm`/`titleLlm` lazy 构造(首次 invoke 时 await,保 `resolveLlm` 同步签名,Anthropic 动态 import 不阻塞 mount/send);`setLlm` 同步契约不变 —— 切 Anthropic 需传 `BaseChatModel` 实例(`isChatModel` 分支天然支持任意 provider),传 `LLMConfig` + `provider:'anthropic'` throw 清晰提示。
+- **streaming 三处 provider 兼容**(OpenAI/DeepSeek 零回归):① content parts 数组(Anthropic 流式是 `{type:'text',text}` parts 数组,OpenAI/DeepSeek 是 string;`extractTextDelta` helper 兼容,否则 Anthropic 流式文本不显示);② reasoning(DeepSeek `additional_kwargs.reasoning_content` vs Anthropic content parts 内 `{type:'thinking',thinking}`);③ trace span usage(`additional_kwargs.usage` vs `response_metadata.usage` fallback;主链 usage 累加已多 provider fallback)。
+- **provider 抽离收口**:`@langchain/anthropic` optional peerDep(不用不强求装,动态 import 仅 provider:'anthropic' 加载);`@langchain/core` 升 1.2.4→1.2.5(anthropic 1.5.4 依赖 `utils/gateway` 子路径);vite external `/^@langchain\//` + UMD globals 覆盖 anthropic;**IIFE(CDN 全量)external anthropic**(不打包进 CDN 包,默认 OpenAI/DeepSeek;要用 Anthropic 走 ESM/UMD npm —— 浏览器 CDN 无 importmap 无法解析 bare specifier)。`createProxyLlm` 保持 OpenAI-only(标注:proxy 模式注入 Bearer 是 OpenAI 协议;Anthropic 走主 LLM 直连)。
+- **streaming 兼容抽纯函数 + demo**:`extractTextDelta`/`extractReasoningDelta`/`extractUsage` 抽到 `src/core/utils/contentParts.ts`(导出,纯函数可单测;createAgent 流式循环改用,行为不变);新增 `examples/anthropic-demo/`(`provider:'anthropic'` + Claude 流式参考)。
+- 新增导出 `constructLlmFromConfig`/`constructOpenLlmSync`/`ConstructOpts` + `extractTextDelta`/`extractReasoningDelta`/`extractUsage`;selftest 1246→1270(sec-53 constructLlm provider 分支 + contentParts 纯函数 string/parts/thinking/usage 全覆盖);e2e 316→322(llm-provider:anthropic mount + setLlm throw + openai 路径)。
+
+### Fixed
+- **css 产物名/exports 不一致修复**(pre-existing,2.24.1 起):build 经 `assetFileNames` 生成 `dist/style.css`,匹配 `package.json` exports `"./style.css"` + size-check。集成方 `import 'page-agent-sdk/style.css'` 不再 404。
+- **tsc 类型债清理**(context-persist/arch-review 改动遗留):mission mw `reset` 注解 / subagent `allTools` getter 闭包 narrow / `ChatSdk.inspectContext` interface / llmResolver title invoke `extractText(m)`→`m.content`。src `npx tsc` 0 error(发布门禁)。
+
 ### Added(长对话上下文韧性 P1 · recall-and-trim-llm)
 - **跨轮召回纳入工具结果**:关键词召回(`recallRounds`)此前只匹配对话文本(user/assistant content),不含工具结果 → 问「之前 read 出来的 X 是什么」搜不到,只能重新 read(浪费 token)。修复:召回匹配串纳入 `steps.result`(经 `plainSummary` 截断 120 字防大 result 撑爆),跨轮工具结果可被关键词命中。
 - **trim 异步 LLM 增强**:内存裁剪(`trimMemoryMessagesImpl`)用固定模板摘要(问 60/答 80 字),永远不走 LLM —— 即便 `enableLLMSummary:true`(默认 auto 即开),落盘/恢复的早期历史仍是模板,与 summarization 的 LLM 摘要质量不一致。修复:trim 触发后**同步模板占位**(契约不变、优雅降级),异步用 LLM 重摘要 older 轮次替换(照 `titleLlmInvoke` fire-and-forget 模式);`messages.indexOf(summaryMsg)` 竞态守卫(未被动过才替换),LLM 失败/无 invoke 保留模板。配置门尊重 `enableLLMSummary`(conservative 预设不触发)。`trimMemoryMessagesImpl` 返回值增 `older`/`prevSeg`(纯函数逻辑不动);新增纯函数 `composeTrimSummary`。selftest 1231→1239(sec-32 召回含 steps + trim 返回 older + composeTrimSummary)。

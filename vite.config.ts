@@ -22,6 +22,12 @@ export default defineConfig({
           '@langchain/core/messages': 'LangchainCoreMessages',
           '@langchain/core/tools': 'LangchainCoreTools',
           '@langchain/textsplitters': 'LangchainTextsplitters',
+          '@langchain/anthropic': 'LangchainAnthropic',
+        },
+        // css 产物命名为 style.css(匹配 package.json exports "./style.css" + size-check;修复产物名/exports 不一致致集成方 import 'page-agent-sdk/style.css' 404)
+        assetFileNames: (chunkInfo) => {
+          const names = (chunkInfo as any).names ?? []
+          return names.some((n: string) => n.endsWith('.css')) ? 'style.css' : 'assets/[name][extname]'
         },
       },
     },

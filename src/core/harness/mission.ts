@@ -54,6 +54,7 @@ export function createMissionMiddleware(): Middleware & {
   const mw: Middleware & {
     setMission: (m: Partial<Mission>) => void
     getMission: () => Mission | undefined
+    reset: () => void
   } = {
     name: 'mission',
     beforeAgent: (state) => {

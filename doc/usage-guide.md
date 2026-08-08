@@ -1371,6 +1371,26 @@ createChatSdk({
 > - 智谱 GLM:`https://open.bigmodel.cn/api/paas/v4`
 > - 文心一言:`https://qianfan.baidubce.com/v2`
 
+#### 方式一·补充:Anthropic Claude(provider 开箱,2.28+)
+
+除 OpenAI 协议外,SDK 开箱支持 Anthropic Claude 原生协议(`provider:'anthropic'` 动态加载 `@langchain/anthropic`,不用不强求装):
+
+```ts
+createChatSdk({
+  llm: {
+    provider: 'anthropic',          // 走 Claude 原生协议(缺省 'openai' = OpenAI/DeepSeek 协议,向后兼容)
+    apiKey: 'sk-ant-xxx',
+    model: 'claude-sonnet-4-5-20250929',
+    baseUrl: 'https://api.anthropic.com',  // 可选,默认官方;自建网关填此处
+  },
+}).mount()
+```
+
+> - `@langchain/anthropic` 是 **optional peerDep** —— 用 Anthropic 才需装(`npm i @langchain/anthropic`),不用 Anthropic 的项目零影响(动态 import 仅 `provider:'anthropic'` 分支加载)
+> - `setLlm` 切 Anthropic 需传 `BaseChatModel` 实例(动态 import 无法同步):`const { ChatAnthropic } = await import('@langchain/anthropic'); sdk.setLlm(new ChatAnthropic({ apiKey, model }))`;传 `LLMConfig + provider:'anthropic'` 会 throw 清晰提示
+> - **IIFE(CDN `<script>`)不支持 Anthropic**(浏览器无 importmap 解析 bare specifier);用 Anthropic 走 npm(ESM/UMD)。CDN 全量包不打包 `@langchain/anthropic`(默认 OpenAI/DeepSeek)
+> - 代理模式 `createProxyLlm` 保持 OpenAI-only(注入 Bearer 是 OpenAI 协议);Anthropic 走主 `llm` 直连或预构造 `ChatAnthropic` 实例传入
+
 #### 方式二:代理模式(防 apiKey 泄露)
 
 适合公开网站 —— 浏览器只持有用户 token,真实 apiKey 留在服务端代理。用 `createProxyLlm`:

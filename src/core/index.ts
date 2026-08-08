@@ -9,6 +9,9 @@ export { z } from 'zod'
 // 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
 export { createProxyLlm } from './llm/proxyLlm'
 export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
+export { constructLlmFromConfig, constructOpenLlmSync } from './llm/constructLlm'
+export type { ConstructOpts } from './llm/constructLlm'
+export { extractTextDelta, extractReasoningDelta, extractUsage } from './utils/contentParts'
 // SDK 命令式入口
 export { createChatSdk } from './sdk/createChatSdk'
 export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, SystemAugmentContext } from './sdk/createChatSdk'

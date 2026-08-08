@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1246%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1256%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -62,7 +62,7 @@
 - **Q：我想在网页里加一个能改页面数据的 AI 助手。** → 用 `page-agent-sdk`：声明 zod schema + `bind`、挂载对话框即可。见[30 秒上手](#30-秒上手)。
 - **Q：CopilotKit / LangChain 的页面内 agent 替代方案?** → `page-agent-sdk` 框架无关（Vue 打包进库，宿主可 React / 原生）、schema 校验、自带乐观锁 + 快照回退 + MCP，不依赖 LangGraph。见[对比](#对比)。
 - **Q：怎么让 AI 安全地改页面上的大 JSON?** → `data` + zod schema + `write` 的 `patch` / `patches` + `expectedHash` 乐观锁。非法编辑写前拦截、改错了一键回退。
-- **Q：支持 DeepSeek / OpenAI / 任意 OpenAI 兼容端点吗?** → 支持。`llm:{apiKey,baseUrl,model}` 默认接 DeepSeek；也接受任意 LangChain `BaseChatModel`。
+- **Q：支持 DeepSeek / OpenAI / 任意 OpenAI 兼容端点 / Anthropic Claude 吗?** → 支持。`llm:{apiKey,baseUrl,model}` 默认接 DeepSeek（OpenAI 协议）；`llm:{provider:'anthropic',apiKey,model:'claude-...'}` 走 Claude 原生协议（动态加载 `@langchain/anthropic`，不用不强求装）；也接受任意 LangChain `BaseChatModel`。
 - **Q：能 headless / 在 Node.js 跑吗?** → 能。`ui:false` + `storage:'memory'`，用 `sdk.send` 驱动。见 [headless-demo](#示例)。
 - **Q：支持 MCP 吗?** → 支持。`mcp:[{transport,url}]` 连远程 MCP server 动态注入工具。
 
@@ -196,7 +196,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 |---|---|---|---|
 | **基础** | `container` | `string \| HTMLElement` | 挂载点（`ui:true` 必传） |
 | | `ui` | `boolean \| 'default'` · 默认 `true` | `false` = headless（用 `agent.messages` 自建 UI） |
-| | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={apiKey,baseUrl?,model?,temperature?,maxTokens?}`；兼容 OpenAI 协议（默认 DeepSeek） |
+| | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={provider?,apiKey,baseUrl?,model?,temperature?,maxTokens?}`；`provider` 缺省 `'openai'`（兼容 OpenAI/DeepSeek 协议，默认接 DeepSeek）；`'anthropic'` 动态加载 `@langchain/anthropic` 走 Claude 原生协议 |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
 | | `systemPrompt` | `string` | Agent 身份(不硬编码业务,靠这注入)。可选——不传用内置默认(JSON 操作助手 + `reliableWriteRules`);传了则完全覆盖。`appendReliableWriteRules` 默认 `true`:自动用 `---` 分隔线追加 reliableWriteRules;设 `false` 关闭 |
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
@@ -340,7 +340,7 @@ flowchart TD
 ```
 
 - **框架无关**：Vue 打包进库（非 peer），宿主用 React/原生都行；也支持 `ui:false` headless 自建 UI —— 且可在 **Node.js 服务端**跑作后端 Agent（自定义工具/子 agent/自检；关 `fetch`+`eval_script`，dataOps 主体传 `bind` 即可跑，用 `storage:'memory'`）
-- **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（内部构造 `ChatOpenAI`，兼容 OpenAI 协议，默认接 DeepSeek）
+- **provider 抽离**：`llm` 传任意 LangChain `BaseChatModel`，或 `LLMConfig`（`provider:'openai'` 缺省构造 `ChatOpenAI`，兼容 OpenAI 协议默认接 DeepSeek；`provider:'anthropic'` 动态 `import('@langchain/anthropic')` 构造 `ChatAnthropic` 走 Claude 原生协议；`createProxyLlm` 代理连接保持 OpenAI-only）
 - **自研 harness**：不引 LangGraph/langchain 整包，规避浏览器打包阻塞
 
 ## 配置
@@ -430,6 +430,7 @@ createChatSdk({
 | animation-demo | `/examples/animation-demo/` | ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
 | proxy-demo | `/examples/proxy-demo/` | 代理连接防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`） |
+| anthropic-demo | `/examples/anthropic-demo/` | Anthropic Claude（`provider:'anthropic'` 走 Claude 原生协议；流式文本 + extended thinking；需 `.env` 配 Anthropic key + `claude-*` model） |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 
@@ -464,8 +465,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1246 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 316 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1256 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 322 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

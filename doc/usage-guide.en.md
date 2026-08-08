@@ -1049,7 +1049,7 @@ data: [DONE]
 
 **401 refresh** (proxy mode only): when the proxy returns `401`, the SDK auto-calls `refreshToken`, gets a new token, and retries the original request once.
 
-**Unsupported formats**: non-OpenAI protocols (e.g. native Claude `/v1/messages`, Gemini `generateContent`) require backend protocol translation, returning OpenAI format to the SDK; custom RPC / GraphQL likewise — translate to OpenAI-compatible responses on the backend.
+**Non-OpenAI protocols**: Anthropic Claude (native `/v1/messages`) is supported **out of the box** — set `llm.provider = 'anthropic'` and the SDK dynamic-loads `@langchain/anthropic` (optional peer; see [Anthropic provider](#864-anthropic-claude-provider-out-of-the-box-228)). Other non-OpenAI protocols (e.g. Gemini `generateContent`) still require backend translation to OpenAI-compatible format; custom RPC / GraphQL likewise.
 
 #### 8.6.2 Proxy server example (Node.js)
 
@@ -1152,6 +1152,26 @@ See `demo/plain.html` (importmap + esm.sh providing peer deps). IIFE one-liner:
 ```
 
 Headless (`ui:false`): no built-in dialog; use `agent.messages` (reactive array) + `send`/`stream` to build your own UI — fully framework-agnostic (no Vue forced).
+
+#### 8.6.4 Anthropic Claude provider (out of the box, 2.28+)
+
+Besides OpenAI-compatible protocols, the SDK supports Anthropic Claude's native protocol out of the box (`provider:'anthropic'` dynamic-loads `@langchain/anthropic`, optional peer):
+
+```ts
+createChatSdk({
+  llm: {
+    provider: 'anthropic',          // Claude native protocol (default 'openai' = OpenAI/DeepSeek, backward-compatible)
+    apiKey: 'sk-ant-xxx',
+    model: 'claude-sonnet-4-5-20250929',
+    baseUrl: 'https://api.anthropic.com',  // optional, official by default; custom gateway here
+  },
+}).mount()
+```
+
+> - `@langchain/anthropic` is an **optional peerDep** — install only when using Anthropic (`npm i @langchain/anthropic`); projects not using Anthropic are unaffected (dynamic import loads only in the `provider:'anthropic'` branch)
+> - `setLlm` to Anthropic requires a `BaseChatModel` instance (dynamic import can't be synchronous): `const { ChatAnthropic } = await import('@langchain/anthropic'); sdk.setLlm(new ChatAnthropic({ apiKey, model }))`; passing `LLMConfig + provider:'anthropic'` throws a clear hint
+> - **IIFE (CDN `<script>`) does not support Anthropic** (browser has no importmap to resolve the bare specifier); use npm (ESM/UMD) for Anthropic. The CDN bundle does not bundle `@langchain/anthropic` (defaults to OpenAI/DeepSeek)
+> - Proxy mode `createProxyLlm` stays OpenAI-only (Bearer is an OpenAI-protocol header); for Anthropic use the main `llm` direct connection or a pre-built `ChatAnthropic` instance
 
 ## 9. Environment variables
 

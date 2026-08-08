@@ -25,6 +25,7 @@ import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { resolveModelCaps, offloadThresholdChars, offloadPassThroughChars } from '../utils/modelCaps'
 import { getTraceMetrics } from '../utils/traceMetrics'
+import { extractTextDelta, extractReasoningDelta, extractUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import {
@@ -414,13 +415,13 @@ export function createAgent(options: CreateAgentOptions) {
     try {
       for await (const chunk of stream) {
         aggregated = aggregated ? aggregated.concat(chunk) : chunk
-        const textDelta = typeof chunk.content === 'string' ? chunk.content : ''
+        const textDelta = extractTextDelta(chunk)
         if (textDelta && onEvent) {
           content += textDelta
           onEvent({ type: 'text', delta: textDelta })
         }
-        const ak: any = (chunk as any).additional_kwargs || {}
-        const rDelta = ak.reasoning_content || ak.reasoning || ''
+        // reasoning 兼容:DeepSeek/OpenAI additional_kwargs.reasoning_content + Anthropic thinking parts(extractReasoningDelta 统一)
+        const rDelta = extractReasoningDelta(chunk)
         if (rDelta && onEvent) onEvent({ type: 'reasoning', delta: rDelta })
       }
     } catch (err) {
@@ -573,7 +574,8 @@ export function createAgent(options: CreateAgentOptions) {
         currentMessages.push(response.message)
 
         log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
-        endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: (response.message as any)?.additional_kwargs?.usage })
+        // usage 兼容:OpenAI/DeepSeek additional_kwargs.usage + Anthropic response_metadata.usage(extractUsage 统一;主链 usage 累加已在 sdk-events 多 provider fallback)
+        endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: extractUsage(response.message) })
 
         state = runAfterModel(middlewares, response, state)
 

@@ -26,7 +26,7 @@
 
 > 2026-08-08 状态(评审核实后更新):此前 12 个活跃 change 中 **7 个已陆续归档/发布** —— `fix-write-safety-bypass`(2.23)/ `tool-name-collision`(2.23)/ `context-inspector`(2.25)/ `simplify-toolset`(2.25)/ `skill-external-scripts`(2.26)/ `session-history-management`(2.26)/ `arch-review-p1-fixes`(2.24.1 部分)。剩 6 个活跃 + 本次新增 1 个。
 
-**当前在推进**:`2026-08-08-context-persist-resilience`(mission/workingMemory 跨刷新持久化 + `context_trimmed` 原文归档事件,从 context-history A 类收口;做完 umbrella 归档)。`recall-and-trim-llm`(P1 召回纳入 steps + trim LLM 增强)已实施(selftest 1239 / e2e 312 全绿),待发布。
+**2026-08-08 发布 2.27.0**:`recall-and-trim-llm`(P1 召回纳入 steps + trim LLM 增强)+ `context-persist-resilience`(mission/workingMemory 跨刷新持久化 + trim 收口:`context_trimmed` 归档事件带 vfs 大结果 + vfs 孤儿可达性 GC)实施完成并发布;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。**活跃 5 个均 deferred/暂缓**(等痛点驱动,见 [`changes/README.md`](./changes/README.md) + [`deferred.md`](./deferred.md))。
 
 **其余活跃(评估暂缓,见 [`deferred.md`](./deferred.md) 2026-08-08 块)**:`placeholder-protected-read-write`(精确值保护诉求未现)/ `agent-driven-compression`(压缩未成痛点,前置 context-inspector 已就绪)/ `chatdialog-component-split`(纯 UI 重构无功能价值)/ `focus-context`(越界痛点未现)/ `context-history-resilience` umbrella(P2-P3 + 6 待决策点继续讨论);`harden-large-json-write` **主体完成**(A1 安全 + A5 提示已发布,剩 7 项性能/协同设计推后进 deferred)。
 

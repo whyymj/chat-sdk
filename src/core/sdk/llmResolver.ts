@@ -5,11 +5,11 @@
  * 注:主 LLM 实例化(currentLlm)与 setLlm 运行时切换由 buildCore/createAgent 管(闭包依赖 modelCaps/currentLlm),
  * 本模块只解析 modelCaps + summaryLlmInvoke + 提供实例判定/文本提取。
  */
-import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, type ModelCaps } from '../utils/modelCaps'
 import type { ChatSdkOptions, LLMConfig } from './createChatSdk'
+import { constructLlmFromConfig } from '../llm/constructLlm'
 import type { AgentMessage } from '../types'
 
 /**
@@ -55,33 +55,25 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
   const temperature = options.summaryTemperature ?? 0.3
   const maxTokens = options.summaryMaxTokens ?? 1024
   const timeoutMs = options.summaryTimeoutMs ?? 15000
-  let llm: BaseChatModel
-  if (isChatModel(llmOpt)) {
-    llm = llmOpt
-  } else {
-    const cfg = llmOpt as LLMConfig
-    if (!cfg.apiKey) {
-      // 显式配了 summaryLlm 却无效(apiKey 缺失):非 debug 也 warn,避免"以为用了专用模型实际回退了主模型/索引摘要"
-      if (options.summaryLlm) {
-        console.warn('[page-agent-sdk][summarization] summaryLlm 已配置但缺 apiKey,摘要回退主 agent 模型或零成本索引摘要')
-      }
-      return undefined
+  // 实例直用(presetLlm);LLMConfig cfg lazy 构造(首次 invoke,async 上下文承载 Anthropic 动态 import,不阻塞 resolveLlm 同步签名)
+  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null
+  const cfg: LLMConfig | null = isChatModel(llmOpt) ? null : (llmOpt as LLMConfig)
+  if (cfg && !cfg.apiKey) {
+    // 显式配了 summaryLlm 却无效(apiKey 缺失):非 debug 也 warn,避免"以为用了专用模型实际回退了主模型/索引摘要"
+    if (options.summaryLlm) {
+      console.warn('[page-agent-sdk][summarization] summaryLlm 已配置但缺 apiKey,摘要回退主 agent 模型或零成本索引摘要')
     }
-    llm = new ChatOpenAI({
-      apiKey: cfg.apiKey,
-      model: cfg.model,
-      temperature,
-      maxTokens,
-      configuration: { ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}), ...cfg.extraConfig },
-      ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
-    })
+    return undefined
   }
+  let cachedLlm: BaseChatModel | null = presetLlm
   return async (prompt: string) => {
     // 超时保护:摘要 LLM 卡住时 reject → useContextManager 的 try/catch 回退索引摘要,不阻塞用户首次响应
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), timeoutMs)
     try {
-      const res = await llm.invoke(
+      // lazy 构造:首次 invoke(async);失败抛 → useContextManager compress 的 try/catch 回退索引摘要
+      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature, maxTokens })
+      const res = await cachedLlm!.invoke(
         [
           new SystemMessage('你是对话历史压缩助手。把下面按轮次索引的对话要点,改写成一段连贯、紧凑的中文摘要,保留关键事实、用户意图与已用工具,不要编造。直接输出摘要正文。'),
           new HumanMessage(prompt),
@@ -103,28 +95,23 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
 export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentMessage[]) => Promise<string>) | undefined {
   const llmOpt = options.titleLlm ?? options.summaryLlm ?? options.llm
   if (!llmOpt) return undefined
-  let llm: BaseChatModel
-  if (isChatModel(llmOpt)) {
-    llm = llmOpt
-  } else {
-    const cfg = llmOpt as LLMConfig
-    if (!cfg.apiKey) return undefined
-    llm = new ChatOpenAI({
-      apiKey: cfg.apiKey, model: cfg.model, temperature: 0, maxTokens: 30,
-      configuration: { ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}), ...cfg.extraConfig },
-      ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
-    })
-  }
+  // 实例直用(presetLlm);LLMConfig cfg lazy 构造(首次 invoke,async 承载 Anthropic 动态 import)
+  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null
+  const cfg: LLMConfig | null = isChatModel(llmOpt) ? null : (llmOpt as LLMConfig)
+  if (cfg && !cfg.apiKey) return undefined
+  let cachedLlm: BaseChatModel | null = presetLlm
   return async (messages: AgentMessage[]) => {
     const dialogue = messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${extractText(m)}`)
+      .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
       .join('\n')
       .slice(0, 800)
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), 10000)
     try {
-      const res = await llm.invoke(
+      // lazy 构造:首次 invoke(async);失败抛 → 外层 catch return ''(fire-and-forget 容错)
+      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature: 0, maxTokens: 30 })
+      const res = await cachedLlm!.invoke(
         [
           new SystemMessage('根据以下对话的主旨,生成一个简短的中文标题(不超过15个字,不要标点和引号,直接输出标题文字)。'),
           new HumanMessage(dialogue),

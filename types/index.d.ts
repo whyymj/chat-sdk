@@ -15,6 +15,20 @@ export interface ProxyLlmOptions {
   headers?: Record<string, string>;
 }
 export declare function createProxyLlm(opts: ProxyLlmOptions): import('@langchain/core/language_models/chat_models').BaseChatModel;
+export interface ConstructOpts {
+  temperature?: number;
+  maxTokens?: number;
+}
+/** 同步构造 OpenAI 协议 LLM(仅 openai 分支;Anthropic 无同步构造,用 constructLlmFromConfig) */
+export declare function constructOpenLlmSync(cfg: LLMConfig, opts?: ConstructOpts): import('@langchain/core/language_models/chat_models').BaseChatModel;
+/** 按 provider 分支构造 LLM(openai 同步 / anthropic 动态 import @langchain/anthropic);缺省 provider → openai */
+export declare function constructLlmFromConfig(cfg: LLMConfig, opts?: ConstructOpts): Promise<import('@langchain/core/language_models/chat_models').BaseChatModel>;
+/** 从流式 chunk 提取文本 delta(兼容 OpenAI string content 与 Anthropic parts 数组) */
+export declare function extractTextDelta(chunk: import('@langchain/core/messages').AIMessageChunk): string;
+/** 从流式 chunk 提取推理 delta(DeepSeek additional_kwargs.reasoning_content + Anthropic thinking parts) */
+export declare function extractReasoningDelta(chunk: import('@langchain/core/messages').AIMessageChunk): string;
+/** 从响应消息提取 token usage(OpenAI additional_kwargs.usage + Anthropic response_metadata.usage) */
+export declare function extractUsage(message: import('@langchain/core/messages').BaseMessage): any;
 
 export interface ToolStep {
   name: string;
@@ -242,6 +256,8 @@ export declare function useChat(opts?: any): any;
 // ===== 框架无关 SDK(页面内 Agent)=====
 export interface LLMConfig {
   apiKey: string;
+  /** provider 选择:缺省 'openai'(兼容 OpenAI/DeepSeek 协议,向后兼容);'anthropic' 动态加载 @langchain/anthropic 走 Claude */
+  provider?: 'openai' | 'anthropic';
   baseUrl?: string;
   model?: string;
   temperature?: number;

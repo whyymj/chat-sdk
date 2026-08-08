@@ -28,8 +28,18 @@ export default defineConfig({
       formats: ['iife'],
     },
     rollupOptions: {
+      // Anthropic 走 ESM/UMD(npm)动态 import;IIFE(CDN <script>)不支持 Anthropic ——
+      // 浏览器无 importmap 解析 bare specifier '@langchain/anthropic'。
+      // 不用 Anthropic 的 IIFE 用户不受影响(constructLlm 仅 provider:'anthropic' 分支才 import);
+      // 要用 Anthropic 请用 ESM/UMD(npm import),external 避免把 @langchain/anthropic(~+400KB)打进 CDN 全量包。
+      external: ['@langchain/anthropic'],
       output: {
         exports: 'named',
+        // css 产物命名为 style.css(与主构建一致,匹配 exports ./style.css)
+        assetFileNames: (chunkInfo) => {
+          const names = (chunkInfo as any).names ?? []
+          return names.some((n: string) => n.endsWith('.css')) ? 'style.css' : 'assets/[name][extname]'
+        },
         // IIFE 单文件(codeSplitting: false)自动内联动态 import → MCP SDK 经此打进(无需显式 inlineDynamicImports)
         // 注入到 IIFE 函数体顶部(IIFE 内局部 var,不污染全局):宿主有 process(Node)则用之,否则用浏览器 shim
         intro:

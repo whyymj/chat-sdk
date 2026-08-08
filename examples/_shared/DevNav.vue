@@ -23,6 +23,7 @@ const LINKS = [
   { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
   { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
   { href: '/examples/proxy-demo/', label: '代理连接', match: (p: string) => p.startsWith('/examples/proxy-demo') },
+  { href: '/examples/anthropic-demo/', label: 'Anthropic', match: (p: string) => p.startsWith('/examples/anthropic-demo') },
   { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
 ]
 const path = typeof location !== 'undefined' ? location.pathname : ''

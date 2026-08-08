@@ -20,6 +20,8 @@
  *
  * 兼容性说明:
  * - 内部用 ChatOpenAI,要求接口为 OpenAI Chat Completions 兼容格式(请求/响应/SSE 流)
+ * - 仅 OpenAI 协议(proxy 模式注入 Bearer token 是 OpenAI 协议;Anthropic 用 x-api-key + 不同协议);
+ *   Claude 走 `createChatSdk({ llm: { provider: 'anthropic', apiKey, model } })` 直连,或预构造 ChatAnthropic 实例传入
  * - 自定义 fetch 经 configuration.fetch 传入 OpenAI client(已验证 @langchain/openai 1.5.x 透传)
  * - OpenAI SDK 实际传给 fetch 的是 string URL(buildURL().toString()),但本实现兼容 string|URL|Request
  * - chat completions 的 body 是 JSON string(可重复发送),401 重试复用同一 init 安全;

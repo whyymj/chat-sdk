@@ -18,7 +18,6 @@
 import { createApp, h, defineComponent, reactive, ref, type App as VueApp, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { ChatOpenAI } from '@langchain/openai'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
@@ -45,6 +44,7 @@ import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
+import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
 import { resolveCapabilities } from '../capabilities'
@@ -77,6 +77,8 @@ import type { ToolCallContext } from '../harness/middleware'
 
 export interface LLMConfig {
   apiKey: string
+  /** provider 选择:缺省 'openai'(兼容 OpenAI/DeepSeek 协议,向后兼容);'anthropic' 动态加载 @langchain/anthropic 走 Claude */
+  provider?: 'openai' | 'anthropic'
   baseUrl?: string
   model?: string
   temperature?: number
@@ -363,6 +365,8 @@ export interface ChatSdk {
   readonly sessionId: string
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos 等),供 debug 或外部消费 */
   inspect(): AgentInfo
+  /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
+  inspectContext(): import('../utils/contextAnalysis').ContextSnapshot | undefined
   /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
@@ -1393,19 +1397,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     },
     /** 运行时切换 LLM(BaseChatModel 或 LLMConfig);rebind + 重解析能力 + infoTick */
     setLlm(llmOpt: BaseChatModel | LLMConfig): void {
-      const newLlm: BaseChatModel = isChatModel(llmOpt)
-        ? (llmOpt as BaseChatModel)
-        : new ChatOpenAI({
-            apiKey: (llmOpt as LLMConfig).apiKey,
-            model: (llmOpt as LLMConfig).model,
-            temperature: (llmOpt as LLMConfig).temperature,
-            maxTokens: (llmOpt as LLMConfig).maxTokens,
-            configuration: {
-              ...((llmOpt as LLMConfig).baseUrl ? { baseURL: (llmOpt as LLMConfig).baseUrl } : {}),
-              ...(llmOpt as LLMConfig).extraConfig,
-            },
-            ...((llmOpt as LLMConfig).extraBody ? { modelKwargs: (llmOpt as LLMConfig).extraBody } : {}),
-          })
+      let newLlm: BaseChatModel
+      if (isChatModel(llmOpt)) {
+        newLlm = llmOpt as BaseChatModel
+      } else {
+        const cfg = llmOpt as LLMConfig
+        if ((cfg.provider ?? 'openai') === 'anthropic') {
+          // Anthropic 动态 import 无法同步:setLlm 是同步契约(void),切 Anthropic 需传预构造的 BaseChatModel 实例
+          throw new Error('[page-agent-sdk][setLlm] 切换到 Anthropic 需传 BaseChatModel 实例(动态 import 无法同步);请先 const { ChatAnthropic } = await import("@langchain/anthropic") 构造实例后传入')
+        }
+        newLlm = constructOpenLlmSync(cfg)
+      }
       if (typeof (newLlm as any).bindTools !== 'function' && options.debug) {
         console.warn('[page-agent-sdk][setLlm] 新模型不支持 bindTools(tool calling 会失效)')
       }
@@ -1699,19 +1701,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       allTools = rebuildExtraTools()
       if (options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
     }
+    // 主 LLM:实例直传;LLMConfig 经 constructLlmFromConfig(provider 分支,Anthropic 动态 import)构造实例注入
+    const mainLlm = isChatModel(options.llm) ? options.llm : await constructLlmFromConfig(options.llm as LLMConfig)
     core.agent = createAgent({
-      // provider 抽离:llm 为模型实例则注入,否则按配置构造 ChatOpenAI
-      ...(isChatModel(options.llm)
-        ? { llm: options.llm }
-        : {
-            apiKey: options.llm.apiKey,
-            baseUrl: options.llm.baseUrl,
-            model: options.llm.model,
-            temperature: options.llm.temperature,
-            maxTokens: options.llm.maxTokens,
-            extraBody: options.llm.extraBody,
-            extraConfig: options.llm.extraConfig,
-          }),
+      llm: mainLlm,
       systemPrompt: baseSystemPrompt,
       tools: allTools,
       middleware: middlewares,
