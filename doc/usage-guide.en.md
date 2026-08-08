@@ -573,6 +573,34 @@ createChatSdk({ skills: [styleGuide], /*...*/ })
 ```
 The Agent sees only name+description upfront; `load_skill` fetches the full body on demand (saves context).
 
+#### Dynamic skills: `exec` (run on load) + `tools` (callable tools) — skill-external-scripts
+
+SkillSpec adds two optional fields, turning a skill from a "manual" into a "manual + executor":
+
+```ts
+defineSkill({
+  name: 'orders',
+  description: 'Orders overview & query',
+  getContent: () => 'Use this skill for orders. Call query_orders to filter.',
+  // exec: run once on load, inject result into the full text (one-shot context init, a snapshot)
+  exec: {
+    code: 'return await fetch("/api/orders/summary").then(r => r.json())',  // inline JS
+    context: 'sandbox',  // default: Worker sandbox (no window/network, 3-layer guard); 'host' needs capabilities.skillHostScript
+    inject: 'append',    // default append (end); 'prepend' (start)
+    // url: 'https://host/orders.js',  // remote script (sandbox only, never host)
+  },
+  // tools: attach repeatedly-callable tools (injected into the tool pool after load_skill)
+  tools: [() => queryOrdersTool],
+})
+```
+
+**exec vs tools (orthogonal — don't mix)**: `exec` = one-shot context init (snapshot on load, e.g. "current orders summary"); `tools` = query capability (called repeatedly by the LLM, e.g. "filter orders by X").
+
+- **exec security**: default `sandbox` (reuses eval_script's Worker sandbox: static scan + `lockSandboxGlobal` network lock + timeout). `context:'host'` runs with full host authority (`AsyncFunction`, can read window/fetch/DOM), requires `capabilities.skillHostScript:true` (opt-in, default off); **host only for integrator-supplied inline `code`** (not LLM-generated, not remote); `url`+`host` is forbidden (untrusted remote).
+- **exec failure is not cached**: a failed script (e.g. network blip) doesn't block the skill (text still usable + failure noted) and is **not written to cache** — next `load_skill` re-runs exec (dynamic-skill resilience); only success is cached.
+- **exec large results**: when text + exec result exceeds 6000 chars, the createAgent offload kicks in (→ vfs + preview); the LLM re-reads via `vfs_read`. "Read-all-at-once" only guarantees the static text part.
+- **tools injection**: after `load_skill`, tools are evaluated → injected into the agent tool pool (via dedupeTools; namespace prefix `<skill>__<tool>` recommended); source labeled `skill:<name>`; unloaded by `sdk.setSkills`/`invalidateSkillCache`.
+
 ### 6.4 Memory (persistent directives)
 
 `memory: '...'` — AGENTS.md-style persistent instructions injected into every conversation (style guides, conventions, do/don'ts).

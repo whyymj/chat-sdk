@@ -199,6 +199,38 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:custom-injection] skill exec/tools 装配 + skillHostScript opt-in(skill-external-scripts)')
+  {
+    // 带 exec + tools 的 skill 装配不抛(exec/tools 新增可选字段,装配期不执行 factory)
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-skill-exec', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, skills: true },
+      skills: [{
+        name: 'dyn', description: '动态 skill',
+        getContent: () => 'BASE',
+        exec: { code: 'return 1', context: 'sandbox' },
+        tools: [() => ({ name: 'dyn__query', description: 'd', invoke: async () => 'ok' })],
+      }],
+    })
+    await sdk.mount()
+    assert(sdk.inspect().skills.length === 1 && sdk.inspect().skills[0].name === 'dyn', '带 exec/tools 的 skill 装配 → inspect().skills 反映')
+    // 装配期 inspect().tools 不含 skill 工具(动态注入:load_skill 后才有,FAKE_LLM 不跑循环故不触发)
+    const toolNames = sdk.inspect().tools.map((t) => t.name)
+    assert(!toolNames.includes('dyn__query'), 'skill 附带工具装配期不注入(load_skill 后动态注入)')
+    sdk.unmount()
+  }
+  {
+    // skillHostScript opt-in 默认关;显式 true → mount 成功(新 capability 注册生效)
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-skill-host', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, skills: true, skillHostScript: true },
+      skills: [{ name: 'h', description: 'host skill', getContent: () => 'H', exec: { code: 'return 1', context: 'host' } }],
+    })
+    let threw = false
+    try { await sdk.mount() } catch { threw = true }
+    assert(!threw, 'skillHostScript:true + host skill → mount 成功(capability opt-in 生效)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:custom-injection] setSkills skills 关闭 → 控制台 warn 不抛错')
   {
     const sdk = createChatSdk({

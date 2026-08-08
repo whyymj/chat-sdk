@@ -380,10 +380,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(dr2.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 dataOps:false → 强制关(requires 未满足)')
     const dr3 = resolveCapabilities({ draftWrite: true, vfs: false })
     assert(dr3.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 vfs:false → 强制关(requires 未满足)')
-    // CAPABILITIES 注册表完整(18 开关;12 opt-out + 6 opt-in)
-    assert(CAPABILITIES.length === 18, 'CAPABILITIES 注册表 → 18 开关')
+    // CAPABILITIES 注册表完整(19 开关;12 opt-out + 7 opt-in,skillHostScript 新增 opt-in)
+    assert(CAPABILITIES.length === 19, 'CAPABILITIES 注册表 → 19 开关')
     assert(CAPABILITIES.filter((c) => c.defaultOn).length === 12, 'CAPABILITIES → 12 opt-out(默认开)')
-    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 6, 'CAPABILITIES → 6 opt-in(默认关)')
+    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 7, 'CAPABILITIES → 7 opt-in(默认关)')
+    // skillHostScript opt-in 默认关 + requires skills
+    const shs = CAPABILITIES.find((c) => c.name === 'skillHostScript')!
+    assert(!!shs && shs.defaultOn === false && shs.requires?.includes('skills'), '✓ skillHostScript:opt-in 默认关 + requires skills')
     // 全量解析后每个 capability 都有明确 boolean(无 undefined)
     const all = resolveCapabilities({ dataOps: false, verify: true, domInspect: true, tracing: true, automation: true, todoDeps: true })
     for (const c of CAPABILITIES) {

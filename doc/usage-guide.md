@@ -645,6 +645,39 @@ createChatSdk({
 
 Agent 会在需要时调用 `load_skill('component-lib')` 把内容载入上下文。`doc` 源在加载时自动读取(http fetch / vfs 读取),读取失败(跨域 / 未找到 / vfs 未启用)返回结构化错误提示,超长截断(20000 字符)。
 
+#### 6.3.1 动态 skill:exec 加载时执行 + tools 附带工具(skill-external-scripts)
+
+SkillSpec 新增两可选字段,把 skill 从「说明书」升级为「说明书 + 执行器」:
+
+```ts
+defineSkill({
+  name: 'orders',
+  description: '订单概览与查询',
+  getContent: () => '本 skill 用于查看订单。可用 query_orders 按条件筛选。',
+  // exec:加载时执行一次,结果注入全文(一次性上下文初始化,拿快照)
+  exec: {
+    code: 'return await fetch("/api/orders/summary").then(r => r.json())',  // 内联 JS
+    context: 'sandbox',  // 默认:Worker 沙箱(无 window/网络,三层防护);'host' 需 capabilities.skillHostScript
+    inject: 'append',    // 默认 append(文末);'prepend'(文首)
+    // url: 'https://host/orders.js',  // 远程脚本(仅 sandbox,禁止 host)
+  },
+  // tools:附带可反复调用的工具(load_skill 后注入工具池)
+  tools: [() => queryOrdersTool],
+})
+```
+
+**exec vs tools 语义(正交,勿混用)**:
+
+| 字段 | 定位 | 触发 | 频次 |
+|---|---|---|---|
+| `exec` | 上下文初始化(加载时拿一次性快照,如「当前订单概览」) | `load_skill` 时自动 | 一次(每次 load 重跑) |
+| `tools` | 查询能力(反复调用,如「按条件查订单」) | LLM 显式调 | 反复 |
+
+- **exec 安全边界**:默认 `sandbox`(复用 eval_script 的 Worker 沙箱:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时)。`context:'host'` 宿主全权执行(`AsyncFunction`,可读 window/fetch/DOM),需 `capabilities.skillHostScript:true`(opt-in 默认关);**host 仅集成方内联 `code`**(非 LLM 生成、非远程),`url`+`host` 禁止组合(远程不可信)。
+- **exec 失败不缓存**:脚本执行失败(如网络抖动)不阻塞 skill(文本仍可用 + 标注失败原因),且**不写缓存**——下次 `load_skill` 重新执行(动态 skill 韧性);成功才缓存(跨轮跨会话复用)。
+- **exec 大结果**:注入文本 + exec 结果总量超 6000 字符时,走 createAgent 通用 offload(转 vfs + 预览),LLM 按需 `vfs_read` 二次读;「一次读全」仅保证静态文本部分(动态数据本就该按需查,契合渐进式披露)。
+- **tools 注入**:`load_skill` 后工具求值 → 注入 agent 工具池(经 dedupeTools 去重,建议命名空间前缀 `<skill>__<tool>` 防重名);source 标 `skill:<name>`;`sdk.setSkills`/`invalidateSkillCache` 卸载。
+
 ### 6.4 Memory(持久指令)
 
 写入 AGENTS.md 风格的持久指令(项目规范、固定约束),**每次对话都生效**,且会持久化:

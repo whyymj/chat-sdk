@@ -2,6 +2,7 @@
 
 > 用户诉求(2026-08-04):「如何能使自定义 skill 支持外部脚本的执行」。用户拍板(AskUserQuestion):**执行目标 = 页面内 JS + 远程脚本 URL + skill 附带可调工具(全要);触发形态 = 加载时自动执行注入 + 可反复调用的工具(两者都要)**。
 > **状态**:proposal(未实施)。**独立 change**,无前置依赖。基于对 skills 中间件 + 沙箱引擎的源码核对(证据见 design §1)。
+> **[2026-08-08 二次核实修正]**:对照当前代码核实后补 4 项(决策 6-9 / design §1.2 §3 §4 §5 §6.3 §6.4 §7 §8 / tasks 全节):① 沙箱加固层 `lockSandboxGlobal`(defineProperty 锁网络层,原稿写于该层之前故遗漏)必须整体迁移 ② exec 失败不缓存(动态 skill 可重试)③ skill 工具走 `dedupeTools` + 命名空间前缀 ④ exec 大结果走通用 offload,「一次读全」仅限静态文本。
 
 ## Why
 
@@ -72,6 +73,10 @@ interface SkillExecSpec {
 3. **远程脚本默认沙箱,禁止远程+宿主**:远程代码不可信,只能沙箱跑;组合直接拒绝(不 warn 兜底)。
 4. **两种形态都做**(用户拍板):加载时注入(动态 skill)+ 工具形态(可反复调),共用 `exec`/`tools` 两字段。
 5. **复用而非新造沙箱**:泛化 `runSandboxedScript`,不另写沙箱,`eval_script` 与 skill exec 共用,静态扫描/超时/禁用列表单一真相源。
+6. **沙箱加固层 `lockSandboxGlobal` 整体迁移**(2026-08-08 核实补):沙箱除静态扫描/超时外,还有 harden-eval-sandbox 后加的 `lockSandboxGlobal`(`dataSlotQuery.ts:447`)——`defineProperty configurable:false+writable:false` 锁死 fetch/XHR/WebSocket/indexedDB/caches/Worker/sendBeacon 等,**防 `delete self.fetch` 恢复原生外泄**。经 `WORKER_PREAMBLE=(lockSandboxGlobal.toString())(self)` 注入 Worker。泛化抽 `createSandboxRunner` 时**必须连同 `lockSandboxGlobal` 纯函数 + toString 引用 + sec-21 单测整体迁移**,断链则逃逸防护静默失效。
+7. **exec 失败不缓存**(语义修正):`exec` 定位「动态 skill 每次加载拿实时数据」,故 exec 失败时**不写 contentCache**(标注失败但不固化),下次 load 重新执行;成功才缓存。修正 design §5 原方案「失败也缓存」致动态 skill 一次失败永久降级。
+8. **skill 工具走 `dedupeTools` + 命名空间**(与 2.23+ `tool-name-collision` 协同):skill 工具注入主工具池后走统一去重链路,重名按 dedupe 规则(后注册覆盖 + warn);工具名加命名空间前缀 `<skill>__<tool>` 防意外覆盖内置/用户工具。
+9. **exec 大结果走通用 offload,「一次读全」仅限静态文本**(消矛盾):offload 是 createAgent 层对所有工具结果 >6000 字符的**通用强制机制**,load_skill 的大返回绕不开。故接受 exec 实时数据被 offload(预览 + vfs_read 句柄),`load_skill`「一次读全」承诺**限定静态文本部分**;动态数据按需二次读(vfs_read / 后续 tools),契合渐进式披露哲学。
 
 ## Non-goals
 

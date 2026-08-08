@@ -328,7 +328,20 @@ export interface SkillSpec {
   /** 文档源(http(s):// 远程 md,或 vfs://path / 裸路径;SDK 代劳 fetch+vfs);与 getContent 二选一,doc 优先 */
   doc?: string;
   getContent?: () => string | Promise<string>;
+  /** 加载时执行脚本,结果注入全文(skill-external-scripts);code/url 二选一,默认 sandbox,失败不缓存 */
+  exec?: SkillExecSpec;
+  /** 附带可调工具工厂;load_skill 后注入工具池(命名空间 <skill>__<tool>,走 dedupeTools);与 exec 正交 */
+  tools?: SkillToolFactory[];
 }
+/** skill 执行钩子:code(内联 JS)/url(远程,仅 sandbox)二选一;context 默认 sandbox,host 需 skillHostScript */
+export interface SkillExecSpec {
+  code?: string;
+  url?: string;
+  context?: 'sandbox' | 'host';
+  inject?: 'append' | 'prepend';
+}
+/** skill 附带工具工厂(返回单个/数组工具,可异步;ctx.signal 运行时中止信号) */
+export type SkillToolFactory = () => any | any[] | Promise<any | any[]>;
 
 // ===== Verify 自检中间件 =====
 /** verify check 上下文:与 beforeReturn 底层一致(messages 含 system 头 + agent 最新回复 + 历史 tool_result) */
@@ -570,7 +583,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; skillHostScript?: boolean; contextInspector?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -999,6 +1012,21 @@ export declare function searchJson(
 ): SearchHit[];
 /** Web Worker 沙箱执行自定义 JS(无 window/document,禁 fetch/XHR/WebSocket/importScripts,超时可终止) */
 export declare function runSandboxedScript(data: unknown, script: string, timeoutMs?: number): Promise<EvalResult>;
+/** 通用 Worker 沙箱结果(eval_script 与 skill exec 共用;EvalResult 的别名同构) */
+export interface SandboxResult {
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+  elapsedMs: number;
+}
+/**
+ * 创建沙箱执行器(柯里化:先绑 script+timeoutMs,再传可选 input)。三层防护:静态扫描禁用模式 +
+ * lockSandboxGlobal defineProperty 锁网络/存储 API(防 delete self.fetch 逃逸)+ 超时 terminate。
+ * 无 input 传 undefined(skill exec);有 input 作 data 入参(eval_script)。
+ */
+export declare function createSandboxRunner(script: string, timeoutMs?: number): (input?: unknown) => Promise<SandboxResult>;
+/** 宿主脚本执行(skill exec context:'host';AsyncFunction 主线程全权,不经静态扫描,需 capabilities.skillHostScript:true) */
+export declare function runHostScript(code: string, timeoutMs?: number): Promise<SandboxResult>;
 
 // ============ 工具报错(结构化 ERROR:{json},供 LLM 排查)============
 export interface ToolErrorInput {

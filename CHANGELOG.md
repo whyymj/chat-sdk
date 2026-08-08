@@ -6,6 +6,14 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(skill 脚本执行 · skill-external-scripts)
+- **动态 skill:`exec` 加载时执行 + `tools` 附带工具**。`SkillSpec` 新增两可选字段,把 skill 从「说明书」升级为「说明书 + 执行器」(全增量,现有 skill 零变):
+  - **`exec` 钩子**:`{ code?, url?, context?, inject? }`,`load_skill` 时执行脚本 → 结果 append/prepend 注入全文(一次性上下文初始化,拿实时数据快照)。`context:'sandbox'`(默认,Worker 沙箱三层防护:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时);`context:'host'` 需 `capabilities.skillHostScript:true`(宿主全权 `AsyncFunction`,不经静态扫描,**仅集成方内联 code**、非 LLM/非远程;`url`+`host` 禁止)。
+  - **`tools` 工厂**:`SkillToolFactory[]`,`load_skill` 后注入 agent 工具池(经 `dedupeTools`,建议命名空间 `<skill>__<tool>`);source 标 `skill:<name>`;`setSkills`/`invalidateSkillCache` 经 `core.unloadSkillTools` 卸载。
+  - **exec 失败不缓存**(标注 + 下次 load 重试,动态 skill 韧性);**exec 大结果走 createAgent 通用 offload**(>6000 转 vfs),「一次读全」仅限静态文本部分。
+  - **沙箱引擎泛化**:抽出 `src/core/tools/sandbox.ts`(`createSandboxRunner` 柯里化),eval_script 与 skill exec 共用单一真相源;`dataSlotQuery.ts` 的 `runSandboxedScript`/`lockSandboxGlobal`/`EvalResult` re-export 保外部 import 零破坏。新增导出 `createSandboxRunner`/`SandboxResult`/`runHostScript`;新 capability `skillHostScript`(opt-in 默认关,requires `skills`)。
+  - selftest 1208→1231(sec-21 createSandboxRunner + sec-05 exec/buildSkillContent/tools 注入 + sec-19 skillHostScript);e2e 309→312(custom-injection exec/tools 装配 + skillHostScript mount)。
+
 ### Changed(工具面精简 · simplify-toolset)
 - **移除冗余工具 + 补 `vfs_rm`**:① `snapshot_data` / `list_data_snapshots` 移除(被 `history_data({ list: true })` 吸收——列出快照时间线元信息,等价原 list_data_snapshots;手动检查点改靠 set/edit/delete 自动快照);② `get_data` 标 `@deprecated`(保留兼容,集成方改用 `read`——等价且支持 fields/depth/分页);③ 新增 `vfs_rm({ path })` 补 vfs「只进不出」删除闭环(`VFS_TOOL_NAMES` +1,含 drafts 草稿清理);④ usageHints 补「read 按 schema 投影隐藏未声明字段」+ 「get_dom 改完数据回看渲染」(domInspect 开时)提示。`toolMode` advanced 数据工具 16→14。selftest 1204→1208(sec-03 vfs_rm + sec-02 history list);e2e 311→309(inspect.mjs expectedDataTools 16→14)。
 

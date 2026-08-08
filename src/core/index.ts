@@ -54,6 +54,11 @@ export { createDataOps, filterByToolMode, commitSetToBind } from './tools/dataOp
 export { getTraceMetrics } from './utils/traceMetrics'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
+// 通用 Worker 沙箱(skill-external-scripts:eval_script 与 skill exec 共用;三层防护单一真相源)
+export { createSandboxRunner } from './tools/sandbox'
+export type { SandboxResult } from './tools/sandbox'
+// 宿主脚本执行器(skill exec context:'host',opt-in 全权;不经静态扫描)
+export { runHostScript } from './tools/hostScript'
 // 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,

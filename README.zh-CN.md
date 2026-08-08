@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1208%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1231%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -247,6 +247,10 @@ createChatSdk({ tools: [myTool], /*...*/ })
 // ② 自定义技能(渐进披露:用到才 load_skill 加载详情)
 const mySkill = defineSkill({ name: 'style_guide', description: '品牌色规范', body: '主色 #1f4d3a…' })
 createChatSdk({ skills: [mySkill], /*...*/ })
+//    动态技能(skill-external-scripts):exec 加载时执行脚本注入实时数据 + tools 附带可反复调用的工具
+//    defineSkill({ name: 'orders', description: '订单概览', getContent: () => '说明…',
+//      exec: { code: 'return await fetch("/api/orders").then(r=>r.json())', context: 'sandbox' },  // 默认沙箱;host 需 capabilities.skillHostScript
+//      tools: [() => orderQueryTool] })  // load_skill 后注入工具池,可反复调
 
 // ③ 自定义中间件(8 钩子:beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
 const mw: Middleware = { name: 'telemetry', afterModel: async (ctx, next) => { await next(ctx); console.log('round done') } }
@@ -268,7 +272,7 @@ createChatSdk({ subagents: [
 - **上下文检查**（`capabilities.contextInspector` 默认开）：`sdk.inspectContext()`/`inspect().context` 读每轮实际消息的分类 token 占比（system 段 / 工具结果 / 历史等）,DebugDrawer「📊 上下文」tab 展示占用/分类/压缩;纯计算零 LLM 成本
 - **宿主动作**（2.18+,`actions` 注册）：集成方注册 save_draft/publish 等页面操作,SDK 自动生成命名 tool,agent 直接调用触发宿主(无需 trigger_action 中转)
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **规划/技能**：`write_todos` / `define_skill` / `load_skill`
+- **规划/技能**：`write_todos` / `define_skill` / `load_skill`（skill 可配 `exec` 加载时执行脚本注入实时数据 + `tools` 附带可反复调用的工具;`exec.context:'host'` 需 `capabilities.skillHostScript:true`）
 - **人工确认**：`request_human_confirmation`（主动征询，默认开）
 - **子 agent**：`spawn_agent` / `spawn_agents` / `use_<id>`（预声明）
 - **checkpoint**：`restore_last_checkpoint` / `list_checkpoints`
@@ -460,8 +464,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1208 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 309 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1231 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 312 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

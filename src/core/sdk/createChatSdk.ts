@@ -236,6 +236,8 @@ export interface ChatSdkOptions {
     tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))
     todoDeps?: boolean       // todos 层级依赖 parentId/deps(默认 false;opt-in,LLM 维护依赖图;structured-todos-tier Phase 2)
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
+    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)
+    contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -521,6 +523,8 @@ interface AgentCore {
   dataOpsController: DataOpsController | null
   /** skills 控制器(运行时 setSkills/invalidateSkillCache;skills 关闭 → null) */
   skillsController: import('../harness/skills').SkillsController | null
+  /** 卸载 skill 附带工具(setSkills 替换整个列表清全部 / invalidateSkillCache 指定 skill;skill-external-scripts §5) */
+  unloadSkillTools?: (name?: string) => void
   /** Agent 信息刷新 tick(setSkills/setData 后 ++);经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取,实时反映动态 skill/data */
   infoTick: Ref<number>
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
@@ -791,6 +795,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ]
     : []
   checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
+  // skill 附带工具(load_skill 后动态注入;skill-external-scripts §5)。按 skill 名记录归属,便于 invalidate/setSkills 卸载
+  let loadedSkillTools: StructuredToolInterface[] = []
+  const skillToolOwner = new Map<string, string>()  // toolName → skillName(source 标 `skill:<skillName>`)
   // allTools 可变:setTools 后重建,inspect().tools 读最新值
   // tool-name-collision:装配期 dedupeTools 收敛「自定义与内置重名」为后注册覆盖先注册(对齐 page-agent),
   // 消除「绑定层重复定义 + 执行层 builtin 赢(find 取第一个)+ 标注层后注册来源」三者漂移;覆盖时 warn 告警集成方
@@ -804,6 +811,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       { label: 'humanConfirm', tools: humanConfirmTool ? [humanConfirmTool] : [] },
       { label: 'checkpoint', tools: checkpointTools },
       { label: 'mcp', tools: mcpTools },
+      { label: 'skill', tools: loadedSkillTools },
     ])
     if (collisions.length) {
       console.warn('[page-agent-sdk] 工具重名,后注册覆盖先注册:', collisions.map((c) => `${c.name}(${c.loser}→${c.winner})`).join(', '))
@@ -993,6 +1001,22 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           skillsMw = createSkillsMiddleware(options.skills || [], {
             // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
             readVfs: useVfs ? (p: string) => vfsStore.files[p]?.content : undefined,
+            // skill exec context:'host' 开关(caps.skillHostScript,opt-in 默认关;关时 host 脚本跳过 + warn)
+            hostScriptEnabled: caps.skillHostScript,
+            // skill 附带工具注入回调:load_skill 后合并 loadedSkillTools + 标 source + rebind(skill-external-scripts §5)
+            onToolsReady: (skillName, tools) => {
+              for (const t of tools) {
+                // 同名 skill 工具先移除旧记录(避免重复累积;dedupeTools 兜底后注册覆盖)
+                const existing = loadedSkillTools.findIndex((x) => x.name === t.name)
+                if (existing >= 0) loadedSkillTools.splice(existing, 1)
+                loadedSkillTools.push(t)
+                skillToolOwner.set(t.name, skillName)
+                toolSources.set(t.name, `skill:${skillName}`)
+              }
+              allTools = rebuildExtraTools()
+              if (core.agent) core.agent.setTools(allTools)
+              core.infoTick.value++
+            },
           }),
         ]
       : []),
@@ -1072,6 +1096,24 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     liveData,
     usage,
     emit,
+
+    /** 卸载 skill 附带工具(setSkills 替换整个列表清全部 / invalidateSkillCache 指定 skill;skill-external-scripts §5) */
+    unloadSkillTools(name?: string) {
+      if (!name) {
+        if (!loadedSkillTools.length) return
+        for (const t of loadedSkillTools) { toolSources.delete(t.name); skillToolOwner.delete(t.name) }
+        loadedSkillTools = []
+      } else {
+        const before = loadedSkillTools.length
+        loadedSkillTools = loadedSkillTools.filter((t) => {
+          if (skillToolOwner.get(t.name) === name) { toolSources.delete(t.name); skillToolOwner.delete(t.name); return false }
+          return true
+        })
+        if (loadedSkillTools.length === before) return
+      }
+      allTools = rebuildExtraTools()
+      if (core.agent) core.agent.setTools(allTools)
+    },
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory / userSkills(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
@@ -1879,6 +1921,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return
       }
       ctrl.set(skills)
+      core.unloadSkillTools?.()  // 整个 skill 列表替换 → 旧 skill 附带工具卸载 + rebind(§5)
       core.infoTick.value++  // 触发 DebugDrawer 的 Agent 信息重新拉取(实时反映 skills 变更)
     },
     /** 添加用户创建的 skill(持久化,跨刷新恢复;同名覆盖);触发 controller 合并 + infoTick 刷新 */
@@ -1888,6 +1931,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return
       }
       core.addSkill(skill)
+      core.unloadSkillTools?.(skill.name)  // 同名覆盖时清旧工具,下次 load 注入新(§5)
     },
     /** 删除用户创建的 skill(仅删用户创建的,不删集成方 initialSkills);返回是否删除成功 */
     removeSkill: (name: string): boolean => {
@@ -1895,7 +1939,9 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         console.warn('[page-agent-sdk] removeSkill 忽略:skills 已关闭(capabilities.skills:false)')
         return false
       }
-      return core.removeSkill(name)
+      const ok = core.removeSkill(name)
+      if (ok) core.unloadSkillTools?.(name)  // 卸载该 skill 附带工具(防泄漏;§5)
+      return ok
     },
     /** 列出用户创建的 skill 名(仅用户创建的,不含集成方 initialSkills) */
     listUserSkills: (): string[] => core.listUserSkills(),
@@ -1909,6 +1955,7 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
         return
       }
       ctrl.invalidateCache(name)
+      core.unloadSkillTools?.(name)  // 同步卸载该 skill 的附带工具(下次 load_skill 重新注入;§5)
     },
     /** 导出主数据 bind 的深拷贝(备份/迁移用);dataOps 关闭或无 data 返回 null */
     exportData: () => {
