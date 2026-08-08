@@ -328,6 +328,10 @@ const sdk = createChatSdk({
 - `bind` is required: direct-bind a reactive/plain object (tools read/write bind, reactive refresh); SDK no longer auto-mounts to window — integrator mounts `window.app = app` themselves if the page needs to read it
 - `schema` field `.describe()` is auto-extracted (via `extractSchemaHint`) into the systemPrompt「operable data」section — no manual description needed
 - Preview the hint to be injected: `extractSchemaHint(schema)` (exported)
+- **Protected resources (precise-value protection, opt-in)**: declare `data.resources: [{ path, mode }]` for fields needing exact preservation (ids / hashes / tokens / long verbatim). `freeze` = read-only (value hidden from LLM via `⟦frozen:path⟧` placeholder; write → `FROZEN_FIELD`); `verbatim` = preserved verbatim (`⟦res:handle⟧` placeholder, original in resource pool; modify via `resource_update` first else `VERBATIM_MISMATCH`). Write-side enforcement runs in `commitSetToBind`/`applyPatchesToBind`/eval (before schema); `bind` always holds the raw value (placeholders only at read/write boundaries → hash/snapshot/lock unaffected). opt-in (needs `data.resources` + `capabilities.vfs`): exposes `resource_get`/`update`/`list`/`delete` tools (advanced) + cross-compression pin + SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`. See `skills/precise-value-protection`.
+  ```ts
+  data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }
+  ```
 - **`bind` does NOT require reactive**: any object works. The difference is "reactive refresh after write":
   - Pass `reactive(obj)` (Vue): Agent `write` mutates props → template/watch auto-reactive (recommended for UI)
   - Pass a plain object: Agent `write` can mutate data, but the page won't react (suitable for headless / backend / integrator-managed refresh via `onEvent` or `watch`)

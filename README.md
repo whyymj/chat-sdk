@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1358%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-1480%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -143,6 +143,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🤖 unattended automation (2.20+) | Resource budget guard (`tokenBudget`/`timeBudgetMs`) + fatal-error auto-recovery (`maxAutoRetries`: restore checkpoint + retry) + cross-refresh resume + `sdk.batch(tasks)` batch processing | `capabilities.automation` |
 | 📐 context resilience (2.30+) | Hard floor `contextWindow ≥200K` (rejects <200K models like legacy `deepseek`/`gpt-4o`/`glm-4.5` at startup); three gates (compress/trim/offload) thresholds follow the live window after `setLlm`; reactive retry on `context_length_exceeded` (aggressive trim → single retry, never fails raw); vfs large-result refs protected from LRU eviction + OOM 1.5× fallback; system-prompt budget (25% window, drops non-pinned segments, keeps base/mission/workingMemory) | built-in |
 | 🎯 focus auto-switch (2.31+) | AI auto-judges task scope → `set_focus` (local task) / `clear_focus` (global/done); focus persists across refresh/session-switch (restore validates path via `getSchemaAtPath`, drops if invalid); spawned subagents inherit parent focus (three-layer convergence; parent unfocused → child no focus middleware, zero regression) | `capabilities.focus` + `toolMode:'advanced'` |
+| 🔒 precise-value protection (2.32+) | `data.resources: [{path, mode}]` protects exact-value fields: `freeze` (read-only, value hidden via `⟦frozen:path⟧` placeholder, FROZEN_FIELD on write) / `verbatim` (preserved verbatim, `⟦res:handle⟧`, modify via `resource_update` else VERBATIM_MISMATCH); write-side enforcement across commitSetToBind/applyPatches/eval + resource tools (`resource_get/update/list/delete`, advanced) + cross-compression pin | `data.resources` + `capabilities.vfs` |
 
 Capabilities default on (`verify`/`approval`/`checkpoint` default off; **proactive `humanConfirm` default on** — AI asks when uncertain/multi-plan instead of guessing). Turn off unneeded ones via `capabilities` to save tokens.
 
@@ -524,8 +525,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 1358 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 362 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 1480 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 376 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

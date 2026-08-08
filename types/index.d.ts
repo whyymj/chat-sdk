@@ -281,6 +281,14 @@ export type ChatModelLike = {
   bindTools: (tools: any[]) => any;
 };
 
+/** 受保护资源配置(精确值保护:占位符替换读写) */
+export interface ResourceProtectSpec {
+  /** 相对主数据根的点号路径(如 id / components.0.verification) */
+  path: string;
+  /** freeze=只读不可改(精确值不入消息流);verbatim=原样保留(防压缩丢字,改须经 resource_update) */
+  mode: 'freeze' | 'verbatim';
+}
+
 export interface DataConfig {
   /** 值的 zod schema(写入时校验);字段的 .describe() 自动提取注入 systemPrompt「可操作数据」段 */
   schema: any;
@@ -288,6 +296,10 @@ export interface DataConfig {
   bind: any;
   /** 数据说明,供 Agent 理解用途;不传则自动生成 */
   description?: string;
+  /** 受保护资源(精确值保护):声明需 freeze(只读)/verbatim(原样保留)的字段路径。
+   *  配置后 read 受保护路径返占位符(精确值不入 LLM 消息流),写侧强制(freeze 拒/verbatim 展开校验)。
+   *  opt-in:未配(默认)全部行为零变化 */
+  resources?: ResourceProtectSpec[];
 }
 /** createDataOps 选项(审计回调 / 快照上限 / 乐观锁) */
 export interface DataOpsOptions {
@@ -324,6 +336,14 @@ export interface DataOpsController {
   set(config: DataConfig): void;
   /** 仅替换 bind 引用;清空快照栈与乐观锁缓存 */
   update(bind: any): void;
+  /** 受保护资源清单快照(供跨压缩 pin 中间件注入「受保护资源」段;freeze 无 handle,verbatim 有) */
+  getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[];
+  /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
+  createResource?(path: string, value?: unknown): string;
+  getResource?(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined;
+  updateResource?(path: string, value: unknown): void;
+  deleteResource?(pathOrHandle: string): boolean;
+  listResources?(): { path: string; mode: string; handle: string; bytes: number }[];
 }
 
 export interface SkillsController {
@@ -763,6 +783,18 @@ export interface ChatSdk {
   exportData(): any;
   /** 导入数据整体替换主数据 bind(就地还原,保留 reactive 引用);默认经 schema 校验,不合法返回 {ok:false,error};opts.validate:false 跳过校验,opts.emit:false 不发 data_change */
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string };
+  /** 创建/注册受保护资源(返回 handle);需配 data.resources + vfsStore,否则抛错 */
+  createResource(path: string, value?: unknown): string;
+  /** 取受保护资源真值(by path 或 handle);不存在返 undefined */
+  getResource(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined;
+  /** 更新 verbatim 受保护资源真值(同步 bind+标脏);freeze 抛错 */
+  updateResource(path: string, value: unknown): void;
+  /** 删除/释放单个受保护资源(by path 或 handle);返是否存在过 */
+  deleteResource(pathOrHandle: string): boolean;
+  /** 列出全部受保护资源(path/mode/handle/bytes) */
+  listResources(): { path: string; mode: string; handle: string; bytes: number }[];
+  /** 批量释放受保护资源;传 paths 释放指定,未传释放全部 */
+  releaseResources(paths?: string[]): void;
   /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
   usage: TokenUsage;
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 自建 UI */

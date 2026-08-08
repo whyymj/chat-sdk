@@ -34,7 +34,7 @@ const CREATIVE_TEMP = 0.7
  * @param hasDataOps 是否实际装了 数据操作工具(用于判断 snapshot 回退提示是否有意义)
  * @param toolMode 工具呈现模式:simple/minimal 主推 read/write;advanced 用底层 get/set/edit
  */
-export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple'): Middleware {
+export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple', hasResources: boolean = false): Middleware {
   const rc = resolveCapabilities(caps)  // 单一解析 capability 开关(humanConfirm/subagents 非 capability,caps 直接访问)
   const simple = toolMode !== 'advanced'
   return {
@@ -81,6 +81,13 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  · 全局任务(多处/整体结构,如「重排所有组件」「换主题」)→ 不要聚焦,保持全量视野直接写。')
         hints.push('  · 完成局部精修、要转向其他区域或做整体改动 → 调 clear_focus 退出聚焦,恢复全部读写权限。')
         hints.push('  · set_focus 的 path 必须在 schema 内(类型校验);不确定路径先 read/describe_data 查。')
+      }
+      if (hasResources) {
+        hints.push('【受保护资源·精确值保护】部分字段被 freeze/verbatim 保护(集成方在 data.resources 声明):')
+        hints.push('  · read 受保护路径返回占位符 ⟦frozen:path⟧(freeze,精确值不入消息流)或 ⟦res:handle⟧(verbatim,原值在资源池),非真值。')
+        hints.push('  · 确需真值用 resource_get({path})(仅受保护路径);freeze 字段完全不可改,撞 FROZEN_FIELD 即放弃该字段改动。')
+        hints.push('  · verbatim 字段改新值:先 resource_update({path,value}) 更新资源池(同步 bind),再 write 写回句柄 ⟦res:handle⟧;直接写新值 → VERBATIM_MISMATCH。')
+        hints.push('  · 撞 RESOURCE_EVICTED(资源被池淘汰)→ 重新 read 该字段懒注册重建句柄;撞 RESOURCE_NOT_FOUND → 重新 read。')
       }
       if (caps?.subagents?.length) {
         const planners = caps.subagents.filter((s) => (s.temperature ?? 0) >= CREATIVE_TEMP || /规划|创意|设计|方案|brainstorm|plan/i.test(s.description))

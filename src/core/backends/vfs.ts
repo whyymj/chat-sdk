@@ -20,28 +20,29 @@ export interface VfsPersist {
   save?: (files: Record<string, VfsFile>) => void
 }
 
-/** vfs 分池键(按 path 前缀路由:large_results/* / drafts/* / 其他) */
-export type VfsPoolKey = 'largeResults' | 'drafts' | 'userFiles'
+/** vfs 分池键(按 path 前缀路由:large_results/* / drafts/* / resources/* / 其他) */
+export type VfsPoolKey = 'largeResults' | 'drafts' | 'userFiles' | 'resources'
 
 /** createVfs 选项 */
 export interface VfsOptions {
   /** 持久化钩子(可选) */
   persist?: VfsPersist
-  /** 工作区总内存上限(默认 8MB,三池之和);纯内存(storage:false)也生效 */
+  /** 工作区总内存上限(默认 8MB,OOM 兜底;四池独立上限之和可能超过,由总上限最后约束);纯内存(storage:false)也生效 */
   maxBytes?: number
-  /** 单池上限(可选,覆盖默认 largeResults=4MB / drafts=2MB / userFiles=2MB);三池独立 LRU 互不挤占 */
+  /** 单池上限(可选,覆盖默认 largeResults=4MB / drafts=2MB / userFiles=2MB / resources=4MB);四池独立 LRU 互不挤占 */
   poolBytes?: Partial<Record<VfsPoolKey, number>>
 }
 
-/** 工作区默认总内存上限(三池之和;大结果外存累积的 OOM 兜底) */
+/** 工作区默认总内存上限(大结果外存累积的 OOM 兜底;四池独立上限之和 12MB,总上限 8MB 最后约束) */
 export const DEFAULT_VFS_MAX_BYTES = 8 * 1024 * 1024
-/** 三池默认上限:large_results(offload 自动)/drafts(draft_write 自动,前序 change 未实现)/userFiles(vfs_write 显式) */
+/** 四池默认上限:large_results(offload 自动)/drafts(draft_write)/userFiles(vfs_write 显式)/resources(精确值保护占位符资源) */
 export const DEFAULT_POOL_BYTES: Record<VfsPoolKey, number> = {
   largeResults: 4 * 1024 * 1024,
   drafts: 2 * 1024 * 1024,
   userFiles: 2 * 1024 * 1024,
+  resources: 4 * 1024 * 1024,
 }
-const POOL_KEYS: readonly VfsPoolKey[] = ['largeResults', 'drafts', 'userFiles']
+const POOL_KEYS: readonly VfsPoolKey[] = ['largeResults', 'drafts', 'userFiles', 'resources']
 /** 淘汰水位:淘汰到 池上限*0.9 留余量(与 storage 口径一致) */
 const DEFAULT_VFS_WATERMARK = 0.9
 
@@ -80,14 +81,15 @@ export function createVfs(
 
   const { persist } = opts
   const maxBytes = opts.maxBytes ?? DEFAULT_VFS_MAX_BYTES
-  // 三池独立上限(可经 poolBytes 覆盖);三池独立 LRU 互不挤占(防 offload 大结果挤掉进行中草稿)
+  // 四池独立上限(可经 poolBytes 覆盖);四池独立 LRU 互不挤占(防 offload 大结果挤掉进行中草稿/精确值资源)
   const poolMaxBytes: Record<VfsPoolKey, number> = { ...DEFAULT_POOL_BYTES, ...(opts.poolBytes ?? {}) }
 
-  /** path → 池:large_results/* / drafts/* / 其他(userFiles)。读写跨池透明,仅 LRU 按池隔离 */
+  /** path → 池:large_results/* / drafts/* / resources/* / 其他(userFiles)。读写跨池透明,仅 LRU 按池隔离 */
   function poolOf(path: string): VfsPoolKey {
     const p = normalize(path)
     if (p.startsWith('large_results/')) return 'largeResults'
     if (p.startsWith('drafts/')) return 'drafts'
+    if (p.startsWith('resources/')) return 'resources'
     return 'userFiles'
   }
   /** 单池当前字节数 */

@@ -143,6 +143,15 @@
   - ⏸ 推后:`removeTool` 删内置(disabledNames 状态机,与 rebuild 交互边界复杂;集成方想禁用内置更直接用 capabilities,边缘场景)+ e2e 重名用例(selftest sec-47 白盒已覆盖纯函数)。
 - selftest 1119→1130(新建 sec-47 `dedupeTools` 白盒 11 断言);e2e 286 不变。
 
+## [2.32.0] - 2026-08-09
+
+### placeholder-protected-read-write(占位符替换读写·精确值保护)
+- `data.resources: [{path, mode}]` 声明受保护字段:freeze(只读,精确值不入 LLM 消息流)+ verbatim(原样保留,防压缩丢字/防幻觉改错);**bind 恒持原始值,占位符只在读写边界替换**(hash/快照/乐观锁全零干扰)
+- read 受保护路径返占位符 `⟦frozen:path⟧`/`⟦res:handle⟧`;写侧强制层 = 独立纯函数 `enforceSet`/`enforcePatches`,经可选参 `protectedCtx` 注入 `commitSetToBind`/`applyPatchesToBind`/eval 整体替换**三处**,先于 schema 校验(含 C1 回显识别 / A2 定点展开 / D1 池值自愈 / C3 remove 拒 / C2 `patches[i]` 定位)
+- 资源工具 `resource_get`/`update`/`list`/`delete`(advanced,opt-in:配 `data.resources` + vfs)+ SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`
+- vfs 第四池 `resources`(4MB,per-resource 文件,handle 路径派生短哈希)+ 跨压缩 pin(`resourcesPin` 中间件)+ skill `precise-value-protection`(`skills/` 分发)+ usageHints 资源段
+- 新增导出 `ResourceProtectSpec` 类型;全增量,默认零行为变化(未配 `data.resources` → no-op;freeze 无 vfs 也工作,verbatim 降级);selftest 1358→1480(sec-58/59/60/61)/ e2e 362→376(resources.mjs)。示例 `examples/precise-value-demo`。
+
 ## [2.22.1] - 2026-08-03
 
 ### Added

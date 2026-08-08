@@ -200,6 +200,14 @@ createChatSdk({
 
 - **`bind` is required** (any object): reactive → auto-refresh on write (recommended for UI); plain object → write works but no auto-refresh (suitable for headless / backend; integrator uses `onEvent`/`hook` `data_change` to be notified). Tools mutate in-place (`restoreInPlace`), compatible with reactive proxies; plain objects also write fine.
 - **Notifying the outside world of changes**: subscribe `data_change` via `onEvent` (constructor) or `sdk.hook` (runtime, multi-listener, cancellable) — fires after `write`/`set`/`edit`/`delete`/`restore`, with `operation`/`value`. For Vue + reactive bind, template/watch auto-react (no manual notify needed); `onEvent` can coexist for audit/analytics.
+- **Protected resources (precise-value protection)**: declare `data.resources: [{ path, mode }]` to protect fields needing exact preservation (ids / hashes / tokens / long verbatim / critical config).
+  - `mode: 'freeze'` = read-only (exact value hidden from LLM via `⟦frozen:path⟧` placeholder; any write rejected with `FROZEN_FIELD`; need value via `resource_get`).
+  - `mode: 'verbatim'` = exact string preserved (returns `⟦res:handle⟧` placeholder, original in resource pool; modify via `resource_update({path,value})` first, then write back handle; direct new value → `VERBATIM_MISMATCH`).
+  - opt-in: only when `data.resources` non-empty + vfs enabled (`capabilities.vfs`, default on) → exposes `resource_get`/`resource_update`/`resource_list`/`resource_delete` tools (advanced mode) + injects cross-compression pin. Unconfigured → zero behavior change.
+  ```js
+  data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }
+  ```
+  SDK API: `sdk.createResource/getResource/updateResource/deleteResource/listResources/releaseResources`.
 - **Runtime swap**: `sdk.setData({ schema, bind, description? })` replaces the whole config; tools pick up immediately (no rebuild). Snapshots & lock hash reset.
 - **Runtime skill swap**: `sdk.setSkills(skills)` replaces the entire skill list (same-name overwrites); the skill index section of the system prompt re-renders next round, and the skill full-text cache is cleared so the next `load_skill` re-fetches the latest content (incl. vfs doc). Use `sdk.invalidateSkillCache(name?)` to proactively invalidate the cache when a dynamic skill's content changes (without swapping the whole list).
 - **Runtime dynamic reconfiguration (zero-breakage; not calling = current behavior)**: beyond data/skills, you can also dynamically reconfigure tools / LLM / memory / subagents at runtime without rebuilding the agent:

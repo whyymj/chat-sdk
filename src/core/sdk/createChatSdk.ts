@@ -66,6 +66,7 @@ import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { dedupeTools } from './toolRegistry'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
+import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
@@ -435,6 +436,13 @@ export interface ChatSdk {
    * - opts.validate:false 跳过校验(集成方自行保证数据合法);opts.emit:false 不发 data_change 事件
    */
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string }
+  /** 受保护资源(精确值保护):创建/注册资源 → 返 handle;需 data.resources + vfsStore,否则抛错 */
+  createResource(path: string, value?: unknown): string
+  getResource(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined
+  updateResource(path: string, value: unknown): void
+  deleteResource(pathOrHandle: string): boolean
+  listResources(): { path: string; mode: string; handle: string; bytes: number }[]
+  releaseResources(paths?: string[]): void
   /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
   usage: import('../types').TokenUsage
   /** 乐观锁冲突挂起状态(响应式 ref;无冲突为 null,有冲突时 UI 据此渲染冲突对话框)。headless 集成方可 watch 此 ref 自建 UI */
@@ -779,7 +787,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         onConflict: conflictMgr.set,
         autoLock: options.autoLock,
         interceptors: options.interceptors,
-        vfsStore: useDraft ? vfsStore : undefined,  // draft 工具(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit
+        vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
       })
     : []
   // toolMode 筛选:simple(默认)主推 read/write 但保留高级能力;advanced 全暴露;minimal 只 read/write
@@ -788,6 +796,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const dataOpsController = useDataOps && finalDataConfig
     ? (dataOpsTools as StructuredToolInterface[] & { controller?: DataOpsController }).controller ?? null
     : null
+  // 受保护资源跨压缩 pin(augmentPrompt 每轮注入「受保护资源」段;资源清单天然跨压缩,无需持久化)
+  const resourcesPinMw = (useDataOps && finalDataConfig?.resources?.length && dataOpsController?.getResourcesSnapshot)
+    ? createResourcesPinMiddleware({ getResourcesSnapshot: () => dataOpsController?.getResourcesSnapshot?.() ?? [] })
+    : undefined
   /** 当前主数据配置(反映运行时替换;供 inspect/verify 等读最新状态) */
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
@@ -975,6 +987,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     },
     useDataOps && !!finalDataConfig,
     options.toolMode,
+    !!finalDataConfig?.resources?.length,
   )
   // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
@@ -1105,6 +1118,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(summarizationMw ? [summarizationMw] : []), // summarization:跨轮历史压缩(setLlm 后 setContextWindow 回灌新窗口)
     ...(useWorkingMemory ? [workingMemoryMw] : []), // summarization 后(augmentPrompt 段跨压缩保留;pin 最近 read/query/search 的 path/hash)
     ...(useFocus ? [focusMw] : []), // workingMemory 后:上下文聚焦(目标/视野/范围三层收敛 pin 段;同 mission 跨压缩保留)
+    ...(resourcesPinMw ? [resourcesPinMw] : []), // focus 后:受保护资源清单 pin(每轮注入 ⟦frozen⟧/⟦res⟧ 占位符语义;资源清单天然跨压缩)
     ...(useMemory ? [memoryMw] : []),
     ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
     // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
@@ -2175,6 +2189,25 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       core.dataOpsController?.markDataDirty?.()  // 整体替换 bind → 标脏(下次 checkpoint save 必 clone 新基线,防复用旧 bind clone)
       if (opts?.emit !== false) core.emit({ type: 'data_change', operation: 'set', value: bind })
       return { ok: true }
+    },
+    createResource: (path: string, value?: unknown) => {
+      const c = core.dataOpsController
+      if (!c?.createResource) throw new Error('[page-agent-sdk] createResource 不可用:需配 data.resources + vfsStore(capabilities.vfs 默认开)')
+      return c.createResource(path, value)
+    },
+    getResource: (pathOrHandle: string) => core.dataOpsController?.getResource?.(pathOrHandle),
+    updateResource: (path: string, value: unknown) => {
+      const c = core.dataOpsController
+      if (!c?.updateResource) throw new Error('[page-agent-sdk] updateResource 不可用:需配 data.resources + vfsStore')
+      c.updateResource(path, value)
+    },
+    deleteResource: (pathOrHandle: string) => core.dataOpsController?.deleteResource?.(pathOrHandle) ?? false,
+    listResources: () => core.dataOpsController?.listResources?.() ?? [],
+    releaseResources: (paths?: string[]) => {
+      const c = core.dataOpsController
+      if (!c?.listResources || !c.deleteResource) return
+      if (paths && paths.length) for (const p of paths) c.deleteResource(p)
+      else for (const r of c.listResources()) c.deleteResource(r.path)
     },
     /** 累计 token 用量(每轮 LLM 调用累加;prompt/completion/total_tokens)。无调用时为 0 */
     usage: core.usage,

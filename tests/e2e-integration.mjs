@@ -16,6 +16,7 @@ import { run as runConflict } from './e2e/conflict.mjs'
 import { run as runAutomation } from './e2e/automation.mjs'
 import { run as runLlmProvider } from './e2e/llm-provider.mjs'
 import { run as runFocus } from './e2e/focus.mjs'
+import { run as runResources } from './e2e/resources.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -33,6 +34,7 @@ const modules = [
   ['automation', runAutomation],
   ['llm-provider', runLlmProvider],
   ['focus', runFocus],
+  ['resources', runResources],
 ]
 
 let totalPass = 0, totalFail = 0

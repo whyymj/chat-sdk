@@ -19,13 +19,15 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './dataSlotQuery'
 import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 import {
-  isUnsafePath, safeMerge, getByPath, deleteByPath, deepClone, maybeParseValue,
+  isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath, deepClone, maybeParseValue,
   projectFields, limitDepth, safeStringify, hashValue,
   applyPatchToClone, restoreLive, restoreInPlace, diffObjects,
   type EditOp,
 } from './jsonUtils'
 import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
+import type { ResourceProtectSpec, ProtectedCtx } from './resources'
+import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath } from './resources'
 
 /** 单主对象配置 */
 export interface DataConfig {
@@ -35,6 +37,10 @@ export interface DataConfig {
   bind: any
   /** 数据说明,供 Agent 理解用途与格式;不传则自动生成 */
   description?: string
+  /** 受保护资源(精确值保护):声明需 freeze(只读)/verbatim(原样保留)的字段路径。
+   *  配置后 read 受保护路径返占位符(精确值不入 LLM 消息流),写侧强制(freeze 拒/verbatim 展开校验)。
+   *  未配(默认)→ 全部行为零变化。opt-in:仅配 data.resources + 提供 vfsStore 时装配资源工具 */
+  resources?: ResourceProtectSpec[]
 }
 
 export interface DataAuditEntry {
@@ -91,11 +97,19 @@ export interface DataOpsController {
   markDataDirty?(): void
   /** 读后清脏标记,返回是否脏(checkpoint save 消费;无实现时 checkpoint 默认整体 clone 向后兼容) */
   consumeDataDirty?(): boolean
+  /** 受保护资源清单快照(供 resourcesPin 中间件每轮 augmentPrompt 注入「受保护资源」段;freeze 无 handle,verbatim 有) */
+  getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[]
+  /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
+  createResource?(path: string, value?: unknown): string
+  getResource?(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined
+  updateResource?(path: string, value: unknown): void
+  deleteResource?(pathOrHandle: string): boolean
+  listResources?(): { path: string; mode: string; handle: string; bytes: number }[]
 }
 
 export type ToolMode = 'simple' | 'advanced' | 'minimal'
 
-const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data', 'draft_write', 'draft_commit'])
+const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data', 'draft_write', 'draft_commit', 'resource_get', 'resource_update', 'resource_list', 'resource_delete'])
 const MINIMAL_ALLOWED = new Set(['read', 'write'])
 
 export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
@@ -121,8 +135,17 @@ export function commitSetToBind(args: {
   op?: 'set' | 'draft_commit'  // 默认 'set';draft_commit 用 'draft_commit'(快照/审计标记区分)
   /** 成功写入 bind 后回调(供 checkpoint 脏标记:dryRun 不触发,因 dryRun 在写入前早 return)。set_data/write(set)/draft_commit 共用此收敛点 */
   onWrite?: () => void
+  /** 受保护资源强制层(精确值保护);undefined 或空 → no-op(向后兼容)。dryRun 也走强制(预检即拦) */
+  protectedCtx?: ProtectedCtx
 }): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
-  const { bindRef, value, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set' } = args
+  const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx } = args
+  let value = args.value
+  // 强制层(§7c F1):normalize(C1 回显 + verbatim 展开 + D1)+ freeze/verbatim 比对,先于 schema 校验
+  if (protectedCtx) {
+    const er = enforceSet({ value, ctx: protectedCtx })
+    if (!er.ok) return { ok: false, error: er.error }
+    value = er.value
+  }
   const res = schema.safeParse(value)
   if (!res.success) return { ok: false, error: zodError('', res.error.issues) }
   if (dryRun) return { ok: true, hash: '', data: res.data }
@@ -169,8 +192,10 @@ export function applyPatchesToBind(args: {
   snapshotLabel?: string
   /** dryRun:预检走完整校验链但不落盘/不入快照/不 applyLive,返回 clone 供预览 */
   dryRun?: boolean
+  /** 受保护资源强制层;undefined 或空 → no-op。在 patch 应用后、schema 校验前调用 */
+  protectedCtx?: ProtectedCtx
 }): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown } | { ok: false; error: string } {
-  const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun } = args
+  const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun, protectedCtx } = args
   const clone = deepClone(bindRef)
   const applied: { op: EditOp; jp: string; value: unknown }[] = []
   for (let i = 0; i < patches.length; i++) {
@@ -189,6 +214,11 @@ export function applyPatchesToBind(args: {
     const patchErr = applyPatchToClone(clone, op, jp, pVal)
     if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' }) }
     applied.push({ op, jp, value: pVal })
+  }
+  // 强制层(§7c F1):逐 patch C3 remove 检查 + normalizeAndCheck 比对(clone vs bind),先于 schema 校验
+  if (protectedCtx) {
+    const er = enforcePatches({ patches, clone, ctx: protectedCtx })
+    if (!er.ok) return { ok: false, error: er.error }
   }
   const res = schema.safeParse(clone)
   if (!res.success) {
@@ -222,6 +252,23 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   let description: string = config.description ?? '主数据对象'
   let allowKeys: string[] | null = getSchemaTopKeys(schema)
 
+  // 受保护资源(精确值保护):resourcesByPath 可变 Map(controller.set 经 loadResources 重建);resourceStore 复用 vfs 第四池
+  const resourcesByPath = new Map<string, ResourceProtectSpec>()
+  const resourceStore = opts.vfsStore ? new ResourceStore(opts.vfsStore) : undefined
+  function loadResources(specs?: ResourceProtectSpec[]) {
+    resourcesByPath.clear()
+    if (specs) for (const s of specs) {
+      const p = normalizePath(s.path)
+      resourcesByPath.set(p, { path: p, mode: s.mode })
+    }
+  }
+  loadResources(config.resources)
+  // protectedCtx:resourcesByPath 非空即构造(resourceStore 可选 → freeze 无 vfs 也工作,verbatim 降级);
+  //   resourcesByPath 内容随 controller.set 经 loadResources 变化自动 reflect
+  const protectedCtx: ProtectedCtx | undefined = resourcesByPath.size
+    ? { resourcesByPath, resourceStore, getBind: () => bindRef }
+    : undefined
+
   const snapshots: DataSnapshotEntry[] = []
   const maxSnapshots = opts.maxSnapshots ?? 20
   // 并发工具(maxParallelTools>1)下 autoLock 退化为"整体快照语义":多个 read 并发写本变量(完成顺序不定),
@@ -238,10 +285,40 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
   const controller: DataOpsController = {
     get: () => ({ schema, bind: bindRef, description }),
-    set: (c) => { schema = c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; lastReadHash = undefined; markDataDirty() },
+    set: (c) => { schema = c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; lastReadHash = undefined; loadResources(c.resources); resourceStore?.clear(); markDataDirty() },
     update: (b) => { bindRef = b; snapshots.length = 0; lastReadHash = undefined; markDataDirty() },
     markDataDirty,
     consumeDataDirty: () => { const d = _dataDirty; _dataDirty = false; return d },
+    getResourcesSnapshot: () => {
+      const out: { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[] = []
+      for (const [path, spec] of resourcesByPath) {
+        if (spec.mode === 'verbatim') {
+          const entry = resourceStore?.get(path)
+          out.push(entry?.handle ? { path, mode: spec.mode, handle: entry.handle } : { path, mode: spec.mode })
+        } else {
+          out.push({ path, mode: spec.mode })
+        }
+      }
+      return out
+    },
+    createResource: resourceStore ? (path: string, value?: unknown) => {
+      const np = normalizePath(path)
+      const spec = resourcesByPath.get(np)
+      const v = value !== undefined ? value : getByPath(bindRef, np)
+      return resourceStore.ensure(np, v, spec?.mode ?? 'verbatim')
+    } : undefined,
+    getResource: resourceStore ? (p: string) => {
+      const e = resourceStore.get(p)
+      return e ? { path: e.path, mode: e.mode, value: e.value, handle: e.handle } : undefined
+    } : undefined,
+    updateResource: resourceStore ? (path: string, value: unknown) => {
+      const np = normalizePath(path)
+      resourceStore.update(np, value)
+      setByPath(bindRef, np, value)  // 同步 bind(D1 一致:池=bind,防下次 write 回显句柄被 D1 撤销)
+      markDataDirty()  // D2:标脏防 checkpoint 快照内池≠bind
+    } : undefined,
+    deleteResource: resourceStore ? (p: string) => resourceStore.delete(p) : undefined,
+    listResources: resourceStore ? () => resourceStore.list() : undefined,
   }
 
   const audit = (entry: DataAuditEntry) => { opts.onAudit?.(entry) }
@@ -303,6 +380,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let val = jp ? getByPath(bindRef, jp) : bindRef
       // 整体读时按 schema 顶层 key 投影(隐藏未声明字段)
       if (!jp) val = projectBySchema(val, allowKeys)
+      // 受保护路径占位符替换(结构化读;精确值不入 LLM 消息流)
+      if (protectedCtx) val = renderReadPlaceholders({ jp, resolved: val, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
       const h = hashValue(bindRef)
       lastReadHash = h
       if (val === undefined) return `主数据${jp ? ` @ ${jp}` : ''} = (undefined) (hash=${h})`
@@ -323,7 +402,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (conflict !== null) return conflict
       const pr = maybeParseValue(value)
       if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, protectedCtx })
       if (!r.ok) return r.error
       lastReadHash = r.hash
       return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
@@ -361,7 +440,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子(原始类型)请用 set_data 整体设置' })
       }
-      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod' })
+      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', protectedCtx })
       if (!r.ok) return r.error
       const a = r.applied[0]
       audit({ op: 'edit', detail: `${a.op}${jp ? '@' + jp : ''}`, value: a.value, timestamp: Date.now() })
@@ -395,6 +474,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (isUnsafePath(jsonPath)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jsonPath}" 含非法段`, hint: '使用正常属性路径' })
       if (!isPathAllowed(jsonPath, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `delete_data @ "${jsonPath}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可删' })
+      }
+      if (protectedCtx) {
+        const hit = matchProtectedEither(jsonPath, protectedCtx.resourcesByPath)
+        if (hit) {
+          return toolError({ code: hit.spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED', message: `delete_data @ "${jsonPath}" 命中受保护字段 "${hit.protectedPath}"(${hit.spec.mode}),不可删除`, hint: hit.spec.mode === 'freeze' ? '冻结字段不可删;如需移除请联系集成方调整 data.resources' : 'verbatim 字段不可直接删;先 resource_delete({path}) 释放资源保护后再删' })
+        }
       }
       const effHash = expectedHash || (autoLock ? lastReadHash : undefined)
       const conflict = await handleConflict('delete', effHash)
@@ -554,7 +639,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const result = res.result
         // 子树 transform:返回值作为 jsonPath 子树的新值(set 到子路径 + 整体 schema 校验)
         if (jp) {
-          const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree' })
+          const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
@@ -567,14 +652,21 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (bindRef === null || typeof bindRef !== 'object') {
             return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform(patches) 无法就地替换`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
           }
-          const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform' })
+          const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
           lastReadHash = hashValue(bindRef)
           return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
         }
         // 整体替换模式:脚本返回完整新值
-        const chk = schema.safeParse(result)
+        let evalResult: unknown = result
+        // 强制层(§7c F1):eval transform 整体替换是独立落地路径(不走 commitSetToBind),单独调 enforceSet
+        if (protectedCtx) {
+          const er = enforceSet({ value: evalResult, ctx: protectedCtx })
+          if (!er.ok) return er.error
+          evalResult = er.value
+        }
+        const chk = schema.safeParse(evalResult)
         if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值且符合 schema)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 describe_data() 查看格式`, details: formatZodIssues(chk.error.issues) })
         if (bindRef === null || typeof bindRef !== 'object') {
           return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
@@ -621,6 +713,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (!jp) target = projectBySchema(target, allowKeys)
           else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
           let resolved = target
+          if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
           if (opts.interceptors?.read) { try { resolved = opts.interceptors.read(resolved) } catch (e) { return `- ${jp}: [READ_INTERCEPT: ${(e as Error).message}]` } }
           if (fields && fields.length) resolved = projectFields(resolved, fields)
           if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
@@ -642,6 +735,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (subSchema) target = projectBySchemaDeep(target, subSchema)
       }
       let resolved = target
+      if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
       if (opts.interceptors?.read) {
         try { resolved = opts.interceptors.read(resolved) } catch (e) {
           return toolError({ code: 'READ_INTERCEPT', message: `read 拦截器抛错: ${(e as Error).message}` })
@@ -737,6 +831,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (!isPathAllowed(patch.jsonPath, schema, allowKeys)) {
           return toolError({ code: 'PATH_DENIED', message: `write delete @ "${patch.jsonPath}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可删' })
         }
+        if (protectedCtx) {
+          const hit = matchProtectedEither(patch.jsonPath, protectedCtx.resourcesByPath)
+          if (hit) {
+            return toolError({ code: hit.spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED', message: `write delete @ "${patch.jsonPath}" 命中受保护字段 "${hit.protectedPath}"(${hit.spec.mode}),不可删除`, hint: hit.spec.mode === 'freeze' ? '冻结字段不可删' : 'verbatim 字段不可直接删;先 resource_delete 释放' })
+          }
+        }
         const conflict = await handleConflict('delete', effHash)
         if (conflict !== null) return conflict
         if (dryRun) {
@@ -761,7 +861,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           ? patchList
           : (patches && patches.length) ? patches
           : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
-        const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun })
+        const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun, protectedCtx })
         if (!r.ok) return r.error
         if (dryRun) return `dryRun(edit): ${r.applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(r.clone, 600)}。未实际写入、未入快照。`
         audit({ op: 'edit', detail: `${r.applied.length} 个 patch${r.applied.length > 1 ? '(批量)' : ''}`, value: r.applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
@@ -774,7 +874,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, protectedCtx })
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
       lastReadHash = r.hash
@@ -887,7 +987,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const conflict = await handleConflict('set', effHash)
         if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
         // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
-        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty })
+        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, protectedCtx })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
         lastReadHash = r.hash
         delete store.files[key]  // 成功:清草稿
@@ -906,12 +1006,100 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     draftTools.push(draftWrite, draftCommit)
   }
 
+  // ============ 受保护资源工具(opt-in:config.resources 非空 + vfsStore 时装配;advanced 暴露,simple/minimal 隐藏)============
+  // resource_get 取真值(占位符背后)/ resource_update 改 verbatim 原值(同步 bind+标脏)/ resource_list / resource_delete 释放
+  const resourceTools: StructuredToolInterface[] = []
+  if (config.resources?.length && resourceStore) {
+    const rget = tool(
+      async ({ path, handle }) => {
+        // 仅受保护路径(E2:防 LLM 拿它把任意路径值塞进资源池)
+        let target = path
+        if (!target && handle) target = resourceStore!.get(handle)?.path
+        if (!target) return toolError({ code: 'RESOURCE_NOT_FOUND', message: '未提供 path 或有效 handle', hint: '传 path(受保护字段)或 handle(占位符 ⟦res:handle⟧ 里的句柄)' })
+        const np = normalizePath(target)
+        if (!resourcesByPath.has(np)) return toolError({ code: 'RESOURCE_NOT_FOUND', message: `"${target}" 不是受保护字段`, hint: 'resource_get 仅查集成方在 data.resources 声明的路径' })
+        const entry = resourceStore!.get(np)
+        if (entry) return safeStringify({ path: entry.path, mode: entry.mode, value: entry.value, handle: entry.handle })
+        // 有 path 无资源(未懒注册)→ 按当前 bind 值即时生成入库
+        const cur = getByPath(bindRef, np)
+        if (cur === undefined) return toolError({ code: 'RESOURCE_NOT_FOUND', message: `字段 "${target}" 当前无值,无法注册`, hint: '该字段可能在 bind 中不存在;先 read 触发懒注册' })
+        const spec = resourcesByPath.get(np)!
+        const h = resourceStore!.ensure(np, cur, spec.mode)
+        return safeStringify({ path: np, mode: spec.mode, value: cur, handle: h })
+      },
+      {
+        name: 'resource_get',
+        description: '取受保护字段(freeze/verbatim)的真实值(占位符背后的精确值)。仅受保护路径(集成方在 data.resources 声明)。read 返回 ⟦frozen:path⟧/⟦res:handle⟧ 占位符,确需真值时用此工具。传 path 或 handle。',
+        schema: z.object({
+          path: z.string().optional().describe('受保护字段路径(data.resources 声明的)'),
+          handle: z.string().optional().describe('占位符 ⟦res:handle⟧ 里的句柄(与 path 二选一)'),
+        }),
+      },
+    )
+    const rupdate = tool(
+      async ({ path, value }) => {
+        if (!path) return toolError({ code: 'MISSING_VALUE', message: 'resource_update 需要 path', hint: '传要更新的 verbatim 受保护字段路径' })
+        const np = normalizePath(path)
+        const spec = resourcesByPath.get(np)
+        if (!spec) return toolError({ code: 'RESOURCE_NOT_FOUND', message: `"${path}" 不是受保护字段`, hint: 'resource_update 仅改 data.resources 声明的字段' })
+        if (spec.mode === 'freeze') return toolError({ code: 'FROZEN_FIELD', message: `字段 "${path}" 已冻结,resource_update 也不可改`, hint: '冻结字段完全只读' })
+        // schema 校验新值类型(用该位置 subSchema)
+        const subSchema = getSchemaAtPath(schema, np)
+        if (subSchema) {
+          const chk = subSchema.safeParse(value)
+          if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `resource_update 值不符合 "${path}" 的类型`, hint: '按字段类型传值', details: formatZodIssues(chk.error.issues) })
+        }
+        // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2);handle 路径派生不变
+        resourceStore!.update(np, value)
+        setByPath(bindRef, np, value)
+        markDataDirty()
+        const h = resourceStore!.get(np)?.handle
+        return `已更新 verbatim 资源 "${path}" = ${safeStringify(value, 200)}(handle ${h ?? '(未知)'} 不变)。后续 write 该字段写回句柄 ⟦res:${h}⟧ 或新值`
+      },
+      {
+        name: 'resource_update',
+        description: '更新 verbatim 受保护字段的真实值(改精确原值,如刷新 token/hash)。仅 verbatim 可改;freeze 拒。更新后同步 bind + 标脏,后续 write 写回句柄即用新值。',
+        schema: z.object({
+          path: z.string().describe('要更新的 verbatim 受保护字段路径'),
+          value: z.unknown().describe('新值(需符合字段 schema 类型)'),
+        }),
+      },
+    )
+    const rlist = tool(
+      async () => {
+        const list = resourceStore!.list()
+        if (!list.length) return '当前无已注册的受保护资源(read 受保护路径会懒注册)'
+        return safeStringify({ resources: list })
+      },
+      { name: 'resource_list', description: '列出所有已注册的受保护资源(path/mode/handle/bytes)。', schema: z.object({}) },
+    )
+    const rdelete = tool(
+      async ({ path, handle }) => {
+        let target = path
+        if (!target && handle) target = resourceStore!.get(handle)?.path
+        if (!target) return toolError({ code: 'RESOURCE_NOT_FOUND', message: '未提供 path 或有效 handle', hint: '传要释放的受保护字段 path 或 handle' })
+        const ok = resourceStore!.delete(target)
+        return ok ? `已释放资源 "${target}"(后续 read 该字段会重新懒注册)` : `资源 "${target}" 不存在(无需释放)`
+      },
+      {
+        name: 'resource_delete',
+        description: '释放受保护资源(从资源池删除,后续 read 重新懒注册)。用于不再需要保护的字段或释放空间。',
+        schema: z.object({
+          path: z.string().optional().describe('要释放的受保护字段路径'),
+          handle: z.string().optional().describe('占位符句柄(与 path 二选一)'),
+        }),
+      },
+    )
+    resourceTools.push(rget, rupdate, rlist, rdelete)
+  }
+
   const tools: StructuredToolInterface[] = [
     describeData, getData, setData, editData, deleteData,
     restoreData, historyData,
     queryData, searchData, evalScript,
     readSlot, writeSlot, schemaData, diffData,
     ...draftTools,
+    ...resourceTools,
   ]
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
   return tools

@@ -360,6 +360,10 @@ const sdk = createChatSdk({
 - `bind` 必填:直连 reactive/普通对象,工具直接读写 bind(响应式刷新);SDK 不再自动挂 window,集成方按需自己挂 `window.app = app` 供页面读取
 - `schema` 字段的 `.describe()` 自动提取(经 `extractSchemaHint`)注入 systemPrompt「可操作数据」段,集成方不用手写 description
 - 预览将注入的提示:`extractSchemaHint(schema)`(已导出)
+- **受保护资源(精确值保护,opt-in)**:声明 `data.resources: [{ path, mode }]` 保护需精确保存的字段(id/hash/token/长 verbatim/关键配置)。`freeze` = 只读(精确值经 `⟦frozen:path⟧` 占位符不入 LLM 消息流,写撞 `FROZEN_FIELD`);`verbatim` = 原样保留(`⟦res:handle⟧` 占位符,原值在资源池,改值经 `resource_update` 同步 bind 否则 `VERBATIM_MISMATCH`)。写侧强制在 `commitSetToBind`/`applyPatchesToBind`/eval 三处(先于 schema);**bind 恒持原始值**(占位符只在读写边界 → hash/快照/乐观锁不受影响)。opt-in(配 `data.resources` + `capabilities.vfs`):暴露 `resource_get`/`update`/`list`/`delete` 工具(advanced)+ 跨压缩 pin + SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`。详见 `skills/precise-value-protection`。
+  ```ts
+  data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }
+  ```
 - **`bind` 不强制 reactive**:任何对象都行。区别在于「写后是否响应式刷新」:
   - 传 `reactive(obj)`(Vue):Agent `write` 改属性 → 模板/watch 自动响应(推荐 UI 场景)
   - 传普通对象:Agent `write` 能改数据,但页面不响应(适合 headless / 后端 / 集成方自己 `onEvent` 或 `watch` 后刷新)
