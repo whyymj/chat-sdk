@@ -84,6 +84,21 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:storage] context-persist-resilience:mission 跨 switchSession 持久化往返')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-mission-persist', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    const idA = sdk.sessionId
+    sdk.setMission({ goal: '会话A的目标锚点', acceptanceCriteria: ['改完首页'] })
+    assert(sdk.inspect().mission?.goal === '会话A的目标锚点', '功能A 前置:setMission 置 mission(有值)')
+    await sdk.switchSession() // 切到新会话(切走前 persist A 的 mission —— persistRuntime 仅 afterRound 触发,setMission 后未发消息即切会话靠此补存)
+    assert(sdk.inspect().mission === undefined, '功能A 切到新会话 → mission 空(新会话无持久化目标)')
+    await sdk.switchSession(idA) // 切回 A
+    assert(sdk.inspect().mission?.goal === '会话A的目标锚点', '功能A 切回 A → mission 恢复(持久化往返:setMission 后切走不丢)')
+    assert(sdk.inspect().mission?.acceptanceCriteria?.[0] === '改完首页', '功能A 切回 → mission 字段完整(criteria 恢复)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:storage] 后端:session/local stub mount 成功')
   {
     if (!globalThis.sessionStorage) globalThis.sessionStorage = makeStore()

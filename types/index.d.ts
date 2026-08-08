@@ -78,7 +78,8 @@ export type SdkEvent =
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
-  | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics };
+  | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics }
+  | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -453,6 +454,10 @@ export interface SessionSnapshot {
   checkpoints?: unknown[];
   /** automation 断点续跑:累计 token usage(刷新后续跑预算统计连续) */
   usage?: TokenUsage;
+  /** 会话任务目标(context-persist-resilience:刷新后不丢;capabilities.missionAnchor 开启时写入) */
+  mission?: Mission;
+  /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
+  workingMemory?: WorkingMemory;
 }
 export type StorageEvent =
   | { type: 'degraded'; reason: string }

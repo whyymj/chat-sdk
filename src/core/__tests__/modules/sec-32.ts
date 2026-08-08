@@ -1,6 +1,8 @@
 import type { TestCtx } from './_ctx'
 import { tokenize, estimateMessageTokens, recallRounds, indexSummarize } from '../../composables/contextIndex'
 import { createConflictManager } from '../../sdk/conflictManager'
+import { trimMemoryMessagesImpl, composeTrimSummary, MEMORY_SUMMARY_PREFIX } from '../../utils/rounds'
+import { extractVfsRefs, gcVfsLargeResults } from '../../utils/vfsGc'
 
 /**
  * sec-32 —— contextIndex 纯函数 + conflictManager 工厂白盒单测(refactor-module-extraction 期二)。
@@ -39,6 +41,34 @@ export async function run(ctx: TestCtx): Promise<void> {
   // indexSummarize:生成每轮摘要文本
   const sum = indexSummarize(rounds)
   assert(sum.includes('第1轮') && sum.includes('第2轮') && sum.includes('第3轮'), 'indexSummarize → 含每轮标记')
+
+  // recallRounds 召回纳入 steps.result(recall-and-trim-llm 方向1,解 B2:跨轮工具结果可被关键词召回)
+  const roundsWithSteps = [
+    { round: 1, startIdx: 0, userMsg: { role: 'user', content: '查一下配置' }, assistantMsgs: [{ role: 'assistant', content: '好的', steps: [{ name: 'read', result: '主题色是薰衣草紫 lavender' }] }] },
+    { round: 2, startIdx: 2, userMsg: { role: 'user', content: '另一个话题' }, assistantMsgs: [{ role: 'assistant', content: '无关内容' }] },
+  ] as any[]
+  const recSteps = recallRounds(roundsWithSteps, '薰衣草', 2)
+  assert(recSteps.length === 1 && recSteps[0].round === 1, 'recallRounds → 召回纳入 steps.result(按工具结果关键词命中轮 1)')
+  assert(!recSteps.some((r) => r.round === 2), 'recallRounds → 不含工具结果关键词的轮次不召回(轮 2)')
+
+  // trimMemoryMessagesImpl 返回 older/prevSeg + composeTrimSummary(recall-and-trim-llm 方向2:trim 异步 LLM 增强)
+  const manyMsgs: any[] = []
+  for (let i = 0; i < 4; i++) {
+    manyMsgs.push({ role: 'user', content: `问题${i}`, timestamp: i })
+    manyMsgs.push({ role: 'assistant', content: `回答${i}`, timestamp: i })
+  }
+  const trim4 = trimMemoryMessagesImpl(manyMsgs, 2) // 4 轮保留最近 2 轮
+  assert(trim4.trimmed === true, 'trimMemoryMessagesImpl → 超限触发 trim')
+  if (trim4.trimmed) {
+    assert(Array.isArray(trim4.older) && trim4.older.length === 2, 'trimMemoryMessagesImpl → 返回被裁 older 轮次(2 轮,供异步增强复用)')
+    assert(trim4.prevSeg === null, 'trimMemoryMessagesImpl → 无头部旧摘要时 prevSeg=null')
+    // composeTrimSummary:LLM 重摘要正文 + prevSeg 重组为 system 消息内容
+    const enhanced = composeTrimSummary(trim4.older, trim4.prevSeg, 'LLM 生成的连贯摘要')
+    assert(enhanced.startsWith(MEMORY_SUMMARY_PREFIX), 'composeTrimSummary → 输出含摘要前缀标记(供下轮 parseSummarySegment 识别)')
+    assert(enhanced.includes('LLM 生成的连贯摘要'), 'composeTrimSummary → 输出含 LLM 摘要正文')
+    const enhancedWithPrev = composeTrimSummary(trim4.older, { body: '更早的历史', rounds: 3, cumulative: true } as any, '新摘要')
+    assert(enhancedWithPrev.includes('更早的历史') && enhancedWithPrev.includes('新摘要'), 'composeTrimSummary → prevSeg 累积正文在前 + LLM 正文在后(不丢累积)')
+  }
 
   // === createConflictManager 工厂 ===
   // 初始状态
@@ -80,4 +110,15 @@ export async function run(ctx: TestCtx): Promise<void> {
   const mgr4 = createConflictManager()
   mgr4.set({ op: 'delete', currentValue: {}, currentHash: 'h3', expectedHash: 'h0', snapshotId: 0 })
   assert(mgr4.pendingConflict.value !== null, 'createConflictManager(无 getEmit).set → 仍挂起(不依赖 emit)')
+
+  // vfsGc:引用扫描 + 可达性 GC(context-persist-resilience 功能B —— 解 vfs 孤儿堆积/引用悬空)
+  const gcMsgs = [
+    { role: 'assistant', content: '结果见 vfs_read({ path: "large_results/read-abc.txt" })', steps: [{ name: 'read', result: '另有 large_results/read-def.txt 引用' }] },
+  ] as any
+  const refs = extractVfsRefs(gcMsgs)
+  assert(refs.has('large_results/read-abc.txt') && refs.has('large_results/read-def.txt'), 'extractVfsRefs → 扫 content + steps.result 提 large_results 地址')
+  const gcFiles = { 'large_results/read-abc.txt': { content: 'x' }, 'large_results/orphan.txt': { content: 'y' }, 'drafts/d1.txt': { content: 'z' }, 'userFiles/u.txt': { content: 'w' } }
+  const remove = gcVfsLargeResults(gcFiles as any, refs)
+  assert(remove.length === 1 && remove[0] === 'large_results/orphan.txt', 'gcVfsLargeResults → 只删 large_results 不可达(orphan);保留可达 + 非 large_results 池(drafts/userFiles 不动)')
+  assert(!gcVfsLargeResults(gcFiles as any, new Set(['large_results/read-abc.txt', 'large_results/orphan.txt'])).length, 'gcVfsLargeResults → 全在引用集 → 不删(空)')
 }

@@ -77,7 +77,12 @@ export function recallRounds(older: Round[], query: string, topK: number): Round
     const hay = (
       r.userMsg.content +
       ' ' +
-      r.assistantMsgs.map((m) => m.content).join(' ')
+      r.assistantMsgs.map((m) => m.content).join(' ') +
+      // 召回纳入工具结果(解 B2:让「之前 read/query 出来的 X」能被关键词召回;plainSummary 截断防大 result 撑爆匹配串)
+      ' ' +
+      r.assistantMsgs
+        .flatMap((m) => (m.steps || []).map((st) => plainSummary(st.result || '', 120)))
+        .join(' ')
     ).toLowerCase()
     let score = 0
     for (const kw of keywords) {

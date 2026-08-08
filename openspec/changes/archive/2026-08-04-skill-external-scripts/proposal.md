@@ -1,7 +1,7 @@
 # Change: skill-external-scripts(自定义 skill 支持外部脚本执行)
 
 > 用户诉求(2026-08-04):「如何能使自定义 skill 支持外部脚本的执行」。用户拍板(AskUserQuestion):**执行目标 = 页面内 JS + 远程脚本 URL + skill 附带可调工具(全要);触发形态 = 加载时自动执行注入 + 可反复调用的工具(两者都要)**。
-> **状态**:proposal(未实施)。**独立 change**,无前置依赖。基于对 skills 中间件 + 沙箱引擎的源码核对(证据见 design §1)。
+> **状态**:📦 已发布 2.26.0(2026-08-08,实施完成 + code-reviewer 审查 8 问题修复 + 补测试;selftest 1231/e2e 312/browser 31 全绿)。**独立 change**,无前置依赖。基于对 skills 中间件 + 沙箱引擎的源码核对(证据见 design §1)。
 > **[2026-08-08 二次核实修正]**:对照当前代码核实后补 4 项(决策 6-9 / design §1.2 §3 §4 §5 §6.3 §6.4 §7 §8 / tasks 全节):① 沙箱加固层 `lockSandboxGlobal`(defineProperty 锁网络层,原稿写于该层之前故遗漏)必须整体迁移 ② exec 失败不缓存(动态 skill 可重试)③ skill 工具走 `dedupeTools` + 命名空间前缀 ④ exec 大结果走通用 offload,「一次读全」仅限静态文本。
 
 ## Why

@@ -67,6 +67,7 @@ export type SdkEvent =
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: import('../tools/toolError').ErrorSeverity; code?: string; context?: unknown }
   | { type: 'trace'; spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
+  | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {

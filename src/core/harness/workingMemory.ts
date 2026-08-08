@@ -23,6 +23,8 @@ export function createWorkingMemoryMiddleware(): Middleware & {
   getWorkingMemory: () => import('./state').WorkingMemory | undefined
   /** 重置为初始态(切会话/清空聊天):清 locatedPaths + lastHashes,防旧会话 path/hash 污染新会话(P1-5) */
   reset: () => void
+  /** 从快照恢复(刷新/切会话加载时):把持久化的 locatedPaths/lastHashes 写回闭包(context-persist-resilience 功能A) */
+  restore: (wm: import('./state').WorkingMemory) => void
 } {
   // 闭包真相源(跨轮持久);state.workingMemory 是其投影(每轮 beforeModel 刷,供 augmentPrompt + inspect)
   const locatedPaths: string[] = []
@@ -57,6 +59,7 @@ export function createWorkingMemoryMiddleware(): Middleware & {
   const mw: Middleware & {
     getWorkingMemory: () => import('./state').WorkingMemory | undefined
     reset: () => void
+    restore: (wm: import('./state').WorkingMemory) => void
   } = {
     name: 'workingMemory',
     beforeAgent: () => (isEmpty() ? undefined : { workingMemory: snapshot() }),
@@ -98,6 +101,13 @@ export function createWorkingMemoryMiddleware(): Middleware & {
     reset: () => {
       locatedPaths.length = 0
       for (const k of Object.keys(lastHashes)) delete lastHashes[k]
+    },
+    /** 从快照恢复(刷新/切会话加载):把持久化的 locatedPaths/lastHashes 写回闭包(context-persist-resilience 功能A) */
+    restore: (wm) => {
+      locatedPaths.length = 0
+      locatedPaths.push(...wm.locatedPaths.slice(0, MAX_ENTRIES)) // 复带上限防御(旧/异常快照超限)
+      for (const k of Object.keys(lastHashes)) delete lastHashes[k]
+      Object.assign(lastHashes, wm.lastHashes)
     },
   }
   return mw

@@ -108,18 +108,29 @@ export function renderSummarySegment(seg: SummarySegment): string {
 }
 
 /**
+ * trim 异步 LLM 增强(recall-and-trim-llm 方向2)后,把 LLM 重摘要的正文重组为最终摘要 system 消息内容。
+ * 复用 mergeSummarySegments(LLM 正文作"续",头部累积 prevSeg 在前)+ renderSummarySegment(加前缀标记)。
+ * 纯函数,可单测;createChatSdk.trimMemoryMessages 异步增强分支调用。
+ */
+export function composeTrimSummary(older: Round[], prevSeg: SummarySegment | null, llmDigest: string): string {
+  const merged = mergeSummarySegments({ body: llmDigest, rounds: older.length }, prevSeg ?? undefined)
+  return renderSummarySegment(merged)
+}
+
+/**
  * 内存对话轮数上限裁剪(纯函数,可单测):超限把最旧轮次压缩为一条摘要 system 消息。
  *
  * 关键:若 messages 头部已有上一轮 trim 留下的"更早对话摘要"system,groupRounds 会跳过它
  * (头部 system 不进任何轮)→ 旧摘要会被 splice 静默丢弃、不并入新摘要 → 更早摘要逐级丢失。
  * 本函数提取头部旧摘要正文,合并进新摘要,保证累积历史不丢。
  *
- * @returns trimmed=false 未触发;trimmed=true 时 deleteFrom/deleteCount/summary 供调用方 splice 原地应用(保持共享响应式引用)
+ * @returns trimmed=false 未触发;trimmed=true 时 deleteFrom/deleteCount/summary 供调用方 splice 原地应用(保持共享响应式引用);
+ *   older/prevSeg 供 trim 异步 LLM 增强(recall-and-trim-llm 方向2)复用:older=被裁轮次,prevSeg=头部累积旧摘要
  */
 export function trimMemoryMessagesImpl(
   messages: AgentMessage[],
   maxMemoryRounds: number,
-): { trimmed: false } | { trimmed: true; deleteFrom: number; deleteCount: number; summary: AgentMessage } {
+): { trimmed: false } | { trimmed: true; deleteFrom: number; deleteCount: number; summary: AgentMessage; older: Round[]; prevSeg: SummarySegment | null } {
   if (maxMemoryRounds <= 0) return { trimmed: false }
   const rounds = groupRounds(messages)
   if (rounds.length <= maxMemoryRounds) return { trimmed: false }
@@ -155,5 +166,7 @@ export function trimMemoryMessagesImpl(
     deleteFrom: 0,
     deleteCount: keepFromIdx,
     summary: { role: 'system', content, timestamp: older[0].userMsg.timestamp },
+    older,
+    prevSeg,
   }
 }

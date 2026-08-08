@@ -68,7 +68,9 @@ import { type SessionStore, type StorageConfig, type StorageBackendType, type Se
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
 import { resolveModelCaps } from '../utils/modelCaps'
-import { trimMemoryMessagesImpl } from '../utils/rounds'
+import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
+import { indexSummarize } from '../composables/contextIndex'
+import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { createSerialRunner } from '../utils/serialRunner'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
@@ -669,6 +671,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const { modelCaps: initialModelCaps, summaryLlmInvoke, titleLlmInvoke } = resolveLlm(options)
   let modelCaps = initialModelCaps
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
+  // recall-and-trim-llm 方向2:trim 异步 LLM 增强的配置门 + preserveSet(复用于 summarization 装配,消除重复 resolveContextOptions 调用)
+  const resolvedCtxOpts = resolveContextOptions(options, modelCaps.contextWindow)
+  const enableTrimLlm = resolvedCtxOpts.enableLLMSummary !== false
+  const trimPreserveArr: string[] =
+    (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
+    PRESET_PRESERVE[options.contextPreset ?? 'auto']
+  const trimPreserveSet = new Set<string>(trimPreserveArr)
   // 当前 LLM 实例/配置:setLlm 后更新(inspect().model 读最新);主 LLM 实例化由 createAgent/setLlm 处理
   let currentLlm: BaseChatModel | LLMConfig = options.llm
   if (options.debug && !summaryLlmInvoke) console.warn('[page-agent-sdk][summarization] 未构造 llmInvoke(apiKey 缺失?),摘要回退零成本索引摘要')
@@ -1024,15 +1033,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(useSummarization
       ? [
           createSummarizationMiddleware({
-            // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底
-            ...resolveContextOptions(options, modelCaps.contextWindow),
+            // 预设档位(默认 auto)提供合理默认 → contextOptions 细参覆盖个别字段 → 兜底;复用 buildCore 顶部 resolvedCtxOpts(消除重复 resolveContextOptions 调用)
+            ...resolvedCtxOpts,
             llmInvoke: summaryLlmInvoke,
             // A:压缩时注入当前主数据说明(防 LLM 基于过时记忆操作;dataOps 关闭时 liveData() 返回 undefined,无影响)
             getRegisteredData: () => liveData() ? [{ description: liveData()!.description ?? '主数据对象' }] : [],
-            // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);用户可在 contextOptions 覆盖
-            preserveLastToolResults:
-              (options.contextOptions && (options.contextOptions as any).preserveLastToolResults) ??
-              PRESET_PRESERVE[options.contextPreset ?? 'auto'],
+            // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);复用 buildCore 顶部 trimPreserveArr
+            preserveLastToolResults: trimPreserveArr,
           }),
         ]
       : []),
@@ -1127,6 +1134,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 恢复累计 usage(断点续跑:刷新后预算统计连续)。一次性恢复覆盖:此处把 snap.usage 整体赋到 usage;
       // 之后 sdk-events afterModel 在恢复后的 usage 上继续累加 —— 非"双写"(applySnapshot 恢复时一次性 + afterModel 每轮累加,时机不同,语义一致:恢复基线 + 后续累加)
       if (snap.usage) Object.assign(usage, snap.usage)
+      // context-persist-resilience 功能A:恢复 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;reset 在 applySnapshot 前,恢复值不被清)
+      if (snap.mission && useMission) missionMw.setMission(snap.mission)
+      if (snap.workingMemory && useWorkingMemory) workingMemoryMw.restore(snap.workingMemory)
+      // context-persist-resilience 功能B:加载兜底 GC —— 清历史孤儿(旧存档漏网 / 上轮 GC 漏的);新会话无孤儿则空操作
+      gcVfsOrphans()
       // 注:用户创建的 skill 不再随 SessionSnapshot 持久化,由独立 SkillStore 管理(见 loadUserSkillsFromStore)
     },
 
@@ -1257,6 +1269,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         if (!store) throw new Error('page-agent-sdk: storage 未开启,无法切换会话(请传 storage 选项)')
       // 收口挂起的冲突(按「保留外部」),防切会话后旧 conflict Promise 永久挂起
       conflictMgr.resolve('keep_external')
+      // context-persist-resilience:切走前 persist 当前会话的 mission/workingMemory(防 setMission / 工作记忆积累后切走丢失;persistRuntime 仅 afterRound 触发,setMission 后未发消息即切会话会漏存)
+      if (core.sessionId && store) {
+        if (useMission) { const m = missionMw.getMission(); if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>) }
+        if (useWorkingMemory) { const wm = workingMemoryMw.getWorkingMemory(); if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>) }
+      }
       vfsStore.flush?.()
       await store.flush()
       let target = sessionId ?? ''
@@ -1553,9 +1570,59 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
    * storage:false 也生效 —— 纯内存历史累积的 OOM 兜底。
    * 核心逻辑经纯函数 trimMemoryMessagesImpl(可单测):头部旧摘要并入新摘要,防更早摘要逐级丢失。
    */
+  /** context-persist-resilience 功能B:快照指定 messages 引用的 vfs 大结果原文(归档用,读 vfsStore.files) */
+  function snapshotVfsResults(msgs: AgentMessage[]): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const p of extractVfsRefs(msgs)) {
+      const f = vfsStore.files[p]
+      if (f) out[p] = f.content
+    }
+    return out
+  }
+  /** context-persist-resilience 功能B:可达性 GC —— 扫当前 messages 引用,删 vfs 不可达的 large_results(trim 后 / 加载兜底触发;delete 经 Proxy 落盘) */
+  function gcVfsOrphans(): void {
+    const toRemove = gcVfsLargeResults(vfsStore.files, extractVfsRefs(messages))
+    for (const k of toRemove) delete vfsStore.files[k]
+  }
+
   function trimMemoryMessages(): void {
     const r = trimMemoryMessagesImpl(messages, maxMemoryRounds)
-    if (r.trimmed) messages.splice(r.deleteFrom, r.deleteCount, r.summary)
+    if (!r.trimmed) return
+    const { older, summary } = r
+    // context-persist-resilience 功能B:trim 收口 —— 快照 older vfs → 归档通知(带 vfs 大结果)→ 删 → GC
+    // 删之前发通知,保证 dropped/vfsResults 是完整原文(还没被删);vfsResults 让集成方归档完整(对话 + 大结果)
+    emit({
+      type: 'context_trimmed',
+      dropped: older.map((o) => ({
+        round: o.round,
+        user: o.userMsg.content,
+        assistant: o.assistantMsgs.map((m) => m.content),
+        steps: o.assistantMsgs.flatMap((m) => m.steps ?? []),
+      })),
+      vfsResults: snapshotVfsResults(older.flatMap((o) => [o.userMsg, ...o.assistantMsgs])),
+      summary: summary.content as string,
+      reason: 'max_memory_rounds',
+    })
+    messages.splice(r.deleteFrom, r.deleteCount, summary)
+    gcVfsOrphans() // 删 older 后扫剩余引用,回收不可达的 large_results(被剩余轮引用的留)
+    // recall-and-trim-llm 方向2:trim 异步 LLM 增强 —— 同步模板占位已 splice+落盘,异步用 LLM 重摘要 older 替换(照 titleLlmInvoke fire-and-forget 模式)。
+    // 配置门:enableLLMSummary 默认 true(conservative 显式 false 不触发);优雅降级(LLM 失败/无 invoke 保留模板);竞态守卫(summaryMsg 未被新一轮 trim/clearSession 移除才替换)
+    if (enableTrimLlm && summaryLlmInvoke) {
+      const summaryMsg = r.summary // 引用(splice 进 messages 的同一条,用于竞态守卫 indexOf)
+      const { prevSeg } = r
+      void (async () => {
+        try {
+          const llmDigest = await summaryLlmInvoke(indexSummarize(older, trimPreserveSet))
+          // 竞态守卫:summaryMsg 仍在 messages(未被新一轮 trim 覆盖 / clearSession 移除)才替换;indexOf<0 放弃保留当前态
+          const idx = messages.indexOf(summaryMsg)
+          if (idx < 0) return
+          messages[idx].content = composeTrimSummary(older, prevSeg, llmDigest)
+          persistRuntime() // 落盘 LLM 增强版(异步,不阻塞主循环)
+        } catch {
+          /* LLM 摘要失败:保留模板占位,优雅降级(模板已 splice+落盘,无需额外处理) */
+        }
+      })()
+    }
   }
 
   // 会话标题自动生成:首条 user 截取(deriveTitle 纯函数,从 llmResolver 导入);变化才 updateTitle,避免每轮重复写
@@ -1573,6 +1640,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
     void store.save(agentId, core.sessionId, { todos })
+    // context-persist-resilience 功能A:持久化 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;非空才写省 IDB 写)
+    if (useMission) {
+      const m = missionMw.getMission()
+      if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>)
+    }
+    if (useWorkingMemory) {
+      const wm = workingMemoryMw.getWorkingMemory()
+      if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>)
+    }
     // automation 断点续跑:持久化 checkpoint 栈 + 累计 usage(刷新/崩溃后恢复,长任务可续跑;仅 automation 开启时写,省空间)
     if (useAutomation && checkpointMgr) {
       void store.save(agentId, core.sessionId, { checkpoints: checkpointMgr.exportStack() } as Partial<SessionSnapshot>)

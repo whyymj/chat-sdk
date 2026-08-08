@@ -83,4 +83,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(wm2.locatedPaths.includes('c.d') && !wm2.locatedPaths.includes('a.b'), '✓ reset() 后重新捕获无残留(只含新 path c.d)')
     assert(wm2.lastHashes['c.d'] === 'cafef00d' && !('a.b' in wm2.lastHashes), '✓ reset() 后 lastHashes 无残留(只含新 hash)')
   }
+
+  // ✓ context-persist-resilience 功能A:restore(wm) 从快照恢复(刷新/切会话加载);往返一致 + 超限截断
+  {
+    const mws = createWorkingMemoryMiddleware()
+    const callS = async (name: string, args: Record<string, unknown>, content: string): Promise<ToolExecResult> => {
+      const ctxT = { id: '1', name, args, state: { messages: [] } } as unknown as ToolCallContext
+      return (mws.wrapToolCall as (c: ToolCallContext, n: (c: ToolCallContext) => Promise<ToolExecResult>) => Promise<ToolExecResult>)(
+        ctxT, async () => ({ content, status: 'done' as const }),
+      )
+    }
+    await callS('read', { jsonPath: 'restored.path' }, '值 (hash=a1b2c3)')
+    const snap = mws.getWorkingMemory()!
+    mws.reset()
+    assert(mws.getWorkingMemory() === undefined, '✓ restore 前置:reset 后空')
+    mws.restore(snap)
+    const wmr = mws.getWorkingMemory()!
+    assert(wmr.locatedPaths.includes('restored.path'), '✓ restore(wm) → locatedPaths 恢复(往返一致)')
+    assert(wmr.lastHashes['restored.path'] === 'a1b2c3', '✓ restore(wm) → lastHashes 恢复')
+    mws.restore({ locatedPaths: Array.from({ length: 15 }, (_, i) => `p${i}`), lastHashes: {} } as any)
+    assert(mws.getWorkingMemory()!.locatedPaths.length === 10, '✓ restore 超限截断(快照 >10 只留 10)')
+  }
 }

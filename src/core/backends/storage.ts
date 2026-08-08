@@ -14,7 +14,7 @@
  *   不同会话并行。debouncedSave 被同 kind 后续 save 取代时立即 resolve 旧 Promise(不挂起)。
  */
 import type { AgentMessage, TokenUsage } from '../types'
-import type { VfsFile, Todo } from '../harness/state'
+import type { VfsFile, Todo, Mission, WorkingMemory } from '../harness/state'
 import { makeId } from '../utils/id'
 
 // ===== 默认值 =====
@@ -28,8 +28,8 @@ const EVICT_DELAY_MS = 300
 const META_KIND = '__meta__'
 const KEY_PREFIX = 'v:1'
 
-type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage'
-const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage']
+type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage' | 'mission' | 'workingMemory'
+const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage', 'mission', 'workingMemory']
 
 // ===== 数据结构 =====
 export interface SessionMeta {
@@ -52,6 +52,10 @@ export interface SessionSnapshot {
   checkpoints?: unknown[]
   /** automation 断点续跑:累计 token usage(刷新后续跑,预算统计连续) */
   usage?: TokenUsage
+  /** 会话任务目标(context-persist-resilience:刷新后长任务目标不丢;capabilities.missionAnchor 开启时写入) */
+  mission?: Mission
+  /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
+  workingMemory?: WorkingMemory
 }
 
 /** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)

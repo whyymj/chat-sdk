@@ -1115,6 +1115,27 @@ createChatSdk({
 
 > 适用:调试长任务瓶颈(哪轮慢)、错误追溯(哪轮失败)、token 预算监控(每轮 usage)。仍不做 APM 后端上报 / 分布式追踪(后端框架需求;经 `onEvent('trace')` 自行接 Datadog/Sentry 等)。
 
+### 6.13b 上下文归档 `context_trimmed`(对话超长时抢救即将删除的内容,context-persist-resilience)
+
+对话超过 `maxMemoryRounds`(默认 50 轮)时,AI 会删除最早的轮次腾内存(原文永久丢失,只留摘要)。若需审计 / 合规 / 备份,订阅 `context_trimmed`:删除前打包完整原文(含被引用的 vfs 大结果)+ 替代摘要给你,你要存就存自己的服务器(SDK 不囤积,默认删除行为不变)。
+
+```ts
+createChatSdk({
+  storage: 'indexed',  // 需开 storage(vfs 大结果才持久化、归档才完整)
+  onEvent(e) {
+    if (e.type === 'context_trimmed') {
+      // e.dropped    = 即将被删的完整早期对话(每轮:用户 / AI / 工具结果)
+      // e.vfsResults = 这些轮引用的 vfs 大结果原文 { 地址→内容 }
+      // e.summary    = 替代的摘要
+      archiveService.save({ dropped: e.dropped, vfsResults: e.vfsResults, summary: e.summary })
+    }
+  }
+})
+```
+
+- 不订阅 = 跟现在一样(AI 照删,你不管)。完全可选。
+- 同链路:vfs 孤儿 GC(trim 后自动回收没人引用的大结果,防堆积);mission / workingMemory 跨刷新持久化(长任务目标 + 工作记忆刷新不丢)。
+
 ### 6.14 无人值守自动化(资源预算 / 错误恢复 / 批处理 / 断点续跑,2.20+)
 
 无人值守批量 / 长任务场景(后台生成一批页面、定时任务、长流程),需:预算控制(防烧 token/时间)、错误自动恢复(单点错误不永久中断)、批处理、断点续跑(刷新/崩溃后恢复)。opt-in(最远能力,默认关)。

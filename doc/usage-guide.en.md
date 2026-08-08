@@ -800,6 +800,27 @@ createChatSdk({
 
 > Use cases: debug long-task bottlenecks (which round is slow), error tracing (which round failed), token-budget monitoring. APM backend reporting / distributed tracing still not built (backend-framework concern; feed via `onEvent('trace')` to Datadog/Sentry yourself).
 
+### 6.13b Context archival `context_trimmed` (rescue content about to be deleted when the conversation grows long, context-persist-resilience)
+
+When the conversation exceeds `maxMemoryRounds` (default 50 rounds), the AI deletes the oldest rounds to free memory (originals gone forever, only a summary kept). If you need audit/compliance/backup, subscribe to `context_trimmed`: right before deletion it hands you the full originals (including referenced vfs large results) + the replacement summary — store them to your own server if you want (the SDK doesn't hoard; default deletion behavior is unchanged).
+
+```ts
+createChatSdk({
+  storage: 'indexed',  // storage must be on (so vfs large results persist and the archive is complete)
+  onEvent(e) {
+    if (e.type === 'context_trimmed') {
+      // e.dropped    = full early conversation about to be deleted (each round: user / AI / tool results)
+      // e.vfsResults = referenced vfs large-result originals { path→content }
+      // e.summary    = the replacement summary
+      archiveService.save({ dropped: e.dropped, vfsResults: e.vfsResults, summary: e.summary })
+    }
+  }
+})
+```
+
+- Not subscribing = same as now (AI deletes as usual, you do nothing). Fully optional.
+- Same chain: vfs orphan GC (auto-reclaims unreferenced large results after trim, prevents buildup); mission/workingMemory persist across refresh (long-task goal + working memory survive reload).
+
 ### Unattended automation (resource budget / error recovery / batch / resume, 2.20+)
 
 For unattended batch / long-task scenarios (generate pages in the background, cron jobs, long flows): budget control, automatic error recovery, batch processing, and resume after refresh/crash. Opt-in (most advanced, default off).

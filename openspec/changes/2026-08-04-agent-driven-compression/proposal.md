@@ -86,3 +86,10 @@ interface CompressDecision {
 - 不做实时逐 token 监控(每轮快照 + 压缩时决策即可)。
 - 不依赖 `chatdialog-component-split` / `focus-context`。
 - 不并入 `context-inspector`(后者只做数据源 + 人看面板)。
+
+## 演进方向(未来,2026-08-08 记)
+
+- **`archive_to_vfs` 无损搬迁**(用户提议):当前 `CompressDecision` 还停留在「决策怎么**有损摘要**」(keepRounds / summarize mode)。进一步演进是给压缩 agent 加 `archive_to_vfs({ rounds?, content?, summary })` 工具,由它**自主判断哪些老内容搬到 vfs(完整保留)**、message 只留简介 + 索引 —— 用**无损搬迁**替代有损摘要,上下文整洁且信息不丢(需要时 `vfs_read` 回读)。
+  - **协同**:与本 change 的 `inspect_context` / `CompressDecision` 同链(inspect 看构成 → 决策搬哪些 → `archive_to_vfs` 执行);搬迁进 vfs 的老内容,其回收管理依赖 `context-persist-resilience` 的 vfs 孤儿 GC。
+  - **暂不做的理由**:① 压缩 agent 每次烧多轮 LLM(决策 + 搬迁),成本高;② vfs 堆积老对话 → 空间压力(需 GC + LRU);③ LLM 不一定主动 `vfs_read` 回读(索引可能闲置);④ 现状摘要质量在 `recall-and-trim-llm`(方向 2 trim LLM 增强)后已提升,多数场景够用。
+  - **重启触发**:「老对话信息丢失」成真实痛点(集成方反馈摘要丢关键信息、LLM 频繁要求重读历史)时,本 change(含此演进)整体重启评估。

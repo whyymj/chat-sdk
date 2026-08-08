@@ -6,6 +6,15 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(长对话上下文韧性 P1 · recall-and-trim-llm)
+- **跨轮召回纳入工具结果**:关键词召回(`recallRounds`)此前只匹配对话文本(user/assistant content),不含工具结果 → 问「之前 read 出来的 X 是什么」搜不到,只能重新 read(浪费 token)。修复:召回匹配串纳入 `steps.result`(经 `plainSummary` 截断 120 字防大 result 撑爆),跨轮工具结果可被关键词命中。
+- **trim 异步 LLM 增强**:内存裁剪(`trimMemoryMessagesImpl`)用固定模板摘要(问 60/答 80 字),永远不走 LLM —— 即便 `enableLLMSummary:true`(默认 auto 即开),落盘/恢复的早期历史仍是模板,与 summarization 的 LLM 摘要质量不一致。修复:trim 触发后**同步模板占位**(契约不变、优雅降级),异步用 LLM 重摘要 older 轮次替换(照 `titleLlmInvoke` fire-and-forget 模式);`messages.indexOf(summaryMsg)` 竞态守卫(未被动过才替换),LLM 失败/无 invoke 保留模板。配置门尊重 `enableLLMSummary`(conservative 预设不触发)。`trimMemoryMessagesImpl` 返回值增 `older`/`prevSeg`(纯函数逻辑不动);新增纯函数 `composeTrimSummary`。selftest 1231→1239(sec-32 召回含 steps + trim 返回 older + composeTrimSummary)。
+
+### Added(上下文持久化韧性 · context-persist-resilience)
+- **mission/workingMemory 跨刷新持久化**:`SessionSnapshot` 增 `mission?`/`workingMemory?` 字段,`persistRuntime` 存 / `applySnapshot` 恢复(刷新后长任务目标 + 工作记忆 path/hash 备忘不丢);`switchSession` 切走前补 persist(防 setMission/积累后未发消息即切会话丢);workingMemory 中间件补 `restore(wm)`。向后兼容(可选字段 + 能力门 + 非空守卫)。
+- **trim 收口:`context_trimmed` 归档事件 + vfs 孤儿 GC**:trim 删 older 轮前发 `context_trimmed` 事件(dropped 完整原文 + `vfsResults` 被删轮引用的 vfs 大结果原文 + summary,集成方可归档,不改默认 trim);删后可达性 GC(`extractVfsRefs` 扫剩余 messages 提 `large_results/` 引用 → `gcVfsLargeResults` 删不可达)。GC 触发:trim 后 / clear(resetSession `vfsStore.clear`)/ 加载(applySnapshot 兜底)。解 vfs 孤儿堆积 + 缓解引用悬空(被引用留,LRU 硬上限仍淘汰)。新增纯函数 `extractVfsRefs`/`gcVfsLargeResults`(`utils/vfsGc.ts`)。**澄清**:vfs 在 storage 开时已持久化(原 context-history-resilience B3「刷新即丢」断言错误,已修正)。
+- selftest 1239→1246(sec-32 vfsGc + sec-38 restore);e2e 312→316(storage mission 持久化往返)。
+
 ### Added(skill 脚本执行 · skill-external-scripts)
 - **动态 skill:`exec` 加载时执行 + `tools` 附带工具**。`SkillSpec` 新增两可选字段,把 skill 从「说明书」升级为「说明书 + 执行器」(全增量,现有 skill 零变):
   - **`exec` 钩子**:`{ code?, url?, context?, inject? }`,`load_skill` 时执行脚本 → 结果 append/prepend 注入全文(一次性上下文初始化,拿实时数据快照)。`context:'sandbox'`(默认,Worker 沙箱三层防护:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时);`context:'host'` 需 `capabilities.skillHostScript:true`(宿主全权 `AsyncFunction`,不经静态扫描,**仅集成方内联 code**、非 LLM/非远程;`url`+`host` 禁止)。
